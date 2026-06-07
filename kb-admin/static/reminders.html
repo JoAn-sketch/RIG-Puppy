@@ -1,0 +1,301 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>提醒计划 · 噜噜后端</title>
+<style>
+* { box-sizing: border-box; }
+body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; margin: 0; background: #f5f6f8; color: #222; }
+header { background: #1f2937; color: #fff; padding: 14px 24px; display:flex; justify-content:space-between; align-items:center; }
+header h1 { margin: 0; font-size: 18px; font-weight: 500; }
+header a { color: #9ca3af; text-decoration: none; font-size: 13px; margin-left: 16px; }
+header a:hover { color: #fff; }
+main { max-width: 1200px; margin: 24px auto; padding: 0 16px; }
+.card { background: #fff; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,.08); padding: 20px; margin-bottom: 20px; }
+h2 { margin: 0 0 14px; font-size: 15px; color: #374151; border-left: 3px solid #3b82f6; padding-left: 10px; }
+button { background: #3b82f6; color: #fff; border: 0; padding: 7px 14px; border-radius: 5px; cursor: pointer; font-size: 13px; }
+button:hover { background: #2563eb; }
+button.danger { background: #ef4444; }
+button.danger:hover { background: #dc2626; }
+button.ghost { background: #fff; color: #374151; border: 1px solid #d1d5db; }
+button.success { background: #22c55e; }
+button.success:hover { background: #16a34a; }
+input, textarea, select { font-size: 13px; padding: 6px 10px; border: 1px solid #d1d5db; border-radius: 5px; outline: none; width: 100%; background: #fff; font-family: inherit; }
+input:focus, textarea:focus, select:focus { border-color: #3b82f6; }
+textarea { min-height: 60px; resize: vertical; }
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid #e5e7eb; vertical-align: middle; }
+th { background: #f9fafb; font-weight: 500; color: #6b7280; }
+.row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.muted { color: #9ca3af; font-size: 12px; }
+.tag { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; }
+.tag.daily { background: #dbeafe; color: #1e40af; }
+.tag.once  { background: #fce7f3; color: #9f1239; }
+.tag.ok    { background: #dcfce7; color: #166534; }
+.tag.gray  { background: #e5e7eb; color: #4b5563; }
+.empty { color: #9ca3af; padding: 30px; text-align: center; }
+.form-grid { display: grid; grid-template-columns: 110px 1fr 110px 1fr; gap: 10px 12px; align-items: center; }
+.form-grid label { color: #6b7280; font-size: 13px; }
+.form-grid .full { grid-column: span 4; }
+.modal { position: fixed; inset: 0; background: rgba(0,0,0,.5); display: none; align-items: center; justify-content: center; z-index: 100; }
+.modal.show { display: flex; }
+.modal-box { background: #fff; border-radius: 8px; padding: 24px; max-width: 720px; width: 90%; max-height: 85vh; overflow: auto; }
+.modal-box h3 { margin: 0 0 16px; font-size: 16px; color: #374151; }
+.hint { background: #eff6ff; border-left: 3px solid #3b82f6; padding: 8px 12px; font-size: 12px; color: #1e40af; margin-bottom: 12px; line-height: 1.6; }
+</style>
+</head>
+<body>
+<header>
+  <h1>🐾 噜噜管理后台</h1>
+  <div>
+    <a href="/">📚 后端</a>
+    <a href="/contacts">👥 联系人</a>
+    <a href="/templates">📨 消息模板</a>
+    <a href="/message-log">📋 发送日志</a>
+    <a href="/reminders">⏰ 提醒计划</a>
+    <a href="/monitor">📊 系统监控</a>
+    <a href="/prompt">📝 Prompt</a>
+    <a href="/modes">🎭 模式管理</a>
+    <a href="/portrait">🧑 画像</a>
+    <a href="/mood">😊 情绪</a>
+    <a href="/actions">🐕 动作</a>
+    <a href="/memo">📝 备忘录</a>
+    <a href="/llm-logs" style="color:#60a5fa">🔍 LLM日志</a>
+    <a href="/debug">🔧 调试</a>
+    <a href="/settings">⚙️ 设置</a>
+    <a href="/iot" style="color:#34d399">🏠 家居</a>
+    <a href="/health" style="color:#f472b6">🏥 健康</a>
+    <a href="/voiceprint" style="color:#a78bfa">🎤 声纹</a>
+    <a href="http://122.51.155.114:8002" style="color:#fbbf24">🖥 主控台</a>
+  </div>
+</header>
+<main>
+  <div class="card">
+    <h2>说明</h2>
+    <div class="hint">
+      <b>每日(daily)</b>:每天到点提醒一次,适合"早 8 点吃降压药"这种。<br>
+      <b>一次性(once)</b>:只在某个日期提醒一次,过期未播报会在下次见面时<b>补播</b>(12 小时内)。<br>
+      噜噜每次和老人开始新对话时,会先调 <code>get_pending_reminders</code>,把到点+错过的一次性提醒念出来。<br>
+      <b>重置已播</b>会清掉今天的"已播"标记,常用于测试。
+    </div>
+    <div class="row">
+      <span class="muted">智能体:</span>
+      <select id="agentSelect" style="max-width:240px" onchange="loadReminders()">
+        <option value="">全部</option>
+      </select>
+      <button onclick="openAdd()">+ 新增提醒</button>
+      <button class="ghost" onclick="loadReminders()">刷新</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>提醒列表</h2>
+    <table id="rTable">
+      <thead><tr>
+        <th>ID</th><th>类型</th><th>标题</th><th>内容</th>
+        <th>时间</th><th>日期</th><th>启用</th><th>上次播报</th><th>操作</th>
+      </tr></thead>
+      <tbody></tbody>
+    </table>
+  </div>
+</main>
+
+<div class="modal" id="editModal" onclick="closeModal(event)">
+  <div class="modal-box" onclick="event.stopPropagation()">
+    <h3 id="modalTitle">新增提醒</h3>
+    <div class="form-grid">
+      <label>智能体 *</label>
+      <select id="f_agent_id"></select>
+      <label>类型 *</label>
+      <select id="f_type" onchange="toggleDateField()">
+        <option value="daily">每日(daily)</option>
+        <option value="once">一次性(once)</option>
+      </select>
+
+      <label>标题 *</label>
+      <input id="f_title" placeholder="吃降压药 / 量血压 / 复诊">
+      <label>时间 *</label>
+      <input id="f_fire_time" placeholder="08:00" pattern="^\d{2}:\d{2}$">
+
+      <label id="dateLabel">日期</label>
+      <input id="f_fire_date" type="date">
+      <label>启用</label>
+      <select id="f_enabled">
+        <option value="1">启用</option>
+        <option value="0">停用</option>
+      </select>
+
+      <label class="full">详细内容</label>
+      <textarea id="f_content" class="full" placeholder="可选,例如:餐后温水送服一片"></textarea>
+    </div>
+    <div class="row" style="margin-top:18px;justify-content:flex-end">
+      <button class="ghost" onclick="closeModal()">取消</button>
+      <button class="success" onclick="saveR()">保存</button>
+    </div>
+  </div>
+</div>
+
+<script>
+let agents = [];
+let editingId = null;
+
+async function api(path, opts={}) {
+  const r = await fetch(path, opts);
+  const t = await r.text();
+  try { return JSON.parse(t); } catch(e) { return {raw: t, status: r.status}; }
+}
+
+function agentName(id) {
+  const a = agents.find(x => x.id === id);
+  return a ? a.agent_name : id.slice(0, 8) + "...";
+}
+
+function escapeHtml(s) {
+  return (s||"").replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+}
+
+async function loadAgents() {
+  const d = await api("/api/msg/agents");
+  agents = d.list || [];
+  const sel = document.getElementById("agentSelect");
+  const fsel = document.getElementById("f_agent_id");
+  sel.innerHTML = '<option value="">全部</option>';
+  fsel.innerHTML = "";
+  for (const a of agents) {
+    sel.insertAdjacentHTML("beforeend", `<option value="${a.id}">${a.agent_name}</option>`);
+    fsel.insertAdjacentHTML("beforeend", `<option value="${a.id}">${a.agent_name}</option>`);
+  }
+}
+
+function typeTag(t) {
+  if (t === "daily") return '<span class="tag daily">每日</span>';
+  if (t === "once")  return '<span class="tag once">一次性</span>';
+  return `<span class="tag gray">${t}</span>`;
+}
+
+async function loadReminders() {
+  const agent_id = document.getElementById("agentSelect").value;
+  const q = agent_id ? `?agent_id=${agent_id}` : "";
+  const d = await api("/api/msg/reminders" + q);
+  const list = d.list || [];
+  const tb = document.querySelector("#rTable tbody");
+  tb.innerHTML = "";
+  if (list.length === 0) {
+    tb.innerHTML = '<tr><td colspan="9" class="empty">还没提醒,点 + 新增</td></tr>';
+    return;
+  }
+  for (const r of list) {
+    const tr = document.createElement("tr");
+    const en = r.enabled == 1 ? '<span class="tag ok">启用</span>' : '<span class="tag gray">停用</span>';
+    tr.innerHTML = `
+      <td><code>${r.id}</code></td>
+      <td>${typeTag(r.type)}</td>
+      <td><b>${escapeHtml(r.title)}</b><div class="muted">${escapeHtml(agentName(r.agent_id))}</div></td>
+      <td style="max-width:240px">${escapeHtml(r.content||"-")}</td>
+      <td><code>${r.fire_time}</code></td>
+      <td>${r.fire_date || '<span class="muted">-</span>'}</td>
+      <td>${en}</td>
+      <td><span class="muted">${escapeHtml(r.last_fired_at||"未播")}</span></td>
+      <td>
+        <button class="ghost" onclick='openEdit(${JSON.stringify(r)})'>编辑</button>
+        <button class="ghost" onclick='resetFired(${r.id})'>重置已播</button>
+        <button class="danger" onclick="del(${r.id},'${(r.title||'').replace(/'/g,'')}')">删除</button>
+      </td>`;
+    tb.appendChild(tr);
+  }
+}
+
+function toggleDateField() {
+  const isOnce = document.getElementById("f_type").value === "once";
+  document.getElementById("dateLabel").innerHTML = isOnce ? "日期 *" : "日期";
+  document.getElementById("f_fire_date").required = isOnce;
+}
+
+function openAdd() {
+  editingId = null;
+  document.getElementById("modalTitle").textContent = "新增提醒";
+  document.getElementById("f_type").value = "daily";
+  document.getElementById("f_title").value = "";
+  document.getElementById("f_content").value = "";
+  document.getElementById("f_fire_time").value = "08:00";
+  document.getElementById("f_fire_date").value = "";
+  document.getElementById("f_enabled").value = "1";
+  const cur = document.getElementById("agentSelect").value;
+  if (cur) document.getElementById("f_agent_id").value = cur;
+  document.getElementById("f_agent_id").disabled = false;
+  toggleDateField();
+  document.getElementById("editModal").classList.add("show");
+}
+
+function openEdit(r) {
+  editingId = r.id;
+  document.getElementById("modalTitle").textContent = "编辑提醒 #" + r.id;
+  document.getElementById("f_agent_id").value = r.agent_id;
+  document.getElementById("f_agent_id").disabled = true;
+  document.getElementById("f_type").value = r.type;
+  document.getElementById("f_title").value = r.title || "";
+  document.getElementById("f_content").value = r.content || "";
+  document.getElementById("f_fire_time").value = r.fire_time || "";
+  document.getElementById("f_fire_date").value = r.fire_date || "";
+  document.getElementById("f_enabled").value = String(r.enabled == 1 ? 1 : 0);
+  toggleDateField();
+  document.getElementById("editModal").classList.add("show");
+}
+
+function closeModal(e) {
+  if (e && e.target.id !== "editModal") return;
+  document.getElementById("editModal").classList.remove("show");
+}
+
+async function saveR() {
+  const body = {
+    agent_id: document.getElementById("f_agent_id").value,
+    type: document.getElementById("f_type").value,
+    title: document.getElementById("f_title").value.trim(),
+    content: document.getElementById("f_content").value.trim(),
+    fire_time: document.getElementById("f_fire_time").value.trim(),
+    fire_date: document.getElementById("f_fire_date").value.trim(),
+    enabled: document.getElementById("f_enabled").value === "1",
+  };
+  if (!body.agent_id || !body.title || !body.fire_time) {
+    alert("智能体/标题/时间 必填"); return;
+  }
+  if (!/^\d{2}:\d{2}$/.test(body.fire_time)) {
+    alert("时间格式必须是 HH:MM,例如 08:00"); return;
+  }
+  if (body.type === "once" && !body.fire_date) {
+    alert("一次性提醒必须填日期"); return;
+  }
+  const url = editingId ? `/api/msg/reminders/${editingId}` : "/api/msg/reminders";
+  const method = editingId ? "PUT" : "POST";
+  const r = await api(url, {
+    method, headers:{"Content-Type":"application/json"},
+    body: JSON.stringify(body),
+  });
+  if (r.ok) {
+    closeModal();
+    loadReminders();
+  } else {
+    alert("保存失败: " + JSON.stringify(r));
+  }
+}
+
+async function del(id, title) {
+  if (!confirm(`删除提醒「${title}」?`)) return;
+  await api(`/api/msg/reminders/${id}`, {method:"DELETE"});
+  loadReminders();
+}
+
+async function resetFired(id) {
+  if (!confirm("清掉上次播报标记?(下次见面会重新播)")) return;
+  await api(`/api/msg/reminders/${id}/reset-fired`, {method:"POST"});
+  loadReminders();
+}
+
+(async () => {
+  await loadAgents();
+  await loadReminders();
+})();
+</script>
+</body>
+</html>

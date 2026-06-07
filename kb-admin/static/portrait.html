@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>用户画像 · 噜噜</title>
+<style>
+* { box-sizing: border-box; }
+body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; margin: 0; background: #f5f6f8; color: #222; }
+header { background: #1f2937; color: #fff; padding: 14px 24px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; }
+header h1 { margin: 0; font-size: 18px; font-weight: 500; }
+header a { color: #9ca3af; text-decoration: none; font-size: 13px; margin-left: 16px; }
+header a:hover { color: #fff; }
+main { max-width: 1100px; margin: 24px auto; padding: 0 16px; }
+.card { background: #fff; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,.08); padding: 20px; margin-bottom: 20px; }
+h2 { margin: 0 0 14px; font-size: 15px; color: #374151; border-left: 3px solid #3b82f6; padding-left: 10px; }
+.field { margin-bottom: 12px; }
+.field-label { font-size: 12px; color: #6b7280; margin-bottom: 4px; }
+.field-value { font-size: 14px; line-height: 1.6; white-space: pre-wrap; }
+.muted { color: #9ca3af; font-size: 12px; }
+.tag { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; background: #dcfce7; color: #166534; }
+</style>
+</head>
+<body>
+<header>
+  <h1>🐾 噜噜管理后台</h1>
+  <div>
+    <a href="/">📚 后端</a>
+    <a href="/contacts">👥 联系人</a>
+    <a href="/templates">📨 消息模板</a>
+    <a href="/message-log">📋 发送日志</a>
+    <a href="/reminders">⏰ 提醒计划</a>
+    <a href="/monitor">📊 系统监控</a>
+    <a href="/prompt">📝 Prompt</a>
+    <a href="/modes">🎭 模式管理</a>
+    <a href="/portrait">🧑 画像</a>
+    <a href="/mood">😊 情绪</a>
+    <a href="/actions">🐕 动作</a>
+    <a href="/memo">📝 备忘录</a>
+    <a href="/llm-logs" style="color:#60a5fa">🔍 LLM日志</a>
+    <a href="/debug">🔧 调试</a>
+    <a href="/settings">⚙️ 设置</a>
+    <a href="/iot" style="color:#34d399">🏠 家居</a>
+    <a href="/health" style="color:#f472b6">🏥 健康</a>
+    <a href="/voiceprint" style="color:#a78bfa">🎤 声纹</a>
+    <a href="http://122.51.155.114:8002" style="color:#fbbf24">🖥 主控台</a>
+  </div>
+</header>
+<main>
+  <div class="card">
+    <h2>综合画像</h2>
+    <div id="profile"><p class="muted">加载中...</p></div>
+  </div>
+  <div class="card">
+    <h2>近期日报摘要</h2>
+    <div id="summaries"><p class="muted">加载中...</p></div>
+  </div>
+</main>
+<script>
+const AGENT_ID = '1822c2babf1b44cca6b25d0bdebc796f';
+
+async function load() {
+  const res = await fetch('/api/portrait/' + AGENT_ID);
+  const data = await res.json();
+
+  // 渲染 profile
+  const p = data.profile || {};
+  const fields = [
+    ['最近趋势', p.recent_trends],
+    ['明日策略', p.tomorrow_strategy],
+    ['健康档案', p.health_profile],
+    ['用药情况', p.medicine_profile],
+    ['情绪画像', p.mood_profile],
+    ['诈骗风险', p.fraud_profile],
+    ['陪伴偏好', p.companion_prefs],
+    ['作息规律', p.schedule_profile],
+    ['数据天数', p.data_days + ' 天'],
+    ['最后更新', p.last_updated],
+  ];
+  document.getElementById('profile').innerHTML = fields
+    .filter(f => f[1] && f[1] !== 'NULL')
+    .map(f => `<div class="field"><div class="field-label">${f[0]}</div><div class="field-value">${f[1]}</div></div>`)
+    .join('') || '<p class="muted">暂无画像数据</p>';
+
+  // 渲染 summaries
+  const sums = data.recent_summaries || [];
+  if (!sums.length) {
+    document.getElementById('summaries').innerHTML = '<p class="muted">暂无日报</p>';
+    return;
+  }
+  document.getElementById('summaries').innerHTML = sums.map(s => `
+    <div style="border:1px solid #e5e7eb;border-radius:8px;padding:12px;margin-bottom:12px">
+      <div style="display:flex;justify-content:space-between;margin-bottom:8px">
+        <span style="font-weight:500">${s.summary_date}</span>
+        <span class="tag">${s.overall_status}</span>
+      </div>
+      <div class="field"><div class="field-label">情绪陪伴</div><div class="field-value">${s.mood_companion || '-'}</div></div>
+      <div class="field"><div class="field-label">健康信号</div><div class="field-value">${s.health_signals || '-'}</div></div>
+      <div class="field"><div class="field-label">用药</div><div class="field-value">${s.medicine_status || '-'}</div></div>
+      <div class="field"><div class="field-label">明日策略</div><div class="field-value">${s.tomorrow_strategy || '-'}</div></div>
+    </div>
+  `).join('');
+}
+
+load();
+</script>
+</body>
+</html>

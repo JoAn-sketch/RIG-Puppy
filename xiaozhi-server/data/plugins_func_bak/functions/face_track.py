@@ -1,0 +1,224 @@
+"""
+人脸跟踪编排插件 - LLM 只需在 VAD 触发时调一次 face_track(),
+内部完成: face_locate(扫描) → set_eye_gaze(偏眼) → set_motor_angle(必要时扭腰)
+
+部署到: plugins_func/functions/face_track.py
+"""
+import json
+import time
+import asyncio
+import threading
+from plugins_func.register import register_function, Action, ActionResponse, ToolType
+from core.providers.tools.device_mcp.mcp_handler import call_mcp_tool
+from config.logger import setup_logging
+
+logger = setup_logging()
+TAG = "face_track"
+
+# ========== 跟踪参数 ==========
+COOLDOWN_SECONDS = 1.2       # 两次 face_track 之间最少间隔
+EYE_DEAD_ZONE = 8            # 归一化 [-100,100] 内,小于这个值不动眼睛
+WAIST_TRIGGER = 30           # |x| 大于该值才动腰
+WAIST_NEUTRAL = 40           # a5 中位
+WAIST_MAX_DELTA = 25         # 单次最大扭腰量(度),硬件上限 ±30
+EYE_GAIN = 0.5               # 归一化 x/y → 像素偏移 (实际眼睛偏移范围 ±20)
+EDGE_REJECT = 95             # |x| 或 |y| 超过该值视为边缘伪检测,当 found=false
+SEARCH_YAW_DEG = 100         # 找不到脸时整体转身的 vyaw 大小 (100=满速,默认70%已大)
+SEARCH_MOVE_MS = 1500        # 单次转身持续毫秒 (1.5s 大角度)
+SEARCH_SETTLE_MS = 800       # 转身完成后等画面稳定再扫的延迟
+SEARCH_MAX_TURNS = 6         # 转一圈(预计 60°*6)还没找到就放弃
+
+
+def _get_track_state(conn):
+    if not hasattr(conn, '_face_track_state'):
+        conn._face_track_state = {
+            'last_time': 0,
+            'last_x': 0,
+            'last_a5': WAIST_NEUTRAL,
+            'lost_count': 0,
+            'search_turns': 0,
+            'search_dir': 1,
+        }
+    return conn._face_track_state
+
+
+def _clamp(v, lo, hi):
+    return max(lo, min(hi, v))
+
+
+async def _do_track(conn):
+    """核心异步流程:扫脸 → 算偏 → 偏眼 → 必要时扭腰"""
+    if not hasattr(conn, 'mcp_client') or not conn.mcp_client:
+        logger.bind(tag=TAG).warning("设备 MCP 未连接,跳过 face_track")
+        return
+
+    state = _get_track_state(conn)
+
+    # 1) 扫脸
+    try:
+        raw = await call_mcp_tool(conn, conn.mcp_client, "self_vision_face_locate", "{}")
+    except Exception as e:
+        logger.bind(tag=TAG).warning(f"face_locate 调用失败: {e}")
+        return
+
+    # 解析结果
+    try:
+        data = json.loads(raw) if isinstance(raw, str) else raw
+    except Exception:
+        logger.bind(tag=TAG).debug(f"face_locate 返回非 JSON: {raw!r}")
+        return
+
+    found = bool(data.get("found"))
+    raw_x = float(data.get("x", 0))
+    raw_y = float(data.get("y", 0))
+
+    # 方案1 诊断: 打印固件返回的 type / dbg_* 字段,用来定位正确的 pix_type
+    if found:
+        logger.bind(tag=TAG).info(
+            f"face_locate raw: x={raw_x:.0f} y={raw_y:.0f} conf={data.get('conf')} type={data.get('type')}"
+        )
+    else:
+        logger.bind(tag=TAG).info(
+            f"face_locate miss: reason={data.get('reason')} "
+            f"dbg=({data.get('dbg_x')},{data.get('dbg_y')}) "
+            f"dbg_conf={data.get('dbg_conf')} dbg_type={data.get('dbg_type')}"
+        )
+
+    # 边缘伪检测:|x|/|y| 超过 EDGE_REJECT 视为没找到 (字节序错乱时模型常把"脸"识在画面边缘)
+    if found and (abs(raw_x) > EDGE_REJECT or abs(raw_y) > EDGE_REJECT):
+        logger.bind(tag=TAG).info(f"边缘伪检测忽略: x={raw_x:.0f} y={raw_y:.0f} conf={data.get('conf')}")
+        found = False
+
+    if not found:
+        state['lost_count'] += 1
+        # 1 次没找到就开始转身找人
+        if state['search_turns'] < SEARCH_MAX_TURNS:
+            vyaw = SEARCH_YAW_DEG * state['search_dir']
+            try:
+                await call_mcp_tool(
+                    conn, conn.mcp_client, "self_dog_move",
+                    json.dumps({"dog_vx": 0, "dog_vyaw": vyaw, "time": SEARCH_MOVE_MS})
+                )
+                state['search_turns'] += 1
+                logger.bind(tag=TAG).info(
+                    f"未见人脸,转身搜索 第{state['search_turns']}/{SEARCH_MAX_TURNS}次 vyaw={vyaw}"
+                )
+                # 等画面稳再扫一次,递归一层
+                await asyncio.sleep((SEARCH_MOVE_MS + SEARCH_SETTLE_MS) / 1000.0)
+                await _do_track(conn)
+                return
+            except Exception as e:
+                logger.bind(tag=TAG).warning(f"转身搜索失败: {e}")
+        else:
+            # 转一圈没找到,眼睛+腰回中,放弃这一轮 (下次 face_track 触发时重新尝试)
+            try:
+                await call_mcp_tool(
+                    conn, conn.mcp_client,
+                    "self_display_set_eye_gaze",
+                    json.dumps({"x": 0, "y": 0})
+                )
+            except Exception:
+                pass
+            if state['last_a5'] != WAIST_NEUTRAL:
+                try:
+                    await call_mcp_tool(
+                        conn, conn.mcp_client, "self_dog_set_motor_angle",
+                        json.dumps({
+                            "angle1": 40, "angle2": 40, "angle3": 40,
+                            "angle4": 40, "angle5": WAIST_NEUTRAL, "time": 400
+                        })
+                    )
+                    state['last_a5'] = WAIST_NEUTRAL
+                except Exception:
+                    pass
+            state['search_turns'] = 0
+            state['lost_count'] = 0
+            logger.bind(tag=TAG).info("转一圈未见人脸,放弃")
+        return
+
+    # 找到了,清搜索状态
+    state['lost_count'] = 0
+    state['search_turns'] = 0
+    x = raw_x
+    y = raw_y
+
+    # 2) 眼睛偏移(死区内不动)
+    eye_x = 0 if abs(x) < EYE_DEAD_ZONE else int(_clamp(x * EYE_GAIN, -20, 20))
+    eye_y = 0 if abs(y) < EYE_DEAD_ZONE else int(_clamp(y * EYE_GAIN, -20, 20))
+    try:
+        await call_mcp_tool(
+            conn, conn.mcp_client, "self_display_set_eye_gaze",
+            json.dumps({"x": eye_x, "y": eye_y})
+        )
+    except Exception as e:
+        logger.bind(tag=TAG).warning(f"set_eye_gaze 失败: {e}")
+
+    # 3) 偏角太大才扭腰(避免抖动)
+    if abs(x) > WAIST_TRIGGER:
+        delta = int(_clamp(x * 0.25, -WAIST_MAX_DELTA, WAIST_MAX_DELTA))
+        new_a5 = _clamp(state['last_a5'] + delta, WAIST_NEUTRAL - 30, WAIST_NEUTRAL + 30)
+        if abs(new_a5 - state['last_a5']) >= 4:
+            try:
+                await call_mcp_tool(
+                    conn, conn.mcp_client, "self_dog_set_motor_angle",
+                    json.dumps({
+                        "angle1": 40, "angle2": 40, "angle3": 40,
+                        "angle4": 40, "angle5": int(new_a5), "time": 350
+                    })
+                )
+                state['last_a5'] = new_a5
+                logger.bind(tag=TAG).info(
+                    f"track: x={x:.0f} y={y:.0f} eye=({eye_x},{eye_y}) a5={int(new_a5)}"
+                )
+                state['last_x'] = x
+                return
+            except Exception as e:
+                logger.bind(tag=TAG).warning(f"set_motor_angle 失败: {e}")
+
+    logger.bind(tag=TAG).info(
+        f"track: x={x:.0f} y={y:.0f} eye=({eye_x},{eye_y}) a5=hold"
+    )
+    state['last_x'] = x
+
+
+def _launch_track(conn):
+    loop = getattr(conn, 'loop', None)
+    if loop and loop.is_running():
+        asyncio.run_coroutine_threadsafe(_do_track(conn), loop)
+    else:
+        threading.Thread(target=lambda: asyncio.run(_do_track(conn)), daemon=True).start()
+
+
+@register_function("face_track", {
+    "type": "function",
+    "function": {
+        "name": "face_track",
+        "description": (
+            "让丁一锅看向说话的人。"
+            "每轮对话开始时调一次即可,插件内部完成 [扫脸 → 眼睛跟随 → 必要时扭腰]。"
+            "不要重复调,不要每句话都调。"
+            "VAD 检测到用户开口、或用户说「看着我/这边/过来」时触发。"
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {},
+            "required": []
+        }
+    }
+}, type=ToolType.SYSTEM_CTL)
+def face_track(conn):
+    """模型调用入口: 限频后异步触发跟踪流程"""
+    # 摄像头关闭时同步禁用人脸追踪
+    if not getattr(conn, "config", {}).get("enable_camera", False):
+        logger.bind(tag=TAG).debug("enable_camera=False,跳过 face_track")
+        return ActionResponse(action=Action.REQLLM, result="", response="")
+
+    state = _get_track_state(conn)
+    now = time.time()
+    if now - state["last_time"] < COOLDOWN_SECONDS:
+        logger.bind(tag=TAG).debug("face_track 冷却中,跳过")
+        return ActionResponse(action=Action.REQLLM, result="", response="")
+    state["last_time"] = now
+
+    _launch_track(conn)
+    return ActionResponse(action=Action.REQLLM, result="正在跟踪", response="")

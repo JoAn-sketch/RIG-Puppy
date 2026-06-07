@@ -1,0 +1,251 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>健康档案 · 噜噜</title>
+<style>
+* { box-sizing: border-box; }
+body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; margin: 0; background: #f5f6f8; color: #222; }
+header { background: #1f2937; color: #fff; padding: 14px 24px; display:flex; justify-content:space-between; align-items:center; }
+header h1 { margin: 0; font-size: 18px; font-weight: 500; }
+header a { color: #9ca3af; text-decoration: none; font-size: 13px; margin-left: 16px; }
+header a:hover { color: #fff; }
+main { max-width: 1200px; margin: 24px auto; padding: 0 16px; }
+.card { background: #fff; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,.08); padding: 20px; margin-bottom: 20px; }
+h2 { margin: 0 0 14px; font-size: 15px; color: #374151; border-left: 3px solid #3b82f6; padding-left: 10px; }
+button { background: #3b82f6; color: #fff; border: 0; padding: 7px 14px; border-radius: 5px; cursor: pointer; font-size: 13px; }
+button:hover { background: #2563eb; }
+button.ghost { background: #fff; color: #374151; border: 1px solid #d1d5db; }
+button.success { background: #10b981; }
+input, select, textarea { font-size: 13px; padding: 6px 10px; border: 1px solid #d1d5db; border-radius: 5px; outline: none; }
+.muted { color: #9ca3af; font-size: 12px; }
+.row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.tag { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; }
+.tag.manual { background: #dbeafe; color: #1e40af; }
+.tag.device { background: #dcfce7; color: #166534; }
+.tag.api { background: #fef3c7; color: #92400e; }
+.toast { position: fixed; top: 20px; right: 20px; background: #10b981; color: #fff; padding: 10px 20px; border-radius: 6px; font-size: 13px; z-index: 200; display: none; }
+.toast.error { background: #ef4444; }
+
+.profile-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 12px; }
+.field-row { display: flex; align-items: center; padding: 8px 12px; background: #f9fafb; border-radius: 6px; gap: 8px; }
+.field-row .label { font-size: 13px; color: #374151; min-width: 80px; font-weight: 500; }
+.field-row .value-input { flex: 1; border: 1px solid transparent; background: transparent; padding: 4px 8px; border-radius: 4px; font-size: 13px; }
+.field-row .value-input:hover { border-color: #d1d5db; background: #fff; }
+.field-row .value-input:focus { border-color: #3b82f6; background: #fff; outline: none; }
+.field-row .unit { font-size: 12px; color: #9ca3af; min-width: 40px; }
+.field-row .source-tag { font-size: 10px; }
+.field-row .note-btn { background: none; border: none; color: #9ca3af; cursor: pointer; font-size: 14px; padding: 2px 4px; }
+.field-row .note-btn:hover { color: #3b82f6; }
+
+.section-header { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+.section-icon { font-size: 20px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>🏥 健康档案</h1>
+  <div>
+    <a href="/">📚 后端</a>
+    <a href="/contacts">👥 联系人</a>
+    <a href="/templates">📨 消息模板</a>
+    <a href="/message-log">📋 发送日志</a>
+    <a href="/reminders">⏰ 提醒计划</a>
+    <a href="/monitor">📊 系统监控</a>
+    <a href="/prompt">📝 Prompt</a>
+    <a href="/modes">🎭 模式管理</a>
+    <a href="/portrait">🧑 画像</a>
+    <a href="/mood">😊 情绪</a>
+    <a href="/actions">🐕 动作</a>
+    <a href="/memo">📝 备忘录</a>
+    <a href="/llm-logs" style="color:#60a5fa">🔍 LLM日志</a>
+    <a href="/debug">🔧 调试</a>
+    <a href="/settings">⚙️ 设置</a>
+    <a href="/iot" style="color:#34d399">🏠 家居</a>
+    <a href="/health" style="color:#f472b6">🏥 健康</a>
+    <a href="/voiceprint" style="color:#a78bfa">🎤 声纹</a>
+    <a href="http://122.51.155.114:8002" style="color:#fbbf24">🖥 主控台</a>
+  </div>
+</header>
+<main>
+
+  <div class="card">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+      <h2>健康档案</h2>
+      <div class="row">
+        <button class="success" onclick="saveAll()">💾 保存所有修改</button>
+        <button class="ghost" onclick="loadProfile()">刷新</button>
+        <span class="muted">直接编辑字段，然后保存</span>
+      </div>
+    </div>
+    <p class="muted" style="margin-bottom:16px">手动录入或由设备/外部接口自动更新。数据将用于噜噜更好地关心铲屎官的健康。</p>
+
+    <div id="profileSections"></div>
+  </div>
+
+  <div class="card">
+    <h2>自定义字段</h2>
+    <p class="muted" style="margin-bottom:12px">添加以上没有覆盖的健康数据字段</p>
+    <div class="row">
+      <select id="newCat">
+        <option value="basic">基本信息</option>
+        <option value="vitals">体征数据</option>
+        <option value="medical">医疗信息</option>
+        <option value="lifestyle">生活习惯</option>
+      </select>
+      <input id="newKey" placeholder="字段标识(英文)" style="width:120px">
+      <input id="newName" placeholder="中文名称" style="width:100px">
+      <input id="newUnit" placeholder="单位" style="width:60px">
+      <button onclick="addField()">添加</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>外部接口</h2>
+    <p class="muted">设备或外部系统可通过 API 上报健康数据，无需认证：</p>
+    <pre style="background:#1f2937;color:#d1fae5;padding:14px;border-radius:6px;font-size:12px;overflow:auto">POST /api/health/report
+Content-Type: application/json
+
+{
+  "field_key": "heart_rate",
+  "value": "72",
+  "source": "device",
+  "note": "小米手环自动上报"
+}
+
+// 批量上报
+POST /api/health/report-batch
+{
+  "source": "device",
+  "data": [
+    {"field_key": "blood_pressure_sys", "value": "125"},
+    {"field_key": "blood_pressure_dia", "value": "82"},
+    {"field_key": "heart_rate", "value": "72"}
+  ]
+}</pre>
+  </div>
+
+</main>
+
+<div class="toast" id="toast"></div>
+
+<script>
+var SECTION_META = {
+  basic:     {icon: '👤', label: '基本信息'},
+  vitals:    {icon: '💓', label: '体征数据'},
+  medical:   {icon: '💊', label: '医疗信息'},
+  lifestyle: {icon: '🏃', label: '生活习惯'}
+};
+
+var allFields = [];
+var dirtyFields = {};
+
+function toast(msg, err) {
+  var el = document.getElementById('toast');
+  el.textContent = msg;
+  el.className = 'toast' + (err ? ' error' : '');
+  el.style.display = 'block';
+  setTimeout(function(){ el.style.display = 'none'; }, 2500);
+}
+
+async function loadProfile() {
+  var res = await fetch('/api/health/profile');
+  allFields = await res.json();
+  dirtyFields = {};
+  renderSections();
+}
+
+function renderSections() {
+  var container = document.getElementById('profileSections');
+  var sections = {};
+  allFields.forEach(function(f) {
+    if (!sections[f.category]) sections[f.category] = [];
+    sections[f.category].push(f);
+  });
+
+  var order = ['basic', 'vitals', 'medical', 'lifestyle'];
+  var html = '';
+  order.forEach(function(cat) {
+    var fields = sections[cat] || [];
+    var meta = SECTION_META[cat] || {icon: '📋', label: cat};
+    html += '<div style="margin-bottom:20px">';
+    html += '<div class="section-header"><span class="section-icon">' + meta.icon + '</span><h2 style="margin:0">' + meta.label + '</h2></div>';
+    html += '<div class="profile-grid">';
+    fields.forEach(function(f) {
+      var srcCls = f.source || 'manual';
+      var val = f.field_value || '';
+      html += '<div class="field-row">'
+        + '<span class="label">' + f.field_name + '</span>'
+        + '<input class="value-input" data-key="' + f.field_key + '" value="' + val.replace(/"/g, '&quot;') + '" '
+        + 'placeholder="未填写" onchange="markDirty(\'' + f.field_key + '\', this.value)">'
+        + '<span class="unit">' + (f.unit || '') + '</span>'
+        + '<span class="tag ' + srcCls + ' source-tag">' + srcCls + '</span>'
+        + '</div>';
+    });
+    html += '</div></div>';
+  });
+
+  container.innerHTML = html;
+}
+
+function markDirty(key, value) {
+  dirtyFields[key] = value;
+}
+
+async function saveAll() {
+  var keys = Object.keys(dirtyFields);
+  if (keys.length === 0) {
+    // Collect all values from inputs
+    var inputs = document.querySelectorAll('.value-input[data-key]');
+    inputs.forEach(function(inp) {
+      dirtyFields[inp.dataset.key] = inp.value;
+    });
+    keys = Object.keys(dirtyFields);
+  }
+
+  if (keys.length === 0) { toast('没有修改', true); return; }
+
+  var data = keys.map(function(k) { return {field_key: k, value: dirtyFields[k]}; });
+  var res = await fetch('/api/health/profile', {
+    method: 'PUT',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({updates: data})
+  });
+  var result = await res.json();
+  if (result.ok) {
+    toast('已保存 ' + keys.length + ' 个字段');
+    dirtyFields = {};
+    loadProfile();
+  } else {
+    toast(result.error || '保存失败', true);
+  }
+}
+
+async function addField() {
+  var cat = document.getElementById('newCat').value;
+  var key = document.getElementById('newKey').value.trim();
+  var name = document.getElementById('newName').value.trim();
+  var unit = document.getElementById('newUnit').value.trim();
+  if (!key || !name) { toast('标识和名称不能为空', true); return; }
+
+  var res = await fetch('/api/health/profile/field', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({category: cat, field_key: key, field_name: name, unit: unit})
+  });
+  var data = await res.json();
+  if (data.ok) {
+    toast('已添加: ' + name);
+    document.getElementById('newKey').value = '';
+    document.getElementById('newName').value = '';
+    document.getElementById('newUnit').value = '';
+    loadProfile();
+  } else {
+    toast(data.error || '添加失败', true);
+  }
+}
+
+loadProfile();
+</script>
+</body>
+</html>

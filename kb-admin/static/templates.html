@@ -1,0 +1,258 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>消息模板管理 · 噜噜后端</title>
+<style>
+* { box-sizing: border-box; }
+body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; margin: 0; background: #f5f6f8; color: #222; }
+header { background: #1f2937; color: #fff; padding: 14px 24px; display:flex; justify-content:space-between; align-items:center; }
+header h1 { margin: 0; font-size: 18px; font-weight: 500; }
+header a { color: #9ca3af; text-decoration: none; font-size: 13px; margin-left: 16px; }
+header a:hover { color: #fff; }
+main { max-width: 1200px; margin: 24px auto; padding: 0 16px; }
+.card { background: #fff; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,.08); padding: 20px; margin-bottom: 20px; }
+h2 { margin: 0 0 14px; font-size: 15px; color: #374151; border-left: 3px solid #3b82f6; padding-left: 10px; }
+button { background: #3b82f6; color: #fff; border: 0; padding: 7px 14px; border-radius: 5px; cursor: pointer; font-size: 13px; }
+button:hover { background: #2563eb; }
+button.danger { background: #ef4444; }
+button.danger:hover { background: #dc2626; }
+button.ghost { background: #fff; color: #374151; border: 1px solid #d1d5db; }
+button.success { background: #22c55e; }
+button.success:hover { background: #16a34a; }
+input, textarea, select { font-size: 13px; padding: 6px 10px; border: 1px solid #d1d5db; border-radius: 5px; outline: none; width: 100%; background: #fff; font-family: inherit; }
+input:focus, textarea:focus, select:focus { border-color: #3b82f6; }
+textarea { min-height: 80px; resize: vertical; }
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid #e5e7eb; vertical-align: top; }
+th { background: #f9fafb; font-weight: 500; color: #6b7280; }
+.row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.muted { color: #9ca3af; font-size: 12px; }
+.tag { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; background: #dcfce7; color: #166534; }
+.tag.gray { background: #e5e7eb; color: #4b5563; }
+.tag.warn { background: #fef3c7; color: #92400e; }
+.empty { color: #9ca3af; padding: 30px; text-align: center; }
+.form-grid { display: grid; grid-template-columns: 130px 1fr 130px 1fr; gap: 10px 12px; align-items: center; }
+.form-grid label { color: #6b7280; font-size: 13px; }
+.form-grid .full { grid-column: span 4; }
+.modal { position: fixed; inset: 0; background: rgba(0,0,0,.5); display: none; align-items: center; justify-content: center; z-index: 100; }
+.modal.show { display: flex; }
+.modal-box { background: #fff; border-radius: 8px; padding: 24px; max-width: 760px; width: 90%; max-height: 85vh; overflow: auto; }
+.modal-box h3 { margin: 0 0 16px; font-size: 16px; color: #374151; }
+.hint { background: #eff6ff; border-left: 3px solid #3b82f6; padding: 8px 12px; font-size: 12px; color: #1e40af; margin-bottom: 12px; line-height: 1.6; }
+code.kbd { background: #f3f4f6; padding: 1px 6px; border-radius: 3px; font-size: 12px; color: #be185d; }
+</style>
+</head>
+<body>
+<header>
+  <h1>🐾 噜噜管理后台</h1>
+  <div>
+    <a href="/">📚 后端</a>
+    <a href="/contacts">👥 联系人</a>
+    <a href="/templates">📨 消息模板</a>
+    <a href="/message-log">📋 发送日志</a>
+    <a href="/reminders">⏰ 提醒计划</a>
+    <a href="/monitor">📊 系统监控</a>
+    <a href="/prompt">📝 Prompt</a>
+    <a href="/modes">🎭 模式管理</a>
+    <a href="/portrait">🧑 画像</a>
+    <a href="/mood">😊 情绪</a>
+    <a href="/actions">🐕 动作</a>
+    <a href="/memo">📝 备忘录</a>
+    <a href="/llm-logs" style="color:#60a5fa">🔍 LLM日志</a>
+    <a href="/debug">🔧 调试</a>
+    <a href="/settings">⚙️ 设置</a>
+    <a href="/iot" style="color:#34d399">🏠 家居</a>
+    <a href="/health" style="color:#f472b6">🏥 健康</a>
+    <a href="/voiceprint" style="color:#a78bfa">🎤 声纹</a>
+    <a href="http://122.51.155.114:8002" style="color:#fbbf24">🖥 主控台</a>
+  </div>
+</header>
+<main>
+  <div class="card">
+    <h2>说明</h2>
+    <div class="hint">
+      模板 key 是 LLM 识别用的英文 ID，比如 <code class="kbd">miss_you</code> <code class="kbd">safe</code> <code class="kbd">health_concern</code> <code class="kbd">custom</code>。<br>
+      content 里用 <code class="kbd">${name}</code> 表示发送人（噜噜替老人发），其它变量按 variables 字段定义（逗号分隔，例如 <code class="kbd">name,msg,tip</code>）。<br>
+      <b>短信走腾讯云</b>需要先在腾讯云控制台申请签名+模板审核通过，再把模板 ID 和签名填到对应字段，并打开「短信支持」。<br>
+      <b>微信走 WxPusher</b>无需模板审核，任意 content 都能发。
+    </div>
+    <button onclick="openAdd()">+ 新增模板</button>
+    <button class="ghost" onclick="loadTemplates()">刷新</button>
+  </div>
+
+  <div class="card">
+    <h2>模板列表</h2>
+    <table id="tplTable">
+      <thead><tr>
+        <th>ID</th><th>Key</th><th>显示名</th><th>内容</th><th>变量</th>
+        <th>短信模板/签名</th><th>状态</th><th>操作</th>
+      </tr></thead>
+      <tbody></tbody>
+    </table>
+  </div>
+</main>
+
+<div class="modal" id="editModal" onclick="closeModal(event)">
+  <div class="modal-box" onclick="event.stopPropagation()">
+    <h3 id="modalTitle">新增模板</h3>
+    <div class="form-grid">
+      <label>Key *</label>
+      <input id="f_template_key" placeholder="miss_you / safe / custom...">
+      <label>显示名 *</label>
+      <input id="f_display_name" placeholder="想你了 / 报平安">
+
+      <label class="full">内容 *</label>
+      <textarea id="f_content" class="full" placeholder="${name}有点想你了，常回家看看吧"></textarea>
+
+      <label>变量(逗号分隔)</label>
+      <input id="f_variables" placeholder="name 或 name,msg,tip">
+      <label>启用</label>
+      <select id="f_enabled">
+        <option value="1">启用</option>
+        <option value="0">停用</option>
+      </select>
+
+      <label>短信支持</label>
+      <select id="f_sms_supported" onchange="toggleSmsFields()">
+        <option value="0">仅微信（推荐）</option>
+        <option value="1">短信+微信</option>
+      </select>
+      <label>&nbsp;</label>
+      <div class="muted" style="font-size:12px">短信支持仅在腾讯云模板审核通过后开启</div>
+
+      <label>腾讯短信模板 ID</label>
+      <input id="f_tencent_sms_template_id" placeholder="例如 2334455">
+      <label>腾讯短信签名</label>
+      <input id="f_tencent_sms_sign" placeholder="例如 噜噜机器人">
+    </div>
+    <div class="row" style="margin-top:18px;justify-content:flex-end">
+      <button class="ghost" onclick="closeModal()">取消</button>
+      <button class="success" onclick="saveTpl()">保存</button>
+    </div>
+  </div>
+</div>
+
+<script>
+let editingId = null;
+
+async function api(path, opts={}) {
+  const r = await fetch(path, opts);
+  const t = await r.text();
+  try { return JSON.parse(t); } catch(e) { return {raw: t, status: r.status}; }
+}
+
+function escapeHtml(s) {
+  return (s||"").replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+}
+
+async function loadTemplates() {
+  const d = await api("/api/msg/templates");
+  const list = d.list || [];
+  const tb = document.querySelector("#tplTable tbody");
+  tb.innerHTML = "";
+  if (list.length === 0) {
+    tb.innerHTML = '<tr><td colspan="8" class="empty">还没模板</td></tr>';
+    return;
+  }
+  for (const t of list) {
+    const tr = document.createElement("tr");
+    const en = t.enabled == 1 ? '<span class="tag">启用</span>' : '<span class="tag gray">停用</span>';
+    const sms = t.sms_supported == 1 ? '<span class="tag warn">短信+微信</span>' : '<span class="tag gray">仅微信</span>';
+    tr.innerHTML = `
+      <td><code>${t.id}</code></td>
+      <td><code style="font-size:12px;color:#be185d">${t.template_key}</code></td>
+      <td><b>${escapeHtml(t.display_name)}</b></td>
+      <td style="max-width:280px">${escapeHtml(t.content)}</td>
+      <td><code style="font-size:11px">${escapeHtml(t.variables||"-")}</code></td>
+      <td>
+        <div class="muted">tpl: ${escapeHtml(t.tencent_sms_template_id||"-")}</div>
+        <div class="muted">sign: ${escapeHtml(t.tencent_sms_sign||"-")}</div>
+      </td>
+      <td>${en}<br>${sms}</td>
+      <td>
+        <button class="ghost" onclick='openEdit(${JSON.stringify(t)})'>编辑</button>
+        <button class="danger" onclick="delTpl(${t.id},'${(t.template_key||"").replace(/'/g,"")}')">删除</button>
+      </td>`;
+    tb.appendChild(tr);
+  }
+}
+
+function openAdd() {
+  editingId = null;
+  document.getElementById("modalTitle").textContent = "新增模板";
+  document.getElementById("f_template_key").value = "";
+  document.getElementById("f_template_key").disabled = false;
+  document.getElementById("f_display_name").value = "";
+  document.getElementById("f_content").value = "";
+  document.getElementById("f_variables").value = "name";
+  document.getElementById("f_enabled").value = "1";
+  document.getElementById("f_sms_supported").value = "0";
+  document.getElementById("f_tencent_sms_template_id").value = "";
+  document.getElementById("f_tencent_sms_sign").value = "";
+  document.getElementById("editModal").classList.add("show");
+}
+
+function openEdit(t) {
+  editingId = t.id;
+  document.getElementById("modalTitle").textContent = "编辑模板 " + t.template_key;
+  document.getElementById("f_template_key").value = t.template_key;
+  document.getElementById("f_template_key").disabled = true;
+  document.getElementById("f_display_name").value = t.display_name||"";
+  document.getElementById("f_content").value = t.content||"";
+  document.getElementById("f_variables").value = t.variables||"";
+  document.getElementById("f_enabled").value = String(t.enabled == 1 ? 1 : 0);
+  document.getElementById("f_sms_supported").value = String(t.sms_supported == 1 ? 1 : 0);
+  document.getElementById("f_tencent_sms_template_id").value = t.tencent_sms_template_id||"";
+  document.getElementById("f_tencent_sms_sign").value = t.tencent_sms_sign||"";
+  document.getElementById("editModal").classList.add("show");
+}
+
+function closeModal(e) {
+  if (e && e.target.id !== "editModal") return;
+  document.getElementById("editModal").classList.remove("show");
+}
+
+function toggleSmsFields() {}
+
+async function saveTpl() {
+  const body = {
+    template_key: document.getElementById("f_template_key").value.trim(),
+    display_name: document.getElementById("f_display_name").value.trim(),
+    content: document.getElementById("f_content").value,
+    variables: document.getElementById("f_variables").value.trim(),
+    sms_supported: document.getElementById("f_sms_supported").value === "1",
+    tencent_sms_template_id: document.getElementById("f_tencent_sms_template_id").value.trim(),
+    tencent_sms_sign: document.getElementById("f_tencent_sms_sign").value.trim(),
+    enabled: document.getElementById("f_enabled").value === "1",
+  };
+  if (!body.template_key || !body.display_name || !body.content) {
+    alert("key/显示名/内容 必填"); return;
+  }
+  if (body.sms_supported && (!body.tencent_sms_template_id || !body.tencent_sms_sign)) {
+    if (!confirm("打开了短信支持但腾讯云模板 ID 或签名为空。短信会发不出去，继续？")) return;
+  }
+  const url = editingId ? `/api/msg/templates/${editingId}` : "/api/msg/templates";
+  const method = editingId ? "PUT" : "POST";
+  const r = await api(url, {
+    method, headers:{"Content-Type":"application/json"},
+    body: JSON.stringify(body),
+  });
+  if (r.ok) {
+    closeModal();
+    loadTemplates();
+  } else {
+    alert("保存失败: " + JSON.stringify(r));
+  }
+}
+
+async function delTpl(id, key) {
+  if (!confirm(`删除模板「${key}」?`)) return;
+  await api(`/api/msg/templates/${id}`, {method:"DELETE"});
+  loadTemplates();
+}
+
+loadTemplates();
+</script>
+</body>
+</html>

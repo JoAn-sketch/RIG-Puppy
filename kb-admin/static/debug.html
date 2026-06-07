@@ -1,0 +1,257 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>调试台 · 噜噜后端</title>
+<style>
+* { box-sizing: border-box; }
+body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; margin: 0; background: #f5f6f8; color: #222; }
+header { background: #1f2937; color: #fff; padding: 14px 24px; display:flex; justify-content:space-between; align-items:center; }
+header h1 { margin: 0; font-size: 18px; font-weight: 500; }
+header a { color: #9ca3af; text-decoration: none; font-size: 13px; margin-left: 16px; }
+header a:hover { color: #fff; }
+main { max-width: 1200px; margin: 24px auto; padding: 0 16px; }
+.card { background: #fff; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,.08); padding: 20px; margin-bottom: 20px; }
+h2 { margin: 0 0 14px; font-size: 15px; color: #374151; border-left: 3px solid #3b82f6; padding-left: 10px; }
+button { background: #3b82f6; color: #fff; border: 0; padding: 7px 14px; border-radius: 5px; cursor: pointer; font-size: 13px; }
+button:hover { background: #2563eb; }
+button.danger { background: #ef4444; }
+button.ghost { background: #fff; color: #374151; border: 1px solid #d1d5db; }
+button.success { background: #10b981; }
+input, select, textarea { font-size: 13px; padding: 6px 10px; border: 1px solid #d1d5db; border-radius: 5px; outline: none; }
+.muted { color: #9ca3af; font-size: 12px; }
+.row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.tag { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; }
+.tag.on { background: #dcfce7; color: #166534; }
+.tag.off { background: #fee2e2; color: #991b1b; }
+pre { background: #f9fafb; color: #374151; border: 1px solid #e5e7eb; padding: 14px; border-radius: 6px; font-size: 12px; max-height: 500px; overflow: auto; white-space: pre-wrap; word-break: break-word; }
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid #e5e7eb; }
+th { background: #f9fafb; font-weight: 500; color: #6b7280; }
+.modal { position: fixed; inset: 0; background: rgba(0,0,0,.5); display: none; align-items: center; justify-content: center; z-index: 100; }
+.modal.show { display: flex; }
+.modal-box { background: #fff; border-radius: 8px; padding: 20px; max-width: 900px; width: 95%; max-height: 85vh; overflow: auto; }
+.toggle-switch { position: relative; display: inline-block; width: 44px; height: 24px; cursor: pointer; }
+.toggle-switch input { opacity: 0; width: 0; height: 0; }
+.toggle-switch .slider { position: absolute; inset: 0; background: #d1d5db; border-radius: 12px; transition: .2s; }
+.toggle-switch .slider:before { content: ''; position: absolute; height: 18px; width: 18px; left: 3px; bottom: 3px; background: #fff; border-radius: 50%; transition: .2s; }
+.toggle-switch input:checked + .slider { background: #10b981; }
+.toggle-switch input:checked + .slider:before { transform: translateX(20px); }
+</style>
+</head>
+<body>
+<header>
+  <h1>🐾 噜噜管理后台</h1>
+  <div>
+    <a href="/">📚 后端</a>
+    <a href="/contacts">👥 联系人</a>
+    <a href="/templates">📨 消息模板</a>
+    <a href="/message-log">📋 发送日志</a>
+    <a href="/reminders">⏰ 提醒计划</a>
+    <a href="/monitor">📊 系统监控</a>
+    <a href="/prompt">📝 Prompt</a>
+    <a href="/modes">🎭 模式管理</a>
+    <a href="/portrait">🧑 画像</a>
+    <a href="/mood">😊 情绪</a>
+    <a href="/actions">🐕 动作</a>
+    <a href="/memo">📝 备忘录</a>
+    <a href="/llm-logs" style="color:#60a5fa">🔍 LLM日志</a>
+    <a href="/debug">🔧 调试</a>
+    <a href="/settings">⚙️ 设置</a>
+    <a href="/iot" style="color:#34d399">🏠 家居</a>
+    <a href="/health" style="color:#f472b6">🏥 健康</a>
+    <a href="/voiceprint" style="color:#a78bfa">🎤 声纹</a>
+    <a href="http://122.51.155.114:8002" style="color:#fbbf24">🖥 主控台</a>
+  </div>
+</header>
+<main>
+
+  <!-- 系统开关 -->
+  <div class="card">
+    <h2>系统开关</h2>
+    <div id="configList" class="row" style="gap:24px"></div>
+  </div>
+
+  <!-- 今日策略 -->
+  <div class="card">
+    <h2>今日陪伴策略</h2>
+    <div class="row" style="margin-bottom:12px">
+      <button class="success" onclick="generateStrategy()">✨ 立即生成今日策略</button>
+      <button class="ghost" onclick="loadStrategy()">刷新</button>
+    </div>
+    <pre id="strategyContent" class="muted">加载中...</pre>
+    <div class="muted" id="strategyMeta"></div>
+  </div>
+
+  <!-- 策略历史 -->
+  <div class="card">
+    <h2>策略历史</h2>
+    <table id="strategyTable"><thead><tr><th>日期</th><th>策略内容</th><th>生成时间</th></tr></thead><tbody></tbody></table>
+  </div>
+
+  <!-- Prompt 日志 -->
+  <div class="card">
+    <h2>Prompt 日志</h2>
+    <p class="muted">每次设备连接时生成的完整 System Prompt</p>
+    <div class="row" style="margin-bottom:12px">
+      <button class="ghost" onclick="loadPromptLogs()">刷新</button>
+      <span class="muted">最近 30 条</span>
+    </div>
+    <table id="promptTable"><thead><tr><th>时间</th><th>设备</th><th>长度</th><th>操作</th></tr></thead><tbody></tbody></table>
+  </div>
+
+  <!-- 对话历史 -->
+  <div class="card">
+    <h2>对话历史</h2>
+    <div class="row" style="margin-bottom:12px">
+      <button class="ghost" onclick="loadChatHistory()">刷新</button>
+      <span class="muted">最近 50 条消息</span>
+    </div>
+    <div id="chatHistory" style="max-height:500px;overflow:auto"></div>
+  </div>
+
+</main>
+
+<!-- Prompt Detail Modal -->
+<div class="modal" id="promptModal" onclick="if(event.target===this)this.classList.remove('show')">
+  <div class="modal-box">
+    <h3 id="promptModalTitle">完整 System Prompt</h3>
+    <pre id="promptModalBody"></pre>
+    <div class="row" style="margin-top:12px;justify-content:flex-end">
+      <button class="ghost" onclick="document.getElementById('promptModal').classList.remove('show')">关闭</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ===== System Config =====
+async function loadConfig() {
+  const res = await fetch('/api/debug/config');
+  const data = await res.json();
+  const el = document.getElementById('configList');
+  el.innerHTML = data.map(c => `
+    <div style="display:flex;align-items:center;gap:8px">
+      <label class="toggle-switch">
+        <input type="checkbox" ${c.config_value==='1'?'checked':''} onchange="toggleConfig('${c.config_key}', this.checked)">
+        <span class="slider"></span>
+      </label>
+      <span style="font-size:13px">${c.description || c.config_key}</span>
+      <span class="tag ${c.config_value==='1'?'on':'off'}" id="tag-${c.config_key}">${c.config_value==='1'?'ON':'OFF'}</span>
+    </div>
+  `).join('');
+}
+
+async function toggleConfig(key, on) {
+  await fetch('/api/debug/config/' + key, {
+    method: 'PUT',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({value: on ? '1' : '0'})
+  });
+  const tag = document.getElementById('tag-' + key);
+  if (tag) {
+    tag.textContent = on ? 'ON' : 'OFF';
+    tag.className = 'tag ' + (on ? 'on' : 'off');
+  }
+}
+
+// ===== Strategy =====
+async function loadStrategy() {
+  const res = await fetch('/api/debug/strategy/today');
+  const data = await res.json();
+  const el = document.getElementById('strategyContent');
+  const meta = document.getElementById('strategyMeta');
+  if (data.strategy_text) {
+    el.textContent = data.strategy_text;
+    el.className = '';
+    meta.textContent = `生成时间: ${data.created_at || '-'}`;
+  } else {
+    el.textContent = '今日尚未生成策略';
+    el.className = 'muted';
+    meta.textContent = '';
+  }
+}
+
+async function generateStrategy() {
+  const el = document.getElementById('strategyContent');
+  el.textContent = '正在生成...';
+  el.className = 'muted';
+  const res = await fetch('/api/debug/strategy/generate', {method:'POST'});
+  const data = await res.json();
+  if (data.strategy) {
+    el.textContent = data.strategy;
+    el.className = '';
+    loadStrategyHistory();
+  } else {
+    el.textContent = data.error || '生成失败';
+  }
+}
+
+async function loadStrategyHistory() {
+  const res = await fetch('/api/debug/strategy/history');
+  const data = await res.json();
+  const tb = document.querySelector('#strategyTable tbody');
+  if (!data.length) {
+    tb.innerHTML = '<tr><td colspan="3" class="muted" style="text-align:center">暂无历史</td></tr>';
+    return;
+  }
+  tb.innerHTML = data.map(s => `<tr>
+    <td><b>${s.strategy_date}</b></td>
+    <td style="max-width:600px;white-space:pre-wrap;font-size:12px">${s.strategy_text}</td>
+    <td class="muted">${s.created_at}</td>
+  </tr>`).join('');
+}
+
+// ===== Prompt Logs =====
+async function loadPromptLogs() {
+  const res = await fetch('/api/debug/prompt-logs');
+  const data = await res.json();
+  const tb = document.querySelector('#promptTable tbody');
+  if (!data.length) {
+    tb.innerHTML = '<tr><td colspan="4" class="muted" style="text-align:center">暂无日志</td></tr>';
+    return;
+  }
+  tb.innerHTML = data.map(p => `<tr>
+    <td class="muted">${p.timestamp}</td>
+    <td><code style="font-size:11px">${p.device_mac || '-'}</code></td>
+    <td>${p.prompt_length} 字</td>
+    <td><button class="ghost" style="padding:3px 10px;font-size:12px" onclick="showPrompt(${p.id})">查看</button></td>
+  </tr>`).join('');
+}
+
+async function showPrompt(id) {
+  const res = await fetch('/api/debug/prompt-logs/' + id);
+  const data = await res.json();
+  document.getElementById('promptModalTitle').textContent = `System Prompt #${id} (${data.timestamp || ''})`;
+  document.getElementById('promptModalBody').textContent = data.system_prompt || '(empty)';
+  document.getElementById('promptModal').classList.add('show');
+}
+
+// ===== Chat History =====
+async function loadChatHistory() {
+  const res = await fetch('/api/debug/chat-history');
+  const data = await res.json();
+  const el = document.getElementById('chatHistory');
+  if (!data.length) {
+    el.innerHTML = '<p class="muted" style="text-align:center">暂无对话</p>';
+    return;
+  }
+  el.innerHTML = data.map(m => {
+    const isUser = m.chat_type === 1 || m.chat_type === '1';
+    return `<div style="display:flex;gap:8px;padding:6px 0;${isUser?'':'flex-direction:row-reverse'}">
+      <span style="font-size:11px;color:${isUser?'#3b82f6':'#10b981'};min-width:20px">${isUser?'👤':'🐕'}</span>
+      <div style="background:${isUser?'#eff6ff':'#f0fdf4'};padding:6px 12px;border-radius:8px;font-size:13px;max-width:80%">${m.content}</div>
+      <span class="muted" style="font-size:10px;white-space:nowrap">${(m.created_at||'').substring(11,19)}</span>
+    </div>`;
+  }).join('');
+  el.scrollTop = el.scrollHeight;
+}
+
+// Init
+loadConfig();
+loadStrategy();
+loadStrategyHistory();
+loadPromptLogs();
+loadChatHistory();
+</script>
+</body>
+</html>

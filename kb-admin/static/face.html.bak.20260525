@@ -1,0 +1,348 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>人脸跟踪调试 · 噜噜后端</title>
+<style>
+* { box-sizing: border-box; }
+body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; margin: 0; background: #f5f6f8; color: #222; }
+header { background: #1f2937; color: #fff; padding: 14px 24px; display:flex; justify-content:space-between; align-items:center; flex-wrap: wrap; gap: 8px; }
+header h1 { margin: 0; font-size: 18px; font-weight: 500; }
+header a { color: #9ca3af; text-decoration: none; font-size: 13px; margin-left: 16px; }
+header a:hover { color: #fff; }
+header a.active { color: #fff; }
+main { max-width: 1200px; margin: 24px auto; padding: 0 16px; }
+.card { background: #fff; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,.08); padding: 20px; margin-bottom: 20px; }
+h2 { margin: 0 0 14px; font-size: 15px; color: #374151; border-left: 3px solid #3b82f6; padding-left: 10px; display:flex; align-items:center; gap:8px; }
+button { background: #3b82f6; color: #fff; border: 0; padding: 7px 14px; border-radius: 5px; cursor: pointer; font-size: 13px; }
+button:hover { background: #2563eb; }
+button.ghost { background: #fff; color: #374151; border: 1px solid #d1d5db; }
+select, input { font-size: 13px; padding: 6px 10px; border: 1px solid #d1d5db; border-radius: 5px; outline: none; }
+.muted { color: #9ca3af; font-size: 12px; }
+.row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.grid { display:grid; grid-template-columns: 1fr 1fr; gap:20px; }
+@media(max-width:800px){ .grid { grid-template-columns:1fr; } }
+.stat-grid { display:grid; grid-template-columns: repeat(4, 1fr); gap:14px; }
+@media(max-width:700px){ .stat-grid { grid-template-columns: repeat(2,1fr); } }
+.stat { background:#f9fafb; border:1px solid #e5e7eb; border-radius:6px; padding:14px; }
+.stat .label { font-size:11px; color:#6b7280; margin-bottom:6px; }
+.stat .value { font-size:22px; font-weight:600; color:#111827; }
+.stat .sub { font-size:11px; color:#9ca3af; margin-top:4px; }
+table { width: 100%; border-collapse: collapse; font-size: 12px; }
+th, td { text-align: left; padding: 7px 8px; border-bottom: 1px solid #e5e7eb; }
+th { background: #f9fafb; font-weight: 500; color: #6b7280; font-size:11px; }
+tr.found td { background:#ecfdf5; }
+tr.edge td { background:#fef3c7; }
+tr.turn td { background:#dbeafe; }
+tr.give td { background:#fee2e2; }
+.tag { display:inline-block; padding:1px 8px; border-radius:10px; font-size:10px; font-weight:500; }
+.tag.found { background:#10b981; color:#fff; }
+.tag.edge { background:#f59e0b; color:#fff; }
+.tag.turn { background:#3b82f6; color:#fff; }
+.tag.give { background:#ef4444; color:#fff; }
+.tag.eye { background:#8b5cf6; color:#fff; }
+.tag.waist { background:#06b6d4; color:#fff; }
+pre { background:#0f172a; color:#e2e8f0; border-radius:6px; padding:14px; font-size:11px; max-height:400px; overflow:auto; white-space:pre-wrap; word-break:break-word; line-height:1.5; }
+.canvas-wrap { display:flex; flex-direction:column; align-items:center; gap:10px; }
+canvas { border:1px solid #d1d5db; border-radius:50%; background:radial-gradient(circle,#fef3c7 0%,#fde68a 70%,#f59e0b 100%); }
+.legend { display:flex; gap:14px; font-size:11px; color:#6b7280; flex-wrap:wrap; justify-content:center; }
+.legend i { display:inline-block; width:10px; height:10px; border-radius:50%; margin-right:4px; vertical-align:middle; }
+.dot-red{background:#ef4444;} .dot-blue{background:#3b82f6;} .dot-gray{background:#9ca3af;}
+.live-dot { display:inline-block; width:8px; height:8px; border-radius:50%; background:#10b981; animation:pulse 1s infinite; }
+@keyframes pulse { 0%,100%{opacity:1;} 50%{opacity:0.3;} }
+.params { display:grid; grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); gap:10px; }
+.param { background:#f9fafb; padding:10px; border-radius:6px; border:1px solid #e5e7eb; }
+.param .k { font-size:10px; color:#6b7280; }
+.param .v { font-size:14px; font-weight:600; color:#111827; }
+</style>
+</head>
+<body>
+<header>
+  <h1>🐾 噜噜管理后台</h1>
+  <div>
+    <a href="/">📚 后端</a>
+    <a href="/monitor">📊 系统监控</a>
+    <a href="/prompt">📝 Prompt</a>
+    <a href="/portrait">🧑 画像</a>
+    <a href="/actions">🐕 动作</a>
+    <a href="/face" class="active" style="color:#60a5fa">👁️ 人脸跟踪</a>
+    <a href="/debug">🔧 调试</a>
+  </div>
+</header>
+
+<main>
+
+<div class="card">
+  <h2>📊 概览 <span class="muted" style="font-weight:normal; font-size:12px;">最近 <span id="window-display">15</span> 分钟内</span></h2>
+  <div class="stat-grid">
+    <div class="stat"><div class="label">扫脸总次数</div><div class="value" id="stat-total">-</div></div>
+    <div class="stat"><div class="label">真·命中</div><div class="value" id="stat-found" style="color:#10b981">-</div><div class="sub" id="stat-found-pct">-</div></div>
+    <div class="stat"><div class="label">边缘伪检测</div><div class="value" id="stat-edge" style="color:#f59e0b">-</div><div class="sub" id="stat-edge-pct">-</div></div>
+    <div class="stat"><div class="label">转身次数</div><div class="value" id="stat-turn" style="color:#3b82f6">-</div></div>
+  </div>
+</div>
+
+<div class="grid">
+
+<div class="card">
+  <h2>🎯 坐标分布 <span class="muted" style="font-weight:normal; font-size:12px;">画面归一化坐标 [-100,100]</span></h2>
+  <div class="canvas-wrap">
+    <canvas id="canvas" width="320" height="320"></canvas>
+    <div class="legend">
+      <span><i class="dot-red"></i>face_locate 上报的脸</span>
+      <span><i class="dot-blue"></i>set_eye_gaze 实际偏移</span>
+      <span><i class="dot-gray"></i>边缘过滤区</span>
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <h2>⚙️ 当前参数</h2>
+  <div class="params">
+    <div class="param"><div class="k">EYE_GAIN</div><div class="v">0.5</div></div>
+    <div class="param"><div class="k">EDGE_REJECT</div><div class="v">75</div></div>
+    <div class="param"><div class="k">SEARCH_YAW_DEG</div><div class="v">100</div></div>
+    <div class="param"><div class="k">SEARCH_MOVE_MS</div><div class="v">1500</div></div>
+    <div class="param"><div class="k">SEARCH_MAX_TURNS</div><div class="v">6</div></div>
+    <div class="param"><div class="k">COOLDOWN_S</div><div class="v">1.2</div></div>
+  </div>
+  <p class="muted" style="margin-top:14px;">这些参数在 <code>plugins_func/functions/face_track.py</code> 顶部,改完 <code>docker restart xiaozhi-esp32-server</code> 生效。</p>
+
+  <h2 style="margin-top:24px;">🔥 当前问题诊断</h2>
+  <div id="diagnosis" style="font-size:13px; line-height:1.7;"></div>
+</div>
+
+</div>
+
+<div class="card">
+  <h2>📜 事件时间线 <span class="live-dot"></span><span class="muted" style="font-weight:normal; font-size:12px;">自动刷新</span>
+    <span style="margin-left:auto; display:flex; gap:10px; align-items:center;">
+      <label class="muted">窗口</label>
+      <select id="window">
+        <option value="5">5 分钟</option>
+        <option value="15" selected>15 分钟</option>
+        <option value="30">30 分钟</option>
+        <option value="60">60 分钟</option>
+      </select>
+      <label class="muted">刷新</label>
+      <select id="interval">
+        <option value="0">手动</option>
+        <option value="2000" selected>2 秒</option>
+        <option value="5000">5 秒</option>
+        <option value="10000">10 秒</option>
+      </select>
+      <button id="refresh">刷新</button>
+    </span>
+  </h2>
+  <div style="max-height:420px; overflow:auto;">
+    <table>
+      <thead><tr><th style="width:90px;">时间</th><th style="width:90px;">事件</th><th>详情</th></tr></thead>
+      <tbody id="events"></tbody>
+    </table>
+  </div>
+</div>
+
+<div class="card">
+  <h2>🔎 原始 face_track 日志 <span class="muted" style="font-weight:normal; font-size:12px;">直接读取 docker logs</span></h2>
+  <pre id="rawlog">加载中...</pre>
+</div>
+
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+const canvas = $('canvas'), ctx = canvas.getContext('2d');
+const W = canvas.width, H = canvas.height;
+const CX = W/2, CY = H/2, R = W/2 - 4;
+
+function drawCanvas(events){
+  ctx.clearRect(0,0,W,H);
+
+  // 边缘过滤区(灰圈外环,|x|>75 或 |y|>75)
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(CX, CY, R, 0, Math.PI*2);
+  ctx.clip();
+  ctx.fillStyle = 'rgba(156,163,175,0.25)';
+  ctx.fillRect(0,0,W,H);
+  // 中央安全区(|x|<75 && |y|<75)挖空回背景色
+  const safeRatio = 75/100;
+  ctx.globalCompositeOperation = 'destination-out';
+  ctx.fillRect(CX - R*safeRatio, CY - R*safeRatio, R*safeRatio*2, R*safeRatio*2);
+  ctx.restore();
+
+  // 中心十字
+  ctx.strokeStyle = 'rgba(0,0,0,0.15)';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(CX-R, CY); ctx.lineTo(CX+R, CY);
+  ctx.moveTo(CX, CY-R); ctx.lineTo(CX, CY+R);
+  ctx.stroke();
+  // 中心点
+  ctx.fillStyle = '#374151';
+  ctx.beginPath(); ctx.arc(CX, CY, 3, 0, Math.PI*2); ctx.fill();
+
+  // 把事件画上去(只画 face_locate 和 eye_gaze,最近 30 个)
+  const locs = events.filter(e => e.type==='locate').slice(-30);
+  const eyes = events.filter(e => e.type==='eye').slice(-30);
+
+  locs.forEach((e, i) => {
+    const alpha = 0.3 + 0.7 * (i / Math.max(locs.length-1, 1));
+    const px = CX + (e.x / 100) * R;
+    const py = CY + (e.y / 100) * R;
+    ctx.fillStyle = `rgba(239,68,68,${alpha})`;
+    ctx.beginPath(); ctx.arc(px, py, 5, 0, Math.PI*2); ctx.fill();
+    if (i === locs.length-1){
+      ctx.strokeStyle = '#dc2626'; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(px, py, 9, 0, Math.PI*2); ctx.stroke();
+    }
+  });
+
+  eyes.forEach((e, i) => {
+    const alpha = 0.3 + 0.7 * (i / Math.max(eyes.length-1, 1));
+    const px = CX + (e.x / 100) * R;
+    const py = CY + (e.y / 100) * R;
+    ctx.fillStyle = `rgba(59,130,246,${alpha})`;
+    ctx.beginPath(); ctx.arc(px, py, 4, 0, Math.PI*2); ctx.fill();
+  });
+}
+
+function parseLog(text){
+  const events = [];
+  const lines = text.split('\n');
+  // 匹配格式: 260525 13:29:42[0.9.3-xxx][face_track]-INFO-内容
+  const reEdge   = /^(\d{6}) (\d{2}:\d{2}:\d{2}).*\[face_track\].*边缘伪检测忽略: x=(-?\d+) y=(-?\d+) conf=(\d+)/;
+  const reTrack  = /^(\d{6}) (\d{2}:\d{2}:\d{2}).*\[face_track\].*track: x=(-?\d+) y=(-?\d+) eye=\((-?\d+),(-?\d+)\) a5=(\d+|hold)/;
+  const reTurn   = /^(\d{6}) (\d{2}:\d{2}:\d{2}).*\[face_track\].*未见人脸,转身搜索 第(\d+)\/(\d+)次 vyaw=(-?\d+)/;
+  const reGive   = /^(\d{6}) (\d{2}:\d{2}:\d{2}).*\[face_track\].*转一圈未见人脸,放弃/;
+  // 服务器对 device mcp 的调用(看 LLM 直接调 eye_gaze 的情况)
+  const reEye    = /^(\d{6}) (\d{2}:\d{2}:\d{2}).*mcp工具调用：self\.display\.set_eye_gaze.*: (\{[^}]+\})/;
+  const reMove   = /^(\d{6}) (\d{2}:\d{2}:\d{2}).*mcp工具调用：self\.dog\.move.*: (\{[^}]+\})/;
+  const reInvoke = /^(\d{6}) (\d{2}:\d{2}:\d{2}).*执行工具: face_track/;
+
+  for (const line of lines){
+    let m;
+    if (m = reEdge.exec(line)){
+      events.push({ts:m[2], type:'edge', x:+m[3], y:+m[4], conf:+m[5], raw:line});
+    } else if (m = reTrack.exec(line)){
+      events.push({ts:m[2], type:'locate', x:+m[3], y:+m[4], conf:99, raw:line});
+      events.push({ts:m[2], type:'eye', x:+m[5]*5, y:+m[6]*5, raw:line}); // eye 是 ±20 像素,放大 5 倍到 ±100 显示
+    } else if (m = reTurn.exec(line)){
+      events.push({ts:m[2], type:'turn', n:+m[3], total:+m[4], vyaw:+m[5], raw:line});
+    } else if (m = reGive.exec(line)){
+      events.push({ts:m[2], type:'give', raw:line});
+    } else if (m = reInvoke.exec(line)){
+      events.push({ts:m[2], type:'invoke', raw:line});
+    } else if (m = reEye.exec(line)){
+      try {
+        const d = JSON.parse(m[3]);
+        events.push({ts:m[2], type:'eye_direct', x:d.x||0, y:d.y||0, raw:line});
+      } catch(e){}
+    } else if (m = reMove.exec(line)){
+      try {
+        const d = JSON.parse(m[3]);
+        events.push({ts:m[2], type:'move', vx:d.dog_vx||0, vyaw:d.dog_vyaw||0, time:d.time||0, raw:line});
+      } catch(e){}
+    }
+  }
+  return events;
+}
+
+function renderEvents(events){
+  const tb = $('events');
+  tb.innerHTML = '';
+  const recent = events.slice(-200).reverse();
+  for (const e of recent){
+    const tr = document.createElement('tr');
+    let cls = '', tag = '', detail = '';
+    switch(e.type){
+      case 'invoke': tag='<span class="tag turn">触发</span>'; detail='LLM 调用 face_track'; cls='turn'; break;
+      case 'locate': tag='<span class="tag found">命中</span>'; detail=`x=${e.x}, y=${e.y}`; cls='found'; break;
+      case 'eye': tag='<span class="tag eye">眼睛</span>'; detail=`像素偏移 (${(e.x/5).toFixed(0)},${(e.y/5).toFixed(0)})`; break;
+      case 'edge': tag='<span class="tag edge">伪检测</span>'; detail=`x=${e.x}, y=${e.y}, conf=${e.conf}% — 被过滤`; cls='edge'; break;
+      case 'turn': tag='<span class="tag turn">转身</span>'; detail=`第 ${e.n}/${e.total} 次, vyaw=${e.vyaw}`; cls='turn'; break;
+      case 'give': tag='<span class="tag give">放弃</span>'; detail='转一圈没找到'; cls='give'; break;
+      case 'eye_direct': tag='<span class="tag eye">眼睛*</span>'; detail=`LLM 直调 set_eye_gaze x=${e.x}, y=${e.y}`; break;
+      case 'move': tag='<span class="tag turn">移动</span>'; detail=`vx=${e.vx}, vyaw=${e.vyaw}, t=${e.time}ms`; break;
+    }
+    if (cls) tr.className = cls;
+    tr.innerHTML = `<td>${e.ts}</td><td>${tag}</td><td>${detail}</td>`;
+    tb.appendChild(tr);
+  }
+}
+
+function renderStats(events){
+  const total = events.filter(e => e.type==='locate' || e.type==='edge').length;
+  const found = events.filter(e => e.type==='locate').length;
+  const edge = events.filter(e => e.type==='edge').length;
+  const turn = events.filter(e => e.type==='turn').length;
+  $('stat-total').textContent = total;
+  $('stat-found').textContent = found;
+  $('stat-edge').textContent = edge;
+  $('stat-turn').textContent = turn;
+  $('stat-found-pct').textContent = total>0 ? (found*100/total).toFixed(0)+'%' : '-';
+  $('stat-edge-pct').textContent = total>0 ? (edge*100/total).toFixed(0)+'%' : '-';
+
+  // 诊断
+  const d = $('diagnosis');
+  if (total === 0){
+    d.innerHTML = '<span style="color:#9ca3af">最近窗口无 face_track 活动。让噜噜动起来看看~</span>';
+  } else if (edge / total > 0.8){
+    d.innerHTML = `<span style="color:#dc2626;font-weight:600">⚠️ 边缘伪检测率 ${(edge*100/total).toFixed(0)}%</span><br>
+    <span style="color:#6b7280">原因极可能是固件摄像头字节序问题(大端 RGB565 喂给 RGB565LE 模型),固件已改 swap 待烧录。<br>
+    现状:正常情况扫不到真脸,转身搜索逻辑会启动找你。</span>`;
+  } else if (found > 0 && found / total > 0.5){
+    d.innerHTML = `<span style="color:#10b981;font-weight:600">✅ 命中率 ${(found*100/total).toFixed(0)}%</span> <span style="color:#6b7280">人脸检测工作正常</span>`;
+  } else {
+    d.innerHTML = `<span style="color:#f59e0b;font-weight:600">⚖️ 命中 ${found} / 边缘 ${edge}</span> <span style="color:#6b7280">部分检测,可能距离/角度不佳</span>`;
+  }
+}
+
+function renderRaw(text){
+  // 只保留 face_track 相关行
+  const lines = text.split('\n').filter(l => l.includes('[face_track]') || l.includes('执行工具: face_track'));
+  $('rawlog').textContent = lines.length ? lines.slice(-100).join('\n') : '(无 face_track 相关日志)';
+}
+
+let timer = null;
+async function refresh(){
+  try {
+    const r = await fetch('/api/health/logs?container=xiaozhi-esp32-server&lines=2000');
+    if (!r.ok) throw new Error('HTTP '+r.status);
+    const data = await r.json();
+    const text = data.log || '';
+    // 按时间窗口过滤
+    const minutes = +$('window').value;
+    const now = new Date();
+    const cutoff = new Date(now.getTime() - minutes*60*1000);
+    const cutoffStr = cutoff.toTimeString().slice(0,8);
+    const lines = text.split('\n').filter(l => {
+      const m = l.match(/(\d{2}:\d{2}:\d{2})/);
+      return !m || m[1] >= cutoffStr;
+    });
+    const filteredText = lines.join('\n');
+    const events = parseLog(filteredText);
+    renderStats(events);
+    renderEvents(events);
+    drawCanvas(events);
+    renderRaw(filteredText);
+    $('window-display').textContent = minutes;
+  } catch(e){
+    $('rawlog').textContent = '加载失败: '+e.message;
+  }
+}
+
+function setupTimer(){
+  if (timer) clearInterval(timer);
+  const ms = +$('interval').value;
+  if (ms > 0) timer = setInterval(refresh, ms);
+}
+$('refresh').onclick = refresh;
+$('interval').onchange = setupTimer;
+$('window').onchange = refresh;
+
+refresh();
+setupTimer();
+</script>
+</body>
+</html>

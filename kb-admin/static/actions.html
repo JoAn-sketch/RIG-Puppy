@@ -1,0 +1,352 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>动作编排 · 噜噜</title>
+<style>
+* { box-sizing: border-box; }
+body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; margin: 0; background: #f5f6f8; color: #222; }
+header { background: #1f2937; color: #fff; padding: 14px 24px; display:flex; justify-content:space-between; align-items:center; }
+header h1 { margin: 0; font-size: 18px; font-weight: 500; }
+header a { color: #9ca3af; text-decoration: none; font-size: 13px; margin-left: 16px; }
+header a:hover { color: #fff; }
+main { max-width: 1200px; margin: 24px auto; padding: 0 16px; }
+.card { background: #fff; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,.08); padding: 20px; margin-bottom: 20px; }
+h2 { margin: 0 0 14px; font-size: 15px; color: #374151; border-left: 3px solid #3b82f6; padding-left: 10px; }
+button { background: #3b82f6; color: #fff; border: 0; padding: 7px 14px; border-radius: 5px; cursor: pointer; font-size: 13px; }
+button:hover { background: #2563eb; }
+button.danger { background: #ef4444; }
+button.danger:hover { background: #dc2626; }
+button.ghost { background: #fff; color: #374151; border: 1px solid #d1d5db; }
+button.success { background: #10b981; }
+button.success:hover { background: #059669; }
+button.warn { background: #f59e0b; }
+input, select, textarea { font-size: 13px; padding: 6px 10px; border: 1px solid #d1d5db; border-radius: 5px; outline: none; }
+input:focus, select:focus { border-color: #3b82f6; }
+.muted { color: #9ca3af; font-size: 12px; }
+.row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+
+/* Action group card */
+.group-card { border: 1px solid #e5e7eb; border-radius: 8px; padding: 16px; margin-bottom: 16px; }
+.group-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+.group-header h3 { margin: 0; font-size: 14px; }
+.intensity-badge { display: inline-block; padding: 2px 10px; border-radius: 10px; font-size: 11px; font-weight: 600; }
+.intensity-1 { background: #dcfce7; color: #166534; }
+.intensity-2 { background: #fef3c7; color: #92400e; }
+.intensity-3 { background: #fee2e2; color: #991b1b; }
+
+/* Sequence editor */
+.seq-list { margin: 10px 0; }
+.seq-item { display: flex; align-items: center; gap: 8px; padding: 6px 10px; background: #f9fafb; border-radius: 6px; margin-bottom: 6px; }
+.seq-actions { display: flex; gap: 4px; flex-wrap: wrap; }
+.action-chip { display: inline-flex; align-items: center; gap: 4px; padding: 3px 10px; border-radius: 12px; font-size: 12px; background: #dbeafe; color: #1e40af; cursor: grab; user-select: none; }
+.action-chip .remove { cursor: pointer; color: #93c5fd; font-size: 14px; line-height: 1; }
+.action-chip .remove:hover { color: #ef4444; }
+.action-chip.dragging { opacity: 0.5; }
+
+/* Available actions palette */
+.palette { display: flex; gap: 6px; flex-wrap: wrap; padding: 10px; background: #f3f4f6; border-radius: 6px; margin-bottom: 12px; }
+.palette-chip { padding: 4px 12px; border-radius: 12px; font-size: 12px; background: #e0e7ff; color: #3730a3; cursor: pointer; user-select: none; transition: transform .1s; }
+.palette-chip:hover { transform: scale(1.05); background: #c7d2fe; }
+
+/* Forbidden chips */
+.forbidden-chip { background: #fee2e2; color: #991b1b; }
+
+/* Mode binding */
+.bind-row { display: flex; align-items: center; gap: 12px; padding: 8px 0; border-bottom: 1px solid #f3f4f6; font-size: 13px; }
+.bind-row:last-child { border-bottom: none; }
+.bind-row label { min-width: 80px; font-weight: 500; }
+
+/* Test panel */
+.test-panel { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+.test-result { padding: 10px; background: #f9fafb; border-radius: 6px; font-size: 13px; margin-top: 10px; min-height: 40px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>🐾 噜噜管理后台</h1>
+  <div>
+    <a href="/">📚 后端</a>
+    <a href="/contacts">👥 联系人</a>
+    <a href="/templates">📨 消息模板</a>
+    <a href="/message-log">📋 发送日志</a>
+    <a href="/reminders">⏰ 提醒计划</a>
+    <a href="/monitor">📊 系统监控</a>
+    <a href="/prompt">📝 Prompt</a>
+    <a href="/modes">🎭 模式管理</a>
+    <a href="/portrait">🧑 画像</a>
+    <a href="/mood">😊 情绪</a>
+    <a href="/actions">🐕 动作</a>
+    <a href="/memo">📝 备忘录</a>
+    <a href="/llm-logs" style="color:#60a5fa">🔍 LLM日志</a>
+    <a href="/debug">🔧 调试</a>
+    <a href="/settings">⚙️ 设置</a>
+    <a href="/iot" style="color:#34d399">🏠 家居</a>
+    <a href="/health" style="color:#f472b6">🏥 健康</a>
+    <a href="/voiceprint" style="color:#a78bfa">🎤 声纹</a>
+    <a href="http://122.51.155.114:8002" style="color:#fbbf24">🖥 主控台</a>
+  </div>
+</header>
+<main>
+
+  <!-- Available MCP Actions -->
+  <div class="card">
+    <h2>可用 MCP 动作 <span class="muted">（点击添加到序列）</span></h2>
+    <div class="palette" id="actionPalette"></div>
+  </div>
+
+  <!-- Action Groups -->
+  <div class="card">
+    <h2>动作组配置</h2>
+    <p class="muted">每组有多个候选序列，触发时随机选一个执行。拖拽排序，点击动作面板添加。</p>
+    <div id="groupList"></div>
+  </div>
+
+  <!-- Mode Bindings -->
+  <div class="card">
+    <h2>模式绑定</h2>
+    <p class="muted">每种对话模式允许的最大动作强度、可用动作组、触发概率。</p>
+    <div id="bindList"></div>
+    <div style="margin-top:12px">
+      <button class="success" onclick="saveBindings()">💾 保存绑定</button>
+    </div>
+  </div>
+
+  <!-- Test -->
+  <div class="card">
+    <h2>动作测试</h2>
+    <p class="muted">选择动作组和强度，直接发送到设备执行（需要设备在线）。</p>
+    <div class="test-panel">
+      <select id="testGroup" style="width:120px"></select>
+      <select id="testIntensity" style="width:80px">
+        <option value="1">轻微</option>
+        <option value="2">中等</option>
+        <option value="3">强烈</option>
+      </select>
+      <button class="warn" onclick="testAction()">▶ 执行</button>
+      <button class="ghost" onclick="testSequence()">🎲 随机序列预览</button>
+    </div>
+    <div class="test-result" id="testResult">选择动作组后点击执行</div>
+  </div>
+
+</main>
+
+<script>
+const AVAILABLE_ACTIONS = [
+  'Wave','Naughty','Swing','Lookup','Rolling','Angry','Swimming','Pee',
+  'Stretch','Bouncing','Shaking','Sit','Scratch','Hug','Reset',
+  'action_loop','set_motor_angle','move'
+];
+
+let groups = [];
+let bindings = [];
+let currentEditGroup = null;
+
+// ===== Load =====
+async function load() {
+  const [gRes, bRes] = await Promise.all([
+    fetch('/api/actions/groups'),
+    fetch('/api/actions/bindings')
+  ]);
+  groups = await gRes.json();
+  bindings = await bRes.json();
+  renderPalette();
+  renderGroups();
+  renderBindings();
+  renderTestSelect();
+}
+
+function renderPalette() {
+  const el = document.getElementById('actionPalette');
+  el.innerHTML = AVAILABLE_ACTIONS.map(a =>
+    `<span class="palette-chip" onclick="addActionToCurrentSeq('${a}')" title="点击添加到正在编辑的序列">${a}</span>`
+  ).join('');
+}
+
+function renderGroups() {
+  const el = document.getElementById('groupList');
+  el.innerHTML = groups.map(g => {
+    const seqs = g.sequences || [];
+    const forbidden = g.forbidden || [];
+    return `
+    <div class="group-card" data-code="${g.group_code}">
+      <div class="group-header">
+        <h3>${g.group_name} <span class="muted">(${g.group_code})</span></h3>
+        <div class="row">
+          <span class="intensity-badge intensity-${g.default_intensity}">强度 ${g.default_intensity}</span>
+          <select onchange="changeIntensity('${g.group_code}', this.value)" style="width:80px;font-size:12px">
+            <option value="1" ${g.default_intensity===1?'selected':''}>轻微</option>
+            <option value="2" ${g.default_intensity===2?'selected':''}>中等</option>
+            <option value="3" ${g.default_intensity===3?'selected':''}>强烈</option>
+          </select>
+        </div>
+      </div>
+      <div class="muted" style="margin-bottom:8px">${g.description}</div>
+      <div class="seq-list">
+        ${seqs.map((seq, si) => `
+          <div class="seq-item" data-group="${g.group_code}" data-idx="${si}">
+            <span class="muted" style="min-width:20px">#${si+1}</span>
+            <div class="seq-actions" data-group="${g.group_code}" data-idx="${si}">
+              ${seq.map((a, ai) => `<span class="action-chip" draggable="true" data-group="${g.group_code}" data-seq="${si}" data-pos="${ai}">${a}<span class="remove" onclick="removeAction('${g.group_code}',${si},${ai})">&times;</span></span>`).join(' <span class="muted">→</span> ')}
+            </div>
+            <button class="ghost" style="padding:3px 8px;font-size:11px" onclick="startEditSeq('${g.group_code}',${si})">+</button>
+            <button class="danger" style="padding:3px 8px;font-size:11px" onclick="removeSeq('${g.group_code}',${si})">✕</button>
+          </div>
+        `).join('')}
+      </div>
+      <div class="row" style="margin-top:8px">
+        <button class="ghost" style="font-size:12px" onclick="addSeq('${g.group_code}')">+ 新序列</button>
+        <button class="success" style="font-size:12px" onclick="saveGroup('${g.group_code}')">💾 保存</button>
+      </div>
+      ${forbidden.length ? `<div style="margin-top:8px"><span class="muted">禁用动作:</span> ${forbidden.map(f=>`<span class="action-chip forbidden-chip">${f}</span>`).join(' ')}</div>` : ''}
+    </div>`;
+  }).join('');
+}
+
+function renderBindings() {
+  const el = document.getElementById('bindList');
+  const allGroups = groups.map(g => g.group_code);
+  el.innerHTML = bindings.map(b => {
+    const allowed = b.allowed_groups || allGroups;
+    return `
+    <div class="bind-row" data-mode="${b.mode_code}">
+      <label>${b.mode_code}</label>
+      <span class="muted">最大强度:</span>
+      <select class="bind-intensity" data-mode="${b.mode_code}" style="width:70px">
+        <option value="1" ${b.max_intensity===1?'selected':''}>1</option>
+        <option value="2" ${b.max_intensity===2?'selected':''}>2</option>
+        <option value="3" ${b.max_intensity===3?'selected':''}>3</option>
+      </select>
+      <span class="muted">概率:</span>
+      <input type="number" class="bind-prob" data-mode="${b.mode_code}" value="${b.action_probability}" min="0" max="1" step="0.05" style="width:60px">
+      <span class="muted">允许组:</span>
+      ${allGroups.map(gc => `<label style="font-size:12px;display:flex;align-items:center;gap:2px"><input type="checkbox" class="bind-group" data-mode="${b.mode_code}" value="${gc}" ${allowed.includes(gc)?'checked':''}>${gc}</label>`).join('')}
+    </div>`;
+  }).join('');
+}
+
+function renderTestSelect() {
+  const sel = document.getElementById('testGroup');
+  sel.innerHTML = groups.map(g => `<option value="${g.group_code}">${g.group_name} (${g.group_code})</option>`).join('');
+}
+
+// ===== Edit actions =====
+function startEditSeq(groupCode, seqIdx) {
+  currentEditGroup = { groupCode, seqIdx };
+  document.querySelectorAll('.seq-item').forEach(el => el.style.background = '');
+  const target = document.querySelector(`.seq-item[data-group="${groupCode}"][data-idx="${seqIdx}"]`);
+  if (target) target.style.background = '#eff6ff';
+}
+
+function addActionToCurrentSeq(actionName) {
+  if (!currentEditGroup) {
+    alert('先点击某个序列右边的 + 按钮选中要编辑的序列');
+    return;
+  }
+  const { groupCode, seqIdx } = currentEditGroup;
+  const g = groups.find(x => x.group_code === groupCode);
+  if (!g) return;
+  g.sequences[seqIdx].push(actionName);
+  renderGroups();
+  startEditSeq(groupCode, seqIdx);
+}
+
+function removeAction(groupCode, seqIdx, actionIdx) {
+  const g = groups.find(x => x.group_code === groupCode);
+  if (!g) return;
+  g.sequences[seqIdx].splice(actionIdx, 1);
+  renderGroups();
+}
+
+function addSeq(groupCode) {
+  const g = groups.find(x => x.group_code === groupCode);
+  if (!g) return;
+  g.sequences.push([]);
+  renderGroups();
+  startEditSeq(groupCode, g.sequences.length - 1);
+}
+
+function removeSeq(groupCode, seqIdx) {
+  const g = groups.find(x => x.group_code === groupCode);
+  if (!g || g.sequences.length <= 1) { alert('至少保留一个序列'); return; }
+  g.sequences.splice(seqIdx, 1);
+  renderGroups();
+}
+
+function changeIntensity(groupCode, val) {
+  const g = groups.find(x => x.group_code === groupCode);
+  if (g) g.default_intensity = parseInt(val);
+  renderGroups();
+}
+
+// ===== Save =====
+async function saveGroup(groupCode) {
+  const g = groups.find(x => x.group_code === groupCode);
+  if (!g) return;
+  const res = await fetch('/api/actions/groups/' + groupCode, {
+    method: 'PUT',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({
+      sequences: g.sequences,
+      default_intensity: g.default_intensity,
+      description: g.description,
+      forbidden: g.forbidden
+    })
+  });
+  if (res.ok) {
+    alert('保存成功');
+    load();
+  } else {
+    alert('保存失败: ' + await res.text());
+  }
+}
+
+async function saveBindings() {
+  const data = bindings.map(b => {
+    const mode = b.mode_code;
+    const intensity = parseInt(document.querySelector(`.bind-intensity[data-mode="${mode}"]`).value);
+    const prob = parseFloat(document.querySelector(`.bind-prob[data-mode="${mode}"]`).value);
+    const checkedGroups = [];
+    document.querySelectorAll(`.bind-group[data-mode="${mode}"]:checked`).forEach(cb => checkedGroups.push(cb.value));
+    return { mode_code: mode, max_intensity: intensity, action_probability: prob, allowed_groups: checkedGroups };
+  });
+  const res = await fetch('/api/actions/bindings', {
+    method: 'PUT',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(data)
+  });
+  if (res.ok) {
+    alert('保存成功');
+    load();
+  } else {
+    alert('保存失败: ' + await res.text());
+  }
+}
+
+// ===== Test =====
+async function testAction() {
+  const group = document.getElementById('testGroup').value;
+  const intensity = document.getElementById('testIntensity').value;
+  const el = document.getElementById('testResult');
+  el.textContent = '正在发送...';
+  const res = await fetch('/api/actions/test', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ group, intensity: parseInt(intensity) })
+  });
+  const data = await res.json();
+  el.textContent = data.message || JSON.stringify(data);
+}
+
+function testSequence() {
+  const groupCode = document.getElementById('testGroup').value;
+  const g = groups.find(x => x.group_code === groupCode);
+  if (!g || !g.sequences.length) return;
+  const seq = g.sequences[Math.floor(Math.random() * g.sequences.length)];
+  document.getElementById('testResult').textContent = '随机序列: ' + seq.join(' → ');
+}
+
+load();
+</script>
+</body>
+</html>

@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>消息发送日志 · 噜噜后端</title>
+<style>
+* { box-sizing: border-box; }
+body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; margin: 0; background: #f5f6f8; color: #222; }
+header { background: #1f2937; color: #fff; padding: 14px 24px; display:flex; justify-content:space-between; align-items:center; }
+header h1 { margin: 0; font-size: 18px; font-weight: 500; }
+header a { color: #9ca3af; text-decoration: none; font-size: 13px; margin-left: 16px; }
+header a:hover { color: #fff; }
+main { max-width: 1200px; margin: 24px auto; padding: 0 16px; }
+.card { background: #fff; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,.08); padding: 20px; margin-bottom: 20px; }
+h2 { margin: 0 0 14px; font-size: 15px; color: #374151; border-left: 3px solid #3b82f6; padding-left: 10px; }
+button { background: #3b82f6; color: #fff; border: 0; padding: 7px 14px; border-radius: 5px; cursor: pointer; font-size: 13px; }
+button:hover { background: #2563eb; }
+button.ghost { background: #fff; color: #374151; border: 1px solid #d1d5db; }
+select, input { font-size: 13px; padding: 6px 10px; border: 1px solid #d1d5db; border-radius: 5px; outline: none; background: #fff; }
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid #e5e7eb; vertical-align: top; }
+th { background: #f9fafb; font-weight: 500; color: #6b7280; }
+.row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.muted { color: #9ca3af; font-size: 12px; }
+.tag { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; }
+.tag.ok { background: #dcfce7; color: #166534; }
+.tag.mock { background: #fef3c7; color: #92400e; }
+.tag.err { background: #fee2e2; color: #991b1b; }
+.tag.gray { background: #e5e7eb; color: #4b5563; }
+.empty { color: #9ca3af; padding: 30px; text-align: center; }
+.stat { display: inline-flex; flex-direction: column; padding: 12px 18px; background: #f9fafb; border-radius: 8px; margin-right: 12px; min-width: 100px; }
+.stat .n { font-size: 22px; font-weight: 600; color: #1f2937; }
+.stat .l { font-size: 12px; color: #6b7280; margin-top: 2px; }
+.err-msg { color: #991b1b; font-size: 12px; max-width: 280px; word-break: break-all; }
+</style>
+</head>
+<body>
+<header>
+  <h1>🐾 噜噜管理后台</h1>
+  <div>
+    <a href="/">📚 后端</a>
+    <a href="/contacts">👥 联系人</a>
+    <a href="/templates">📨 消息模板</a>
+    <a href="/message-log">📋 发送日志</a>
+    <a href="/reminders">⏰ 提醒计划</a>
+    <a href="/monitor">📊 系统监控</a>
+    <a href="/prompt">📝 Prompt</a>
+    <a href="/modes">🎭 模式管理</a>
+    <a href="/portrait">🧑 画像</a>
+    <a href="/mood">😊 情绪</a>
+    <a href="/actions">🐕 动作</a>
+    <a href="/memo">📝 备忘录</a>
+    <a href="/llm-logs" style="color:#60a5fa">🔍 LLM日志</a>
+    <a href="/debug">🔧 调试</a>
+    <a href="/settings">⚙️ 设置</a>
+    <a href="/iot" style="color:#34d399">🏠 家居</a>
+    <a href="/health" style="color:#f472b6">🏥 健康</a>
+    <a href="/voiceprint" style="color:#a78bfa">🎤 声纹</a>
+    <a href="http://122.51.155.114:8002" style="color:#fbbf24">🖥 主控台</a>
+  </div>
+</header>
+<main>
+  <div class="card">
+    <h2>筛选</h2>
+    <div class="row">
+      <span class="muted">智能体:</span>
+      <select id="agentSelect" onchange="loadLogs()">
+        <option value="">全部</option>
+      </select>
+      <span class="muted">显示条数:</span>
+      <select id="limitSelect" onchange="loadLogs()">
+        <option value="50">50</option>
+        <option value="100" selected>100</option>
+        <option value="200">200</option>
+        <option value="500">500</option>
+      </select>
+      <button onclick="loadLogs()">刷新</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>近期统计</h2>
+    <div id="stats" class="row"></div>
+  </div>
+
+  <div class="card">
+    <h2>日志</h2>
+    <table id="logsTable">
+      <thead><tr>
+        <th>ID</th><th>时间</th><th>联系人</th><th>通道</th>
+        <th>模板</th><th>内容</th><th>状态</th><th>错误</th>
+      </tr></thead>
+      <tbody></tbody>
+    </table>
+  </div>
+</main>
+
+<script>
+let agents = [];
+
+async function api(path) {
+  const r = await fetch(path);
+  const t = await r.text();
+  try { return JSON.parse(t); } catch(e) { return {raw: t, status: r.status}; }
+}
+
+function escapeHtml(s) {
+  return (s||"").replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+}
+
+async function loadAgents() {
+  const d = await api("/api/msg/agents");
+  agents = d.list || [];
+  const sel = document.getElementById("agentSelect");
+  sel.innerHTML = '<option value="">全部</option>';
+  for (const a of agents) {
+    sel.insertAdjacentHTML("beforeend", `<option value="${a.id}">${a.agent_name}</option>`);
+  }
+}
+
+function statusTag(s) {
+  if (s === "success") return '<span class="tag ok">成功</span>';
+  if (s === "mocked") return '<span class="tag mock">演练</span>';
+  if (s === "error") return '<span class="tag err">失败</span>';
+  return `<span class="tag gray">${s}</span>`;
+}
+
+function channelTag(c) {
+  if (c === "sms") return '<span class="tag gray">短信</span>';
+  if (c === "wechat") return '<span class="tag gray">微信</span>';
+  return `<span class="tag gray">${c}</span>`;
+}
+
+async function loadLogs() {
+  const agent_id = document.getElementById("agentSelect").value;
+  const limit = document.getElementById("limitSelect").value;
+  const q = new URLSearchParams();
+  if (agent_id) q.set("agent_id", agent_id);
+  q.set("limit", limit);
+  const d = await api("/api/msg/logs?" + q.toString());
+  const list = d.list || [];
+
+  const counts = {success:0, mocked:0, error:0, total: list.length};
+  for (const r of list) {
+    if (counts[r.status] !== undefined) counts[r.status]++;
+  }
+  document.getElementById("stats").innerHTML = `
+    <div class="stat"><div class="n">${counts.total}</div><div class="l">总数</div></div>
+    <div class="stat"><div class="n" style="color:#166534">${counts.success}</div><div class="l">成功</div></div>
+    <div class="stat"><div class="n" style="color:#92400e">${counts.mocked}</div><div class="l">演练</div></div>
+    <div class="stat"><div class="n" style="color:#991b1b">${counts.error}</div><div class="l">失败</div></div>
+  `;
+
+  const tb = document.querySelector("#logsTable tbody");
+  tb.innerHTML = "";
+  if (list.length === 0) {
+    tb.innerHTML = '<tr><td colspan="8" class="empty">没日志</td></tr>';
+    return;
+  }
+  for (const r of list) {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td><code>${r.id}</code></td>
+      <td><span class="muted">${escapeHtml(r.created_at)}</span></td>
+      <td><b>${escapeHtml(r.nickname||"-")}</b></td>
+      <td>${channelTag(r.channel)}</td>
+      <td><code style="font-size:11px;color:#be185d">${escapeHtml(r.template_key||"-")}</code></td>
+      <td style="max-width:300px">${escapeHtml(r.rendered||"-")}</td>
+      <td>${statusTag(r.status)}</td>
+      <td class="err-msg">${escapeHtml(r.err_msg||"")}</td>`;
+    tb.appendChild(tr);
+  }
+}
+
+(async () => {
+  await loadAgents();
+  await loadLogs();
+})();
+</script>
+</body>
+</html>

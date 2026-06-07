@@ -1,0 +1,364 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>人脸跟踪调试 (VLM版) · 噜噜后端</title>
+<style>
+* { box-sizing: border-box; }
+body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; margin: 0; background: #f5f6f8; color: #222; }
+header { background: #1f2937; color: #fff; padding: 14px 24px; display:flex; justify-content:space-between; align-items:center; flex-wrap: wrap; gap: 8px; }
+header h1 { margin: 0; font-size: 18px; font-weight: 500; }
+header a { color: #9ca3af; text-decoration: none; font-size: 13px; margin-left: 16px; }
+header a:hover { color: #fff; }
+header a.active { color: #fff; }
+main { max-width: 1200px; margin: 24px auto; padding: 0 16px; }
+.card { background: #fff; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,.08); padding: 20px; margin-bottom: 20px; }
+h2 { margin: 0 0 14px; font-size: 15px; color: #374151; border-left: 3px solid #3b82f6; padding-left: 10px; display:flex; align-items:center; gap:8px; }
+button { background: #3b82f6; color: #fff; border: 0; padding: 7px 14px; border-radius: 5px; cursor: pointer; font-size: 13px; }
+button:hover { background: #2563eb; }
+select, input { font-size: 13px; padding: 6px 10px; border: 1px solid #d1d5db; border-radius: 5px; outline: none; }
+.muted { color: #9ca3af; font-size: 12px; }
+.grid { display:grid; grid-template-columns: 1fr 1fr; gap:20px; }
+@media(max-width:800px){ .grid { grid-template-columns:1fr; } }
+.stat-grid { display:grid; grid-template-columns: repeat(4, 1fr); gap:14px; }
+@media(max-width:700px){ .stat-grid { grid-template-columns: repeat(2,1fr); } }
+.stat { background:#f9fafb; border:1px solid #e5e7eb; border-radius:6px; padding:14px; }
+.stat .label { font-size:11px; color:#6b7280; margin-bottom:6px; }
+.stat .value { font-size:22px; font-weight:600; color:#111827; }
+.stat .sub { font-size:11px; color:#9ca3af; margin-top:4px; }
+table { width: 100%; border-collapse: collapse; font-size: 12px; }
+th, td { text-align: left; padding: 7px 8px; border-bottom: 1px solid #e5e7eb; }
+th { background: #f9fafb; font-weight: 500; color: #6b7280; font-size:11px; }
+tr.vlm td { background:#f0f9ff; }
+tr.center td { background:#ecfdf5; }
+tr.search td { background:#dbeafe; }
+tr.give td { background:#fee2e2; }
+tr.lookup td { background:#fef3c7; }
+tr.success td { background:#d1fae5; font-weight:500; }
+.tag { display:inline-block; padding:1px 8px; border-radius:10px; font-size:10px; font-weight:500; }
+.tag.vlm { background:#0ea5e9; color:#fff; }
+.tag.center { background:#10b981; color:#fff; }
+.tag.search { background:#3b82f6; color:#fff; }
+.tag.give { background:#ef4444; color:#fff; }
+.tag.lookup { background:#f59e0b; color:#fff; }
+.tag.success { background:#059669; color:#fff; }
+.tag.pos { display:inline-block; padding:1px 8px; border-radius:4px; font-size:11px; background:#e5e7eb; color:#374151; margin-left:4px; }
+.tag.pos.left { background:#fde68a; }
+.tag.pos.right { background:#bfdbfe; }
+.tag.pos.middle { background:#a7f3d0; }
+.tag.pos.none { background:#fecaca; }
+pre { background:#0f172a; color:#e2e8f0; border-radius:6px; padding:14px; font-size:11px; max-height:400px; overflow:auto; white-space:pre-wrap; word-break:break-word; line-height:1.5; }
+.diagram { display:flex; justify-content:center; align-items:center; padding:20px; }
+.frame { width:280px; height:210px; border:2px solid #d1d5db; border-radius:6px; position:relative; background:linear-gradient(135deg,#f9fafb 0%,#e5e7eb 100%); }
+.frame .person { position:absolute; top:50%; transform:translateY(-50%); width:30px; height:60px; background:#3b82f6; border-radius:8px; transition:left 0.5s; box-shadow:0 2px 8px rgba(59,130,246,0.4); }
+.frame .person::before { content:""; position:absolute; top:-15px; left:50%; transform:translateX(-50%); width:20px; height:20px; background:#3b82f6; border-radius:50%; }
+.frame .label-zone { position:absolute; top:0; bottom:0; width:33.33%; border-right:1px dashed #cbd5e1; display:flex; justify-content:center; align-items:flex-end; padding-bottom:4px; font-size:10px; color:#9ca3af; }
+.frame .zone-l { left:0; }
+.frame .zone-c { left:33.33%; }
+.frame .zone-r { left:66.66%; border-right:none; }
+.live-dot { display:inline-block; width:8px; height:8px; border-radius:50%; background:#10b981; animation:pulse 1s infinite; }
+@keyframes pulse { 0%,100%{opacity:1;} 50%{opacity:0.3;} }
+.params { display:grid; grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); gap:10px; }
+.param { background:#f9fafb; padding:10px; border-radius:6px; border:1px solid #e5e7eb; }
+.param .k { font-size:10px; color:#6b7280; }
+.param .v { font-size:14px; font-weight:600; color:#111827; }
+</style>
+</head>
+<body>
+<header>
+  <h1>🐾 噜噜管理后台</h1>
+  <div>
+    <a href="/">📚 后端</a>
+    <a href="/monitor">📊 系统监控</a>
+    <a href="/prompt">📝 Prompt</a>
+    <a href="/portrait">🧑 画像</a>
+    <a href="/actions">🐕 动作</a>
+    <a href="/face" class="active" style="color:#60a5fa">👁️ 人脸跟踪</a>
+    <a href="/debug">🔧 调试</a>
+  </div>
+</header>
+
+<main>
+
+<div class="card">
+  <h2>🎯 当前方案 <span class="tag vlm">VLM</span></h2>
+  <p style="margin:0; font-size:13px; color:#374151;">
+    使用<b>视觉模型 (take_photo)</b> 判断画面中人的方位,转身/微调让人居中。
+    上一版 ESP-WHO 本地人脸检测因 GC0308 传感器边缘伪影问题已废弃。
+    <a href="javascript:void(0)" onclick="document.getElementById('flow-detail').style.display=document.getElementById('flow-detail').style.display==='none'?'block':'none'">查看完整流程 ▾</a>
+  </p>
+  <div id="flow-detail" style="display:none; margin-top:12px; padding:12px; background:#f9fafb; border-radius:6px; font-size:12px; line-height:1.8;">
+    <b>1. 拍照问 VLM</b>:画面里有人吗?在左/中/右?<br>
+    <b>2. 没人</b> → 转身搜索,最多 10 次(约 600°)<br>
+    <b>3. 偏左/右</b> → 边偏眼睛边转身,最多微调 4 次<br>
+    <b>4. 居中成功</b> → 眼睛回正,结束<br>
+    <b>5. 多次微调还居不中 / 搜一圈没人</b> → 触发抬头动作 (Lookup)
+  </div>
+</div>
+
+<div class="card">
+  <h2>📊 概览 <span class="muted" style="font-weight:normal; font-size:12px;">最近 <span id="window-display">15</span> 分钟内</span></h2>
+  <div class="stat-grid">
+    <div class="stat"><div class="label">VLM 调用次数</div><div class="value" id="stat-vlm">-</div></div>
+    <div class="stat"><div class="label">居中成功</div><div class="value" id="stat-center" style="color:#10b981">-</div><div class="sub" id="stat-center-pct">-</div></div>
+    <div class="stat"><div class="label">转身搜索</div><div class="value" id="stat-search" style="color:#3b82f6">-</div></div>
+    <div class="stat"><div class="label">抬头(放弃)</div><div class="value" id="stat-lookup" style="color:#f59e0b">-</div></div>
+  </div>
+</div>
+
+<div class="grid">
+
+<div class="card">
+  <h2>📍 最近一次方位 <span class="muted" style="font-weight:normal; font-size:12px;">VLM 判断的人在哪</span></h2>
+  <div class="diagram">
+    <div class="frame" id="frame">
+      <div class="label-zone zone-l">左</div>
+      <div class="label-zone zone-c">中</div>
+      <div class="label-zone zone-r">右</div>
+      <div class="person" id="person" style="left:125px;"></div>
+    </div>
+  </div>
+  <p class="muted" style="text-align:center; margin:0;">蓝色小人 = 当前 VLM 判断的位置;无人时小人隐藏</p>
+  <p style="text-align:center; margin:8px 0 0; font-size:13px;">最新: <span id="latest-pos" style="font-weight:500;">-</span></p>
+</div>
+
+<div class="card">
+  <h2>⚙️ 当前参数</h2>
+  <div class="params">
+    <div class="param"><div class="k">SEARCH_YAW_DEG</div><div class="v">100</div></div>
+    <div class="param"><div class="k">SEARCH_MOVE_MS</div><div class="v">2500</div></div>
+    <div class="param"><div class="k">SEARCH_MAX_TURNS</div><div class="v">10</div></div>
+    <div class="param"><div class="k">CENTER_MOVE_MS</div><div class="v">800</div></div>
+    <div class="param"><div class="k">CENTER_MAX_ATTEMPTS</div><div class="v">4</div></div>
+    <div class="param"><div class="k">COOLDOWN_S</div><div class="v">1.5</div></div>
+  </div>
+  <p class="muted" style="margin-top:14px;">参数在 <code>plugins_func/functions/face_track.py</code> 顶部,改完 <code>docker restart xiaozhi-esp32-server</code> 生效。</p>
+
+  <h2 style="margin-top:24px;">🔥 状态诊断</h2>
+  <div id="diagnosis" style="font-size:13px; line-height:1.7;">-</div>
+</div>
+
+</div>
+
+<div class="card">
+  <h2>📜 事件时间线 <span class="live-dot"></span><span class="muted" style="font-weight:normal; font-size:12px;">自动刷新</span>
+    <span style="margin-left:auto; display:flex; gap:10px; align-items:center;">
+      <label class="muted">窗口</label>
+      <select id="window">
+        <option value="5">5 分钟</option>
+        <option value="15" selected>15 分钟</option>
+        <option value="30">30 分钟</option>
+        <option value="60">60 分钟</option>
+      </select>
+      <label class="muted">刷新</label>
+      <select id="interval">
+        <option value="0">手动</option>
+        <option value="2000" selected>2 秒</option>
+        <option value="5000">5 秒</option>
+        <option value="10000">10 秒</option>
+      </select>
+      <button id="refresh">刷新</button>
+    </span>
+  </h2>
+  <div style="max-height:480px; overflow:auto;">
+    <table>
+      <thead><tr><th style="width:80px;">时间</th><th style="width:100px;">事件</th><th>详情</th></tr></thead>
+      <tbody id="events"></tbody>
+    </table>
+  </div>
+</div>
+
+<div class="card">
+  <h2>🔎 原始 face_track 日志 <span class="muted" style="font-weight:normal; font-size:12px;">直接读取 docker logs</span></h2>
+  <pre id="rawlog">加载中...</pre>
+</div>
+
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+
+function setPersonPos(posKey){
+  const person = $('person');
+  const frame = $('frame');
+  const w = frame.offsetWidth;
+  const personW = 30;
+  let leftPx = (w - personW) / 2;  // center
+  let label = '中';
+  if (posKey === 'left'){ leftPx = 15; label = '左'; }
+  else if (posKey === 'slight_left'){ leftPx = w * 0.28; label = '偏左'; }
+  else if (posKey === 'right'){ leftPx = w - personW - 15; label = '右'; }
+  else if (posKey === 'slight_right'){ leftPx = w * 0.62; label = '偏右'; }
+  else if (posKey === 'center'){ leftPx = (w - personW) / 2; label = '中'; }
+  else if (posKey === 'none'){ person.style.opacity = 0; $('latest-pos').textContent = '画面中无人'; return; }
+  else { person.style.opacity = 0; $('latest-pos').textContent = '未知'; return; }
+  person.style.opacity = 1;
+  person.style.left = leftPx + 'px';
+  $('latest-pos').textContent = label;
+}
+
+function parseLog(text){
+  const events = [];
+  const lines = text.split('\n');
+  // 新版日志正则
+  const reVlm    = /^(\d{6}) (\d{2}:\d{2}:\d{2}).*\[face_track\].*VLM 返回: '([^']*)'\s*->\s*解析=(\w+)/;
+  const reSearch = /^(\d{6}) (\d{2}:\d{2}:\d{2}).*\[face_track\].*未见人,转身搜索 第(\d+)\/(\d+)次/;
+  const reCenter = /^(\d{6}) (\d{2}:\d{2}:\d{2}).*\[face_track\].*居中尝试 (\d+): VLM='([^']*)'\s*->\s*(\w+)/;
+  const reSucc   = /^(\d{6}) (\d{2}:\d{2}:\d{2}).*\[face_track\].*居中成功/;
+  const reAlready= /^(\d{6}) (\d{2}:\d{2}:\d{2}).*\[face_track\].*人在画面中央,眼睛居中/;
+  const reGive   = /^(\d{6}) (\d{2}:\d{2}:\d{2}).*\[face_track\].*搜索一圈未见人/;
+  const reLookup = /^(\d{6}) (\d{2}:\d{2}:\d{2}).*\[face_track\].*多次微调未能居中,执行抬头/;
+  const reLost   = /^(\d{6}) (\d{2}:\d{2}:\d{2}).*\[face_track\].*居中过程中丢失人脸/;
+  const reFail   = /^(\d{6}) (\d{2}:\d{2}:\d{2}).*\[face_track\].*WARNING.*(失败|超时)/;
+
+  for (const line of lines){
+    let m;
+    if (m = line.match(reVlm)){
+      events.push({ts: m[2], type:'vlm', vlm: m[3], pos: m[4], raw: line});
+    } else if (m = line.match(reCenter)){
+      events.push({ts: m[2], type:'center', attempt: m[3], vlm: m[4], pos: m[5], raw: line});
+    } else if (m = line.match(reSearch)){
+      events.push({ts: m[2], type:'search', cur: m[3], total: m[4], raw: line});
+    } else if (m = line.match(reSucc)){
+      events.push({ts: m[2], type:'success', detail:'居中成功', raw: line});
+    } else if (m = line.match(reAlready)){
+      events.push({ts: m[2], type:'success', detail:'已经居中', raw: line});
+    } else if (m = line.match(reGive)){
+      events.push({ts: m[2], type:'give', detail:'搜一圈没找到', raw: line});
+    } else if (m = line.match(reLookup)){
+      events.push({ts: m[2], type:'lookup', detail:'多次微调未居中,抬头', raw: line});
+    } else if (m = line.match(reLost)){
+      events.push({ts: m[2], type:'lookup', detail:'微调中丢人脸', raw: line});
+    } else if (m = line.match(reFail)){
+      events.push({ts: m[2], type:'give', detail: line.split(']-WARNING-').pop() || '失败', raw: line});
+    }
+  }
+  return events;
+}
+
+const POS_LABEL = {
+  'center':'中', 'left':'左', 'right':'右',
+  'slight_left':'偏左', 'slight_right':'偏右',
+  'none':'无人', 'unknown':'未知'
+};
+
+function posTag(pos){
+  const cls = (pos==='center')?'middle':(pos==='left'||pos==='slight_left')?'left':(pos==='right'||pos==='slight_right')?'right':'none';
+  return `<span class="tag pos ${cls}">${POS_LABEL[pos]||pos}</span>`;
+}
+
+function renderEvents(events){
+  const tbody = $('events');
+  tbody.innerHTML = '';
+  // 倒序最新在上
+  events.slice().reverse().forEach(ev => {
+    const tr = document.createElement('tr');
+    tr.className = ev.type;
+    let detail = '';
+    let tag = '';
+    if (ev.type === 'vlm'){
+      tag = '<span class="tag vlm">VLM</span>';
+      detail = `${posTag(ev.pos)} <span class="muted">"${ev.vlm}"</span>`;
+    } else if (ev.type === 'center'){
+      tag = '<span class="tag vlm">微调'+ev.attempt+'</span>';
+      detail = `${posTag(ev.pos)} <span class="muted">"${ev.vlm}"</span>`;
+    } else if (ev.type === 'search'){
+      tag = '<span class="tag search">搜索</span>';
+      detail = `第 ${ev.cur}/${ev.total} 次转身`;
+    } else if (ev.type === 'success'){
+      tag = '<span class="tag success">✓</span>';
+      detail = ev.detail;
+    } else if (ev.type === 'give'){
+      tag = '<span class="tag give">放弃</span>';
+      detail = ev.detail;
+    } else if (ev.type === 'lookup'){
+      tag = '<span class="tag lookup">抬头</span>';
+      detail = ev.detail;
+    }
+    tr.innerHTML = `<td>${ev.ts}</td><td>${tag}</td><td>${detail}</td>`;
+    tbody.appendChild(tr);
+  });
+}
+
+function renderStats(events){
+  const vlm = events.filter(e => e.type==='vlm' || e.type==='center').length;
+  const center = events.filter(e => e.type==='success').length;
+  const search = events.filter(e => e.type==='search').length;
+  const lookup = events.filter(e => e.type==='lookup' || e.type==='give').length;
+  $('stat-vlm').textContent = vlm;
+  $('stat-center').textContent = center;
+  $('stat-center-pct').textContent = vlm>0 ? `${Math.round(center/Math.max(vlm,1)*100)}%` : '-';
+  $('stat-search').textContent = search;
+  $('stat-lookup').textContent = lookup;
+
+  // 最近一次方位
+  const lastPos = [...events].reverse().find(e => e.type==='vlm' || e.type==='center');
+  if (lastPos) setPersonPos(lastPos.pos);
+
+  // 诊断
+  const dia = $('diagnosis');
+  if (vlm === 0){
+    dia.innerHTML = '<span style="color:#9ca3af">⏸ 还没有 face_track 调用,跟狗狗说话试试</span>';
+  } else if (lookup > vlm * 0.5 && vlm > 3){
+    dia.innerHTML = '<span style="color:#f59e0b">⚠️ 频繁触发抬头(>50%),可能是:VLM 返回的措辞跟解析关键词对不上,或转身角度太小没找到人</span>';
+  } else if (search > center * 3 && search > 5){
+    dia.innerHTML = '<span style="color:#3b82f6">🔄 经常需要转身搜索,可能是用户位置经常变,或摄像头视角太窄</span>';
+  } else if (center > 0){
+    dia.innerHTML = `<span style="color:#10b981">✅ 工作正常,${vlm} 次调用居中 ${center} 次</span>`;
+  } else {
+    dia.innerHTML = '<span style="color:#9ca3af">收集中...</span>';
+  }
+}
+
+async function refresh(){
+  const win = parseInt($('window').value);
+  $('window-display').textContent = win;
+  try {
+    const r = await fetch('/api/health/logs?container=xiaozhi-esp32-server&lines=2000');
+    const data = await r.json();
+    let raw = '';
+    if (Array.isArray(data)) raw = data.map(x => x.log || x).join('\n');
+    else if (data.log) raw = data.log;
+    else if (typeof data === 'string') raw = data;
+    else raw = JSON.stringify(data);
+
+    // 过滤时间窗口
+    const now = new Date();
+    const cutoff = new Date(now.getTime() - win*60000);
+    const allLines = raw.split('\n').filter(l => {
+      const m = l.match(/^(\d{2})(\d{2})(\d{2}) (\d{2}):(\d{2}):(\d{2})/);
+      if (!m) return false;
+      const t = new Date(2000+parseInt(m[1]), parseInt(m[2])-1, parseInt(m[3]),
+                          parseInt(m[4]), parseInt(m[5]), parseInt(m[6]));
+      return t >= cutoff;
+    });
+    const filtered = allLines.join('\n');
+    const events = parseLog(filtered);
+    renderEvents(events);
+    renderStats(events);
+
+    // 原始日志(只显示 face_track 相关)
+    const rawFace = allLines.filter(l => l.includes('face_track') || l.includes('take_photo')).slice(-100).join('\n');
+    $('rawlog').textContent = rawFace || '(窗口内无 face_track 日志)';
+  } catch (e){
+    console.error(e);
+    $('rawlog').textContent = '加载失败: ' + e.message;
+  }
+}
+
+let timer = null;
+function setupTimer(){
+  if (timer) clearInterval(timer);
+  const ms = parseInt($('interval').value);
+  if (ms > 0) timer = setInterval(refresh, ms);
+}
+
+$('refresh').onclick = refresh;
+$('window').onchange = refresh;
+$('interval').onchange = setupTimer;
+
+refresh();
+setupTimer();
+</script>
+</body>
+</html>

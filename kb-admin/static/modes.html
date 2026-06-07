@@ -1,0 +1,330 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>模式管理 · 噜噜</title>
+<style>
+* { box-sizing: border-box; }
+body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; margin: 0; background: #f5f6f8; color: #222; }
+header { background: #1f2937; color: #fff; padding: 14px 24px; display:flex; justify-content:space-between; align-items:center; }
+header h1 { margin: 0; font-size: 18px; font-weight: 500; }
+header a { color: #9ca3af; text-decoration: none; font-size: 13px; margin-left: 16px; }
+header a:hover { color: #fff; }
+main { max-width: 1100px; margin: 24px auto; padding: 0 16px; }
+.card { background: #fff; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,.08); padding: 20px; margin-bottom: 20px; }
+h2 { margin: 0 0 14px; font-size: 15px; color: #374151; border-left: 3px solid #3b82f6; padding-left: 10px; }
+button { background: #3b82f6; color: #fff; border: 0; padding: 7px 14px; border-radius: 5px; cursor: pointer; font-size: 13px; }
+button:hover { background: #2563eb; }
+button.danger { background: #ef4444; }
+button.danger:hover { background: #dc2626; }
+button.ghost { background: #fff; color: #374151; border: 1px solid #d1d5db; }
+button.success { background: #10b981; }
+button.success:hover { background: #059669; }
+input, textarea, select { font-size: 13px; padding: 6px 10px; border: 1px solid #d1d5db; border-radius: 5px; outline: none; width: 100%; }
+input:focus, textarea:focus { border-color: #3b82f6; }
+.row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.muted { color: #9ca3af; font-size: 12px; }
+.tag { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; background: #dcfce7; color: #166534; }
+.tag.active { background: #dbeafe; color: #1e40af; }
+
+.mode-card { border: 1px solid #e5e7eb; border-radius: 8px; padding: 16px; margin-bottom: 16px; transition: border-color .2s; }
+.mode-card.is-default { border-color: #3b82f6; border-width: 2px; }
+.mode-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+.mode-header h3 { margin: 0; font-size: 14px; }
+.mode-header .badges { display: flex; gap: 6px; align-items: center; }
+
+.modules-grid { display: flex; gap: 12px; flex-wrap: wrap; margin: 12px 0; }
+.module-toggle { display: flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 16px; background: #f3f4f6; font-size: 12px; cursor: pointer; user-select: none; transition: background .2s; }
+.module-toggle.on { background: #dcfce7; color: #166534; }
+.module-toggle.off { background: #fee2e2; color: #991b1b; }
+.module-toggle input { display: none; }
+
+.prompt-area { margin-top: 10px; }
+.prompt-area textarea { min-height: 100px; resize: vertical; font-family: monospace; font-size: 12px; }
+.prompt-area.collapsed textarea { display: none; }
+.prompt-toggle { font-size: 12px; color: #3b82f6; cursor: pointer; margin-bottom: 6px; }
+
+.actions { display: flex; gap: 8px; margin-top: 12px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>🐾 噜噜管理后台</h1>
+  <div>
+    <a href="/">📚 后端</a>
+    <a href="/contacts">👥 联系人</a>
+    <a href="/templates">📨 消息模板</a>
+    <a href="/message-log">📋 发送日志</a>
+    <a href="/reminders">⏰ 提醒计划</a>
+    <a href="/monitor">📊 系统监控</a>
+    <a href="/prompt">📝 Prompt</a>
+    <a href="/modes">🎭 模式管理</a>
+    <a href="/portrait">🧑 画像</a>
+    <a href="/mood">😊 情绪</a>
+    <a href="/actions">🐕 动作</a>
+    <a href="/memo">📝 备忘录</a>
+    <a href="/llm-logs" style="color:#60a5fa">🔍 LLM日志</a>
+    <a href="/debug">🔧 调试</a>
+    <a href="/settings">⚙️ 设置</a>
+    <a href="/iot" style="color:#34d399">🏠 家居</a>
+    <a href="/health" style="color:#f472b6">🏥 健康</a>
+    <a href="/voiceprint" style="color:#a78bfa">🎤 声纹</a>
+    <a href="http://122.51.155.114:8002" style="color:#fbbf24">🖥 主控台</a>
+  </div>
+</header>
+<main>
+  <div class="card">
+    <h2>对话模式列表</h2>
+    <p class="muted">基础 Prompt（角色人设）始终保留，模式 Prompt 叠加在其上。每个模式可独立配置启用哪些上下文模块和知识库。</p>
+    <div id="modeList"></div>
+  </div>
+
+  <div class="card">
+    <h2>⏰ 时间段调度</h2>
+    <p class="muted">设置不同时间段自动切换到哪种模式。未覆盖的时间段使用默认模式。</p>
+    <div id="scheduleList"></div>
+    <div class="row" style="margin-top:12px">
+      <select id="schedMode" style="max-width:150px"></select>
+      <input id="schedStart" type="time" style="max-width:120px" value="06:00">
+      <span>至</span>
+      <input id="schedEnd" type="time" style="max-width:120px" value="12:00">
+      <button onclick="addSchedule()">+ 添加时段</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>🤖 画像优化 Prompt</h2>
+    <p class="muted">根据用户画像数据，让 AI 建议如何调整当前模式的 Prompt。</p>
+    <div class="row">
+      <select id="optimizeMode" style="max-width:200px"></select>
+      <button class="success" onclick="optimizePrompt()">✨ AI 优化建议</button>
+    </div>
+    <pre id="optimizeResult" style="display:none;margin-top:12px"></pre>
+  </div>
+</main>
+
+<script>
+const API = '';
+const MODULE_LABELS = {
+  time: '⏰ 时间/日期',
+  location: '📍 位置',
+  weather: '🌤 天气',
+  memory: '🧠 记忆',
+  dynamic_context: '📊 动态上下文'
+};
+
+let modes = [];
+let knowledgeBases = [];
+
+async function fetchModes() {
+  const [mRes, kRes] = await Promise.all([
+    fetch(API + '/api/modes'),
+    fetch(API + '/api/knowledge-bases')
+  ]);
+  modes = await mRes.json();
+  knowledgeBases = await kRes.json();
+  render();
+}
+
+function render() {
+  const container = document.getElementById('modeList');
+  if (!modes.length) {
+    container.innerHTML = '<p class="muted">暂无模式数据</p>';
+    return;
+  }
+  container.innerHTML = modes.map((m, idx) => {
+    const modules = m.context_modules || {};
+    const isDefault = m.is_default === 1;
+    return `
+      <div class="mode-card ${isDefault ? 'is-default' : ''}" data-id="${m.id}">
+        <div class="mode-header">
+          <h3>${m.mode_name} <span class="muted">(${m.mode_code})</span></h3>
+          <div class="badges">
+            ${isDefault ? '<span class="tag active">默认模式</span>' : `<button class="ghost" onclick="setDefault('${m.id}')">设为默认</button>`}
+          </div>
+        </div>
+        <div class="modules-grid">
+          ${Object.entries(MODULE_LABELS).map(([key, label]) => {
+            const on = modules[key] !== false;
+            return `<label class="module-toggle ${on ? 'on' : 'off'}">
+              <input type="checkbox" data-mode="${m.id}" data-key="${key}" ${on ? 'checked' : ''} onchange="toggleModule(this)">
+              ${label}
+            </label>`;
+          }).join('')}
+        </div>
+        <div style="margin: 10px 0">
+          <span style="font-size:12px;color:#6b7280;font-weight:500">📚 知识库:</span>
+          <div class="modules-grid" style="margin-top:6px">
+            ${knowledgeBases.map(kb => {
+              const checked = (m.knowledge_ids || []).map(String).includes(String(kb.id));
+              return `<label class="module-toggle ${checked ? 'on' : 'off'}">
+                <input type="checkbox" data-mode="${m.id}" data-kb="${kb.id}" ${checked ? 'checked' : ''} onchange="toggleModule(this)">
+                ${kb.name}
+              </label>`;
+            }).join('')}
+          </div>
+        </div>
+        <div class="prompt-area" id="pa-${m.id}">
+          <span class="prompt-toggle" onclick="togglePrompt('${m.id}')">▶ 展开 Prompt</span>
+          <textarea style="display:none" id="pt-${m.id}" rows="6">${escHtml(m.system_prompt || '')}</textarea>
+        </div>
+        <div class="actions">
+          <button onclick="saveMode('${m.id}')">💾 保存</button>
+          <button class="danger" onclick="deleteMode('${m.id}')" ${isDefault ? 'disabled title="默认模式不能删除"' : ''}>🗑 删除</button>
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
+function escHtml(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function togglePrompt(id) {
+  const ta = document.getElementById('pt-' + id);
+  const toggle = ta.previousElementSibling;
+  if (ta.style.display === 'none') {
+    ta.style.display = '';
+    toggle.textContent = '▼ 收起 Prompt';
+  } else {
+    ta.style.display = 'none';
+    toggle.textContent = '▶ 展开 Prompt';
+  }
+}
+
+function toggleModule(el) {
+  const label = el.parentElement;
+  if (el.checked) {
+    label.className = 'module-toggle on';
+  } else {
+    label.className = 'module-toggle off';
+  }
+}
+
+function getModuleState(modeId) {
+  const modules = {};
+  document.querySelectorAll(`input[data-mode="${modeId}"]`).forEach(cb => {
+    modules[cb.dataset.key] = cb.checked;
+  });
+  return modules;
+}
+
+function getKnowledgeIds(modeId) {
+  const ids = [];
+  document.querySelectorAll(`input[data-mode="${modeId}"][data-kb]`).forEach(cb => {
+    if (cb.checked) ids.push(cb.dataset.kb);
+  });
+  return ids;
+}
+
+async function saveMode(id) {
+  const modules = getModuleState(id);
+  const prompt = document.getElementById('pt-' + id).value;
+  const kbIds = getKnowledgeIds(id);
+  const res = await fetch(API + '/api/modes/' + id, {
+    method: 'PUT',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ system_prompt: prompt, context_modules: modules, knowledge_ids: kbIds })
+  });
+  if (res.ok) {
+    alert('保存成功');
+    fetchModes();
+  } else {
+    alert('保存失败: ' + await res.text());
+  }
+}
+
+async function setDefault(id) {
+  const res = await fetch(API + '/api/modes/' + id + '/default', { method: 'POST' });
+  if (res.ok) {
+    fetchModes();
+  } else {
+    alert('设置失败: ' + await res.text());
+  }
+}
+
+async function deleteMode(id) {
+  if (!confirm('确定删除此模式？')) return;
+  const res = await fetch(API + '/api/modes/' + id, { method: 'DELETE' });
+  if (res.ok) {
+    fetchModes();
+  } else {
+    alert('删除失败: ' + await res.text());
+  }
+}
+
+fetchModes();
+
+// ===== 时间段调度 =====
+let schedules = [];
+
+async function fetchSchedules() {
+  const res = await fetch(API + '/api/schedules');
+  schedules = await res.json();
+  renderSchedules();
+  renderSelects();
+}
+
+function renderSchedules() {
+  const el = document.getElementById('scheduleList');
+  if (!schedules.length) {
+    el.innerHTML = '<p class="muted">暂未设置时间段调度</p>';
+    return;
+  }
+  el.innerHTML = '<table><thead><tr><th>时间段</th><th>模式</th><th>操作</th></tr></thead><tbody>' +
+    schedules.map(s => `<tr>
+      <td>${s.start_time.substring(0,5)} — ${s.end_time.substring(0,5)}</td>
+      <td>${s.mode_name || s.mode_id}</td>
+      <td><button class="danger" onclick="delSchedule(${s.id})">删除</button></td>
+    </tr>`).join('') + '</tbody></table>';
+}
+
+function renderSelects() {
+  const html = modes.map(m => `<option value="${m.id}">${m.mode_name}</option>`).join('');
+  document.getElementById('schedMode').innerHTML = html;
+  document.getElementById('optimizeMode').innerHTML = html;
+}
+
+async function addSchedule() {
+  const mode_id = document.getElementById('schedMode').value;
+  const start = document.getElementById('schedStart').value;
+  const end = document.getElementById('schedEnd').value;
+  const res = await fetch(API + '/api/schedules', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ mode_id, start_time: start, end_time: end })
+  });
+  if (res.ok) fetchSchedules();
+  else alert('添加失败: ' + await res.text());
+}
+
+async function delSchedule(id) {
+  if (!confirm('删除这个时间段？')) return;
+  const res = await fetch(API + '/api/schedules/' + id, { method: 'DELETE' });
+  if (res.ok) fetchSchedules();
+}
+
+// ===== 画像优化 =====
+async function optimizePrompt() {
+  const modeId = document.getElementById('optimizeMode').value;
+  const resultEl = document.getElementById('optimizeResult');
+  resultEl.style.display = 'block';
+  resultEl.textContent = '正在分析画像数据并生成优化建议...';
+  try {
+    const res = await fetch(API + '/api/modes/' + modeId + '/optimize', { method: 'POST' });
+    const data = await res.json();
+    if (data.suggestion) {
+      resultEl.textContent = data.suggestion;
+    } else {
+      resultEl.textContent = data.error || '获取建议失败';
+    }
+  } catch(e) {
+    resultEl.textContent = '请求失败: ' + e.message;
+  }
+}
+
+fetchSchedules();
+</script>
+</body>
+</html>

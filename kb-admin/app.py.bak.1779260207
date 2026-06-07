@@ -1,0 +1,137 @@
+"""
+知识库管理小后端 - 代理智谱 API
+"""
+import os
+import json
+import secrets
+from functools import wraps
+from flask import Flask, request, jsonify, send_from_directory, Response
+import requests
+
+ZHIPU_API_KEY = os.environ.get("ZHIPU_API_KEY", "")
+ZHIPU_BASE = "https://open.bigmodel.cn/api/paas/v4"
+ADMIN_USER = os.environ.get("KB_ADMIN_USER", "admin")
+ADMIN_PASS = os.environ.get("KB_ADMIN_PASS", "")
+
+app = Flask(__name__, static_folder="static", static_url_path="")
+H = {"Authorization": f"Bearer {ZHIPU_API_KEY}"}
+
+
+def check_auth(u, p):
+    return u == ADMIN_USER and p == ADMIN_PASS and ADMIN_PASS != ""
+
+
+def requires_auth(f):
+    @wraps(f)
+    def wrapped(*a, **kw):
+        auth = request.authorization
+        if not auth or not check_auth(auth.username, auth.password):
+            return Response(
+                "Auth required", 401, {"WWW-Authenticate": 'Basic realm="kb-admin"'}
+            )
+        return f(*a, **kw)
+    return wrapped
+
+
+@app.route("/")
+@requires_auth
+def index():
+    return send_from_directory("static", "index.html")
+
+
+@app.route("/api/knowledge")
+@requires_auth
+def list_kb():
+    r = requests.get(f"{ZHIPU_BASE}/knowledge", headers=H, timeout=15)
+    return Response(r.text, status=r.status_code, mimetype="application/json")
+
+
+@app.route("/api/knowledge", methods=["POST"])
+@requires_auth
+def create_kb():
+    body = request.get_json(force=True)
+    payload = {
+        "name": body.get("name", "未命名"),
+        "description": body.get("description", ""),
+        "embedding_id": body.get("embedding_id", 3),
+    }
+    r = requests.post(
+        f"{ZHIPU_BASE}/knowledge",
+        headers={**H, "Content-Type": "application/json"},
+        json=payload,
+        timeout=15,
+    )
+    return Response(r.text, status=r.status_code, mimetype="application/json")
+
+
+@app.route("/api/knowledge/<kb_id>", methods=["DELETE"])
+@requires_auth
+def delete_kb(kb_id):
+    r = requests.delete(f"{ZHIPU_BASE}/knowledge/{kb_id}", headers=H, timeout=15)
+    return Response(r.text, status=r.status_code, mimetype="application/json")
+
+
+@app.route("/api/files")
+@requires_auth
+def list_files():
+    kb_id = request.args.get("knowledge_id", "")
+    r = requests.get(
+        f"{ZHIPU_BASE}/files",
+        headers=H,
+        params={"purpose": "retrieval", "knowledge_id": kb_id},
+        timeout=15,
+    )
+    return Response(r.text, status=r.status_code, mimetype="application/json")
+
+
+@app.route("/api/files", methods=["POST"])
+@requires_auth
+def upload_file():
+    kb_id = request.form.get("knowledge_id", "")
+    f = request.files.get("file")
+    if not kb_id or not f:
+        return jsonify({"error": "missing knowledge_id or file"}), 400
+    files = {"file": (f.filename, f.stream, f.mimetype or "application/octet-stream")}
+    data = {"purpose": "retrieval", "knowledge_id": kb_id}
+    r = requests.post(
+        f"{ZHIPU_BASE}/files", headers=H, files=files, data=data, timeout=120
+    )
+    return Response(r.text, status=r.status_code, mimetype="application/json")
+
+
+@app.route("/api/files/<file_id>", methods=["DELETE"])
+@requires_auth
+def delete_file(file_id):
+    r = requests.delete(f"{ZHIPU_BASE}/files/{file_id}", headers=H, timeout=15)
+    return Response(r.text, status=r.status_code, mimetype="application/json")
+
+
+@app.route("/api/test", methods=["POST"])
+@requires_auth
+def test_query():
+    body = request.get_json(force=True)
+    kb_id = body.get("knowledge_id", "")
+    question = body.get("question", "")
+    payload = {
+        "model": "glm-4-flash",
+        "messages": [
+            {"role": "system", "content": "严格基于知识库回答；若没有相关信息，说“知识库中没有”。"},
+            {"role": "user", "content": question},
+        ],
+        "tools": [{"type": "retrieval", "retrieval": {"knowledge_id": kb_id}}],
+    }
+    r = requests.post(
+        f"{ZHIPU_BASE}/chat/completions",
+        headers={**H, "Content-Type": "application/json"},
+        json=payload,
+        timeout=30,
+    )
+    return Response(r.text, status=r.status_code, mimetype="application/json")
+
+
+if __name__ == "__main__":
+    if not ZHIPU_API_KEY:
+        raise SystemExit("env ZHIPU_API_KEY 未设")
+    if not ADMIN_PASS:
+        raise SystemExit("env KB_ADMIN_PASS 未设")
+    app.run(host="0.0.0.0", port=8888)

@@ -1,0 +1,261 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>智谱知识库管理 · 噜噜</title>
+<style>
+* { box-sizing: border-box; }
+body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; margin: 0; background: #f5f6f8; color: #222; }
+header { background: #1f2937; color: #fff; padding: 14px 24px; display:flex; justify-content:space-between; align-items:center; }
+header h1 { margin: 0; font-size: 18px; font-weight: 500; }
+header a { color: #9ca3af; text-decoration: none; font-size: 13px; margin-left: 16px; }
+header a:hover { color: #fff; }
+main { max-width: 1100px; margin: 24px auto; padding: 0 16px; }
+.card { background: #fff; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,.08); padding: 20px; margin-bottom: 20px; }
+h2 { margin: 0 0 14px; font-size: 15px; color: #374151; border-left: 3px solid #3b82f6; padding-left: 10px; }
+button { background: #3b82f6; color: #fff; border: 0; padding: 7px 14px; border-radius: 5px; cursor: pointer; font-size: 13px; }
+button:hover { background: #2563eb; }
+button.danger { background: #ef4444; }
+button.danger:hover { background: #dc2626; }
+button.ghost { background: #fff; color: #374151; border: 1px solid #d1d5db; }
+button:disabled { opacity: 0.4; cursor: not-allowed; }
+input, textarea, select { font-size: 13px; padding: 6px 10px; border: 1px solid #d1d5db; border-radius: 5px; outline: none; width: 100%; }
+input:focus, textarea:focus { border-color: #3b82f6; }
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid #e5e7eb; }
+th { background: #f9fafb; font-weight: 500; color: #6b7280; }
+.row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.muted { color: #9ca3af; font-size: 12px; }
+.tag { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; background: #dcfce7; color: #166534; }
+.tag.warn { background: #fef3c7; color: #92400e; }
+.tag.gray { background: #e5e7eb; color: #4b5563; }
+pre { background: #1f2937; color: #d1fae5; padding: 12px; border-radius: 6px; font-size: 12px; max-height: 400px; overflow: auto; white-space: pre-wrap; word-break: break-word; }
+.empty { color: #9ca3af; padding: 30px; text-align: center; }
+.modal { position: fixed; inset: 0; background: rgba(0,0,0,.5); display: none; align-items: center; justify-content: center; z-index: 100; }
+.modal.show { display: flex; }
+.modal-box { background: #fff; border-radius: 8px; padding: 20px; max-width: 800px; width: 90%; max-height: 80vh; overflow: auto; }
+.modal-box h3 { margin: 0 0 12px; font-size: 15px; color: #374151; }
+</style>
+</head>
+<body>
+<header>
+  <h1>📚 智谱知识库管理 · 噜噜后端</h1>
+  <div>
+    <a href="/contacts">👥 联系人</a>
+    <a href="/templates">📨 消息模板</a>
+    <a href="/message-log">📋 发送日志</a>
+    <a href="/reminders">⏰ 提醒计划</a>
+    <a href="/monitor">📊 系统监控</a>
+    <a href="/prompt">📝 Prompt 版本</a>
+    <span class="muted" style="color:#9ca3af;margin-left:16px">via 122.51.155.114:8888</span>
+  </div>
+</header>
+<main>
+  <div class="card">
+    <h2>知识库列表</h2>
+    <div class="row" style="margin-bottom:12px">
+      <input id="newKbName" placeholder="新知识库名称" style="max-width:240px">
+      <input id="newKbDesc" placeholder="描述(可空)" style="max-width:300px">
+      <button onclick="createKb()">+ 创建</button>
+      <button class="ghost" onclick="loadKbs()">刷新</button>
+    </div>
+    <table id="kbTable"><thead><tr><th>ID</th><th>名称</th><th>描述</th><th>嵌入模型</th><th>文档数</th><th>操作</th></tr></thead><tbody></tbody></table>
+  </div>
+
+  <div class="card" id="filesCard" style="display:none">
+    <h2>文档列表 · <span id="curKbName">-</span> <span class="muted" id="curKbId"></span></h2>
+    <div class="row" style="margin-bottom:12px">
+      <input type="file" id="uploadFile">
+      <button onclick="uploadFile()">⬆ 上传</button>
+      <button class="ghost" onclick="loadFiles(curKb)">刷新</button>
+      <span class="muted">本地副本用于预览/下载,旧文档无副本</span>
+    </div>
+    <table id="filesTable"><thead><tr><th>ID</th><th>文件名</th><th>大小</th><th>状态</th><th>操作</th></tr></thead><tbody></tbody></table>
+  </div>
+
+  <div class="card" id="testCard" style="display:none">
+    <h2>检索测试 · 看效果</h2>
+    <div class="row" style="margin-bottom:12px">
+      <input id="testQ" placeholder="输入问题,例如:三大保健穴是哪三个?" style="flex:1">
+      <button onclick="runTest()">▶ 测试</button>
+    </div>
+    <pre id="testOut" class="muted">回答会出现在这里...</pre>
+  </div>
+</main>
+
+<div class="modal" id="previewModal" onclick="closePreview(event)">
+  <div class="modal-box" onclick="event.stopPropagation()">
+    <h3 id="previewTitle">文档预览</h3>
+    <pre id="previewBody" style="background:#f9fafb;color:#1f2937;max-height:60vh"></pre>
+    <div class="row" style="margin-top:12px;justify-content:flex-end">
+      <button class="ghost" onclick="document.getElementById('previewModal').classList.remove('show')">关闭</button>
+    </div>
+  </div>
+</div>
+
+<script>
+let curKb = null;
+let curKbName = "";
+
+async function api(path, opts={}) {
+  const r = await fetch(path, opts);
+  const t = await r.text();
+  try { return JSON.parse(t); } catch(e) { return {raw: t, status: r.status}; }
+}
+
+async function loadKbs() {
+  const data = await api("/api/knowledge");
+  const list = data.list || [];
+  const tb = document.querySelector("#kbTable tbody");
+  tb.innerHTML = "";
+  if (list.length === 0) {
+    tb.innerHTML = '<tr><td colspan="6" class="empty">暂无知识库,创建一个开始吧</td></tr>';
+    return;
+  }
+  for (const kb of list) {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td><code style="font-size:11px">${kb.id}</code></td>
+      <td><b>${kb.name||""}</b></td>
+      <td class="muted">${kb.description||"-"}</td>
+      <td>${kb.embedding_name||"emb-"+kb.embedding_id}</td>
+      <td>${kb.document_size||0}</td>
+      <td>
+        <button onclick="openKb('${kb.id}','${(kb.name||"").replace(/'/g,"")}')">📁 文档</button>
+        <button class="danger" onclick="delKb('${kb.id}','${(kb.name||"").replace(/'/g,"")}')">删除</button>
+      </td>`;
+    tb.appendChild(tr);
+  }
+}
+
+async function createKb() {
+  const name = document.getElementById("newKbName").value.trim();
+  const desc = document.getElementById("newKbDesc").value.trim();
+  if (!name) { alert("名称必填"); return; }
+  const r = await api("/api/knowledge", {
+    method: "POST",
+    headers: {"Content-Type":"application/json"},
+    body: JSON.stringify({name, description: desc, embedding_id: 3})
+  });
+  if (r.id) {
+    document.getElementById("newKbName").value = "";
+    document.getElementById("newKbDesc").value = "";
+    loadKbs();
+  } else {
+    alert("创建失败: " + JSON.stringify(r));
+  }
+}
+
+async function delKb(id, name) {
+  if (!confirm(`删除知识库「${name}」?(里面的文档也会一起删)`)) return;
+  await api(`/api/knowledge/${id}`, {method:"DELETE"});
+  if (curKb === id) { document.getElementById("filesCard").style.display="none"; document.getElementById("testCard").style.display="none"; }
+  loadKbs();
+}
+
+function openKb(id, name) {
+  curKb = id; curKbName = name;
+  document.getElementById("curKbName").textContent = name;
+  document.getElementById("curKbId").textContent = id;
+  document.getElementById("filesCard").style.display = "block";
+  document.getElementById("testCard").style.display = "block";
+  loadFiles(id);
+}
+
+function fmtSize(b) {
+  if (b < 1024) return b + " B";
+  if (b < 1024*1024) return (b/1024).toFixed(1) + " KB";
+  return (b/1024/1024).toFixed(2) + " MB";
+}
+
+async function loadFiles(kbId) {
+  const data = await api(`/api/files?knowledge_id=${kbId}`);
+  const list = data.list || [];
+  const tb = document.querySelector("#filesTable tbody");
+  tb.innerHTML = "";
+  if (list.length === 0) {
+    tb.innerHTML = '<tr><td colspan="5" class="empty">这个知识库还没文档,上传一个吧</td></tr>';
+    return;
+  }
+  for (const f of list) {
+    const tr = document.createElement("tr");
+    const stat = f.embedding_stat;
+    const tag = stat===1 ? '<span class="tag">已索引</span>' : stat===0 ? '<span class="tag warn">索引中</span>' : '<span class="tag warn">异常</span>';
+    const hasLocal = f.has_local;
+    const fname = (f.name||"").replace(/'/g,"");
+    let actions = "";
+    if (hasLocal) {
+      actions += `<button class="ghost" onclick="previewFile('${f.id}','${fname}')">👁 预览</button> `;
+      actions += `<button class="ghost" onclick="downloadFile('${f.id}')">⬇ 下载</button> `;
+    } else {
+      actions += `<span class="tag gray">无本地副本</span> `;
+    }
+    actions += `<button class="danger" onclick="delFile('${f.id}','${fname}')">删除</button>`;
+    tr.innerHTML = `
+      <td><code style="font-size:11px">${f.id}</code></td>
+      <td>${f.name||""}</td>
+      <td>${fmtSize(f.length||0)}</td>
+      <td>${tag}</td>
+      <td>${actions}</td>`;
+    tb.appendChild(tr);
+  }
+}
+
+async function previewFile(fileId, fname) {
+  const d = await api(`/api/files/${fileId}/preview?knowledge_id=${curKb}`);
+  if (d.error) { alert(d.error); return; }
+  document.getElementById("previewTitle").textContent = "预览: " + fname + (d.truncated ? " (仅显示前 64KB)" : "");
+  document.getElementById("previewBody").textContent = d.text;
+  document.getElementById("previewModal").classList.add("show");
+}
+
+function downloadFile(fileId) {
+  window.location.href = `/api/files/${fileId}/download?knowledge_id=${curKb}`;
+}
+
+function closePreview(e) {
+  if (e.target.id === "previewModal") {
+    document.getElementById("previewModal").classList.remove("show");
+  }
+}
+
+async function uploadFile() {
+  const f = document.getElementById("uploadFile").files[0];
+  if (!f) { alert("先选文件"); return; }
+  const fd = new FormData();
+  fd.append("file", f);
+  fd.append("knowledge_id", curKb);
+  const r = await fetch("/api/files", {method:"POST", body: fd});
+  const data = await r.json().catch(()=>({}));
+  if (data.successInfos && data.successInfos.length>0) {
+    document.getElementById("uploadFile").value = "";
+    setTimeout(()=>loadFiles(curKb), 1500);
+  } else {
+    alert("上传失败: " + JSON.stringify(data));
+  }
+}
+
+async function delFile(id, name) {
+  if (!confirm(`删除文档「${name}」?`)) return;
+  await api(`/api/files/${id}`, {method:"DELETE"});
+  loadFiles(curKb);
+}
+
+async function runTest() {
+  const q = document.getElementById("testQ").value.trim();
+  if (!q) return;
+  const out = document.getElementById("testOut");
+  out.textContent = "查询中...";
+  const r = await api("/api/test", {
+    method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body: JSON.stringify({knowledge_id: curKb, question: q})
+  });
+  const ans = r.choices?.[0]?.message?.content || JSON.stringify(r,null,2);
+  out.textContent = ans;
+}
+
+loadKbs();
+</script>
+</body>
+</html>

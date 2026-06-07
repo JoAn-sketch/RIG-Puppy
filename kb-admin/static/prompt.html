@@ -1,0 +1,218 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>Prompt 版本管理 · 噜噜后端</title>
+<style>
+* { box-sizing: border-box; }
+body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; margin: 0; background: #f5f6f8; color: #222; }
+header { background: #1f2937; color: #fff; padding: 14px 24px; display:flex; justify-content:space-between; align-items:center; }
+header h1 { margin: 0; font-size: 18px; font-weight: 500; }
+header a { color: #9ca3af; text-decoration: none; font-size: 13px; margin-left: 16px; }
+header a:hover { color: #fff; }
+main { max-width: 1200px; margin: 24px auto; padding: 0 16px; }
+.card { background: #fff; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,.08); padding: 20px; margin-bottom: 20px; }
+.card h3 { margin: 0 0 12px; font-size: 13px; color: #6b7280; text-transform: uppercase; letter-spacing: .5px; }
+button { background: #3b82f6; color: #fff; border: 0; padding: 7px 14px; border-radius: 5px; cursor: pointer; font-size: 13px; }
+button:hover { background: #2563eb; }
+button.ghost { background: #fff; color: #374151; border: 1px solid #d1d5db; }
+button.danger { background: #ef4444; }
+button.danger:hover { background: #dc2626; }
+button.success { background: #22c55e; }
+button.success:hover { background: #16a34a; }
+select { background: #fff; color: #222; border: 1px solid #d1d5db; padding: 6px 10px; border-radius: 5px; font-size: 13px; }
+textarea { width: 100%; min-height: 200px; background: #f9fafb; color: #222; border: 1px solid #d1d5db; border-radius: 6px; padding: 12px; font-size: 13px; font-family: "JetBrains Mono", "Fira Code", monospace; resize: vertical; line-height: 1.6; }
+textarea:focus { border-color: #3b82f6; outline: none; }
+input { background: #fff; color: #222; border: 1px solid #d1d5db; padding: 6px 10px; border-radius: 5px; font-size: 13px; }
+input:focus { border-color: #3b82f6; outline: none; }
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid #e5e7eb; }
+th { background: #f9fafb; font-weight: 500; color: #6b7280; }
+.muted { color: #9ca3af; font-size: 12px; }
+.row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
+.diff-add { background: rgba(34,197,94,.1); color: #4ade80; }
+.diff-del { background: rgba(239,68,68,.1); color: #f87171; }
+.empty { color: #9ca3af; padding: 20px; text-align: center; }
+.badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; background: #e0e7ff; color: #4338ca; }
+</style>
+</head>
+<body>
+<header>
+  <h1>🐾 噜噜管理后台</h1>
+  <div>
+    <a href="/">📚 后端</a>
+    <a href="/contacts">👥 联系人</a>
+    <a href="/templates">📨 消息模板</a>
+    <a href="/message-log">📋 发送日志</a>
+    <a href="/reminders">⏰ 提醒计划</a>
+    <a href="/monitor">📊 系统监控</a>
+    <a href="/prompt">📝 Prompt</a>
+    <a href="/modes">🎭 模式管理</a>
+    <a href="/portrait">🧑 画像</a>
+    <a href="/mood">😊 情绪</a>
+    <a href="/actions">🐕 动作</a>
+    <a href="/memo">📝 备忘录</a>
+    <a href="/llm-logs" style="color:#60a5fa">🔍 LLM日志</a>
+    <a href="/debug">🔧 调试</a>
+    <a href="/settings">⚙️ 设置</a>
+    <a href="/iot" style="color:#34d399">🏠 家居</a>
+    <a href="/health" style="color:#f472b6">🏥 健康</a>
+    <a href="/voiceprint" style="color:#a78bfa">🎤 声纹</a>
+    <a href="http://122.51.155.114:8002" style="color:#fbbf24">🖥 主控台</a>
+  </div>
+</header>
+<main>
+  <div class="card">
+    <h3>选择智能体</h3>
+    <div class="row">
+      <select id="agentSelect" onchange="onAgentChange()">
+        <option value="">-- 选择 --</option>
+      </select>
+      <button class="ghost" onclick="loadAgents()">刷新</button>
+      <span class="muted" id="agentInfo"></span>
+    </div>
+  </div>
+
+  <div class="card" id="editorCard" style="display:none">
+    <h3>当前 System Prompt</h3>
+    <textarea id="promptEditor"></textarea>
+    <div class="row" style="margin-top:12px">
+      <input id="saveNote" placeholder="备注(可空,如:加了养生话题引导)" style="flex:1;max-width:400px">
+      <button class="success" onclick="savePrompt()">💾 保存新版本</button>
+      <span class="muted">保存时会自动快照当前版本</span>
+    </div>
+  </div>
+
+  <div class="card" id="historyCard" style="display:none">
+    <h3>历史版本</h3>
+    <table id="historyTable">
+      <thead><tr><th>时间</th><th>大小</th><th>备注</th><th>操作</th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </div>
+
+  <div class="card" id="previewCard" style="display:none">
+    <h3>版本预览 <span class="badge" id="previewLabel">-</span></h3>
+    <pre id="previewContent" style="background:#f9fafb;border:1px solid #e5e7eb;color:#374151;padding:12px;border-radius:6px;font-size:12px;max-height:400px;overflow:auto;white-space:pre-wrap;word-break:break-word;"></pre>
+    <div class="row" style="margin-top:12px">
+      <button class="danger" onclick="restoreVersion()">⏪ 回滚到此版本</button>
+      <button class="ghost" onclick="hidePreview()">关闭</button>
+    </div>
+  </div>
+</main>
+
+<script>
+let curAgent = "";
+let previewFile = "";
+
+async function api(path, opts={}) {
+  const r = await fetch(path, opts);
+  return r.json();
+}
+
+async function loadAgents() {
+  const d = await api("/api/agents");
+  const sel = document.getElementById("agentSelect");
+  sel.innerHTML = '<option value="">-- 选择 --</option>';
+  for (const a of (d.list || [])) {
+    const opt = document.createElement("option");
+    opt.value = a.id;
+    opt.textContent = `${a.agent_name} (prompt: ${a.plen} 字, memory: ${a.mlen} 字)`;
+    sel.appendChild(opt);
+  }
+}
+
+async function onAgentChange() {
+  curAgent = document.getElementById("agentSelect").value;
+  if (!curAgent) {
+    document.getElementById("editorCard").style.display = "none";
+    document.getElementById("historyCard").style.display = "none";
+    return;
+  }
+  const d = await api(`/api/agents/${curAgent}/prompt`);
+  document.getElementById("promptEditor").value = d.system_prompt || "";
+  document.getElementById("agentInfo").textContent = d.agent_name || "";
+  document.getElementById("editorCard").style.display = "block";
+  document.getElementById("historyCard").style.display = "block";
+  hidePreview();
+  loadHistory();
+}
+
+async function loadHistory() {
+  const d = await api(`/api/prompt-history/${curAgent}`);
+  const tb = document.querySelector("#historyTable tbody");
+  tb.innerHTML = "";
+  const list = d.list || [];
+  if (!list.length) {
+    tb.innerHTML = '<tr><td colspan="4" class="empty">还没有历史版本,保存一次即可生成</td></tr>';
+    return;
+  }
+  for (const item of list) {
+    const tr = document.createElement("tr");
+    const t = item.saved_at_str || item.filename;
+    tr.innerHTML = `
+      <td>${t}</td>
+      <td>${item.size || 0} 字</td>
+      <td class="muted">${item.note || "-"}</td>
+      <td>
+        <button class="ghost" onclick="viewVersion('${item.filename}','${t}')">查看</button>
+        <button class="danger" onclick="delVersion('${item.filename}')">删除</button>
+      </td>`;
+    tb.appendChild(tr);
+  }
+}
+
+async function savePrompt() {
+  const prompt = document.getElementById("promptEditor").value.trim();
+  const note = document.getElementById("saveNote").value.trim();
+  if (!prompt) { alert("prompt 不能为空"); return; }
+  if (!confirm("确认保存? 当前版本会被快照,数据库将更新为编辑器中的内容。")) return;
+  const d = await api(`/api/agents/${curAgent}/prompt`, {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({system_prompt: prompt, note})
+  });
+  if (d.ok) {
+    document.getElementById("saveNote").value = "";
+    alert(`已保存! 旧版本快照: ${d.snapshot}, 新 prompt ${d.new_size} 字`);
+    loadHistory();
+  } else {
+    alert("保存失败: " + (d.error || JSON.stringify(d)));
+  }
+}
+
+async function viewVersion(filename, label) {
+  const d = await api(`/api/prompt-history/${curAgent}/${filename}`);
+  document.getElementById("previewContent").textContent = d.system_prompt || "(空)";
+  document.getElementById("previewLabel").textContent = label;
+  document.getElementById("previewCard").style.display = "block";
+  previewFile = filename;
+}
+
+function hidePreview() {
+  document.getElementById("previewCard").style.display = "none";
+  previewFile = "";
+}
+
+async function restoreVersion() {
+  if (!previewFile) return;
+  if (!confirm("确认回滚? 当前 prompt 会先被自动快照,然后替换为此历史版本。")) return;
+  const d = await api(`/api/prompt-history/${curAgent}/${previewFile}/restore`, {method:"POST"});
+  if (d.ok) {
+    alert(`已回滚! 恢复了 ${d.size} 字的 prompt`);
+    onAgentChange();
+  } else {
+    alert("回滚失败: " + (d.error || JSON.stringify(d)));
+  }
+}
+
+async function delVersion(filename) {
+  if (!confirm("删除此历史版本?")) return;
+  await api(`/api/prompt-history/${curAgent}/${filename}`, {method:"DELETE"});
+  loadHistory();
+}
+
+loadAgents();
+</script>
+</body>
+</html>

@@ -1,0 +1,215 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>系统监控 · 噜噜后端</title>
+<style>
+* { box-sizing: border-box; }
+body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; margin: 0; background: #f5f6f8; color: #222; }
+header { background: #1f2937; color: #fff; padding: 14px 24px; display:flex; justify-content:space-between; align-items:center; }
+header h1 { margin: 0; font-size: 18px; font-weight: 500; }
+header a { color: #9ca3af; text-decoration: none; font-size: 13px; margin-left: 16px; }
+header a:hover { color: #fff; }
+main { max-width: 1200px; margin: 24px auto; padding: 0 16px; }
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; margin-bottom: 20px; }
+.card { background: #fff; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,.08); padding: 20px; margin-bottom: 20px; }
+.card h3 { margin: 0 0 12px; font-size: 13px; color: #6b7280; text-transform: uppercase; letter-spacing: .5px; }
+.metric { font-size: 28px; font-weight: 600; color: #1f2937; }
+.metric small { font-size: 13px; color: #9ca3af; font-weight: 400; }
+.bar-bg { height: 8px; background: #e5e7eb; border-radius: 4px; margin-top: 8px; overflow: hidden; }
+.bar-fill { height: 100%; border-radius: 4px; transition: width .3s; }
+.bar-fill.ok { background: #22c55e; }
+.bar-fill.warn { background: #f59e0b; }
+.bar-fill.danger { background: #ef4444; }
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid #e5e7eb; }
+th { background: #f9fafb; font-weight: 500; color: #6b7280; }
+.tag { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; }
+.tag.ok { background: #dcfce7; color: #166534; }
+.tag.warn { background: #fef3c7; color: #92400e; }
+.tag.err { background: #fee2e2; color: #991b1b; }
+pre { background: #f9fafb; border: 1px solid #e5e7eb; color: #374151; padding: 12px; border-radius: 6px; font-size: 11px; max-height: 400px; overflow: auto; white-space: pre-wrap; word-break: break-word; }
+button { background: #3b82f6; color: #fff; border: 0; padding: 7px 14px; border-radius: 5px; cursor: pointer; font-size: 13px; }
+button:hover { background: #2563eb; }
+button.ghost { background: #fff; color: #374151; border: 1px solid #d1d5db; }
+select { background: #fff; color: #222; border: 1px solid #d1d5db; padding: 6px 10px; border-radius: 5px; font-size: 13px; }
+.muted { color: #9ca3af; font-size: 12px; }
+.refresh-bar { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>🐾 噜噜管理后台</h1>
+  <div>
+    <a href="/">📚 后端</a>
+    <a href="/contacts">👥 联系人</a>
+    <a href="/templates">📨 消息模板</a>
+    <a href="/message-log">📋 发送日志</a>
+    <a href="/reminders">⏰ 提醒计划</a>
+    <a href="/monitor">📊 系统监控</a>
+    <a href="/prompt">📝 Prompt</a>
+    <a href="/modes">🎭 模式管理</a>
+    <a href="/portrait">🧑 画像</a>
+    <a href="/mood">😊 情绪</a>
+    <a href="/actions">🐕 动作</a>
+    <a href="/memo">📝 备忘录</a>
+    <a href="/llm-logs" style="color:#60a5fa">🔍 LLM日志</a>
+    <a href="/debug">🔧 调试</a>
+    <a href="/settings">⚙️ 设置</a>
+    <a href="/iot" style="color:#34d399">🏠 家居</a>
+    <a href="/health" style="color:#f472b6">🏥 健康</a>
+    <a href="/voiceprint" style="color:#a78bfa">🎤 声纹</a>
+    <a href="http://122.51.155.114:8002" style="color:#fbbf24">🖥 主控台</a>
+  </div>
+</header>
+<main>
+  <div class="refresh-bar">
+    <button onclick="loadHealth()">刷新</button>
+    <label><input type="checkbox" id="autoRefresh" checked> 每 30s 自动刷新</label>
+    <span class="muted" id="lastUpdate">-</span>
+  </div>
+
+  <div class="grid" id="metricsGrid">
+    <div class="card">
+      <h3>主机内存</h3>
+      <div class="metric" id="memMetric">-</div>
+      <div class="bar-bg"><div class="bar-fill ok" id="memBar" style="width:0"></div></div>
+    </div>
+    <div class="card">
+      <h3>Swap</h3>
+      <div class="metric" id="swapMetric">-</div>
+      <div class="bar-bg"><div class="bar-fill ok" id="swapBar" style="width:0"></div></div>
+    </div>
+    <div class="card">
+      <h3>磁盘</h3>
+      <div class="metric" id="diskMetric">-</div>
+      <div class="bar-bg"><div class="bar-fill ok" id="diskBar" style="width:0"></div></div>
+    </div>
+    <div class="card">
+      <h3>1h 错误统计</h3>
+      <div id="errorStats">-</div>
+    </div>
+  </div>
+
+  <div class="card" style="margin-bottom:20px">
+    <h3>容器状态</h3>
+    <table id="containerTable">
+      <thead><tr><th>容器</th><th>CPU</th><th>内存</th><th>内存%</th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </div>
+
+  <div class="card">
+    <h3>实时日志</h3>
+    <div style="display:flex;gap:10px;margin-bottom:12px;align-items:center">
+      <select id="logContainer">
+        <option value="xiaozhi-esp32-server">server (主服务)</option>
+        <option value="xiaozhi-esp32-server-web">web (nginx)</option>
+        <option value="xiaozhi-esp32-server-db">db (mysql)</option>
+      </select>
+      <select id="logLevel">
+        <option value="">全部</option>
+        <option value="ERROR">ERROR</option>
+        <option value="WARNING">WARNING</option>
+      </select>
+      <button onclick="loadLogs()">加载</button>
+    </div>
+    <pre id="logOutput">点击"加载"查看日志...</pre>
+  </div>
+</main>
+
+<script>
+let timer = null;
+
+function barClass(pct) {
+  if (pct > 85) return "danger";
+  if (pct > 65) return "warn";
+  return "ok";
+}
+
+async function api(path) {
+  const r = await fetch(path);
+  return r.json();
+}
+
+async function loadHealth() {
+  try {
+    const d = await api("/api/health");
+    document.getElementById("lastUpdate").textContent = "更新: " + new Date().toLocaleTimeString();
+
+    if (d.memory) {
+      const m = d.memory;
+      const usedPct = Math.round((m.used_mb / m.total_mb) * 100);
+      document.getElementById("memMetric").innerHTML = `${m.used_mb}<small> / ${m.total_mb} MB (${usedPct}%)</small>`;
+      document.getElementById("memBar").style.width = usedPct + "%";
+      document.getElementById("memBar").className = "bar-fill " + barClass(usedPct);
+
+      if (m.swap_total_mb > 0) {
+        const sp = Math.round((m.swap_used_mb / m.swap_total_mb) * 100);
+        document.getElementById("swapMetric").innerHTML = `${m.swap_used_mb}<small> / ${m.swap_total_mb} MB (${sp}%)</small>`;
+        document.getElementById("swapBar").style.width = sp + "%";
+        document.getElementById("swapBar").className = "bar-fill " + barClass(sp);
+      } else {
+        document.getElementById("swapMetric").innerHTML = `<small>无 swap</small>`;
+      }
+    }
+
+    if (d.disk) {
+      const pct = parseInt(d.disk.use_pct);
+      document.getElementById("diskMetric").innerHTML = `${d.disk.used}<small> / ${d.disk.total} (${d.disk.use_pct})</small>`;
+      document.getElementById("diskBar").style.width = pct + "%";
+      document.getElementById("diskBar").className = "bar-fill " + barClass(pct);
+    }
+
+    if (d.errors && d.errors.server_1h) {
+      const e = d.errors.server_1h;
+      let html = "";
+      html += `<span class="tag ${e.ERROR > 0 ? 'err' : 'ok'}">ERROR: ${e.ERROR}</span> `;
+      html += `<span class="tag ${e.WARNING > 5 ? 'warn' : 'ok'}">WARNING: ${e.WARNING}</span> `;
+      html += `<span class="tag ${e.asr_fail > 0 ? 'warn' : 'ok'}">ASR: ${e.asr_fail}</span> `;
+      html += `<span class="tag ${e.tts_fail > 0 ? 'warn' : 'ok'}">TTS: ${e.tts_fail}</span>`;
+      document.getElementById("errorStats").innerHTML = html;
+    }
+
+    const tb = document.querySelector("#containerTable tbody");
+    tb.innerHTML = "";
+    if (d.containers && d.containers.length) {
+      for (const c of d.containers) {
+        const tr = document.createElement("tr");
+        tr.innerHTML = `<td>${c.name}</td><td>${c.cpu}</td><td>${c.mem}</td><td>${c.mem_perc}</td>`;
+        tb.appendChild(tr);
+      }
+    } else {
+      tb.innerHTML = '<tr><td colspan="4" class="muted">无数据</td></tr>';
+    }
+  } catch (e) {
+    document.getElementById("lastUpdate").textContent = "加载失败: " + e.message;
+  }
+}
+
+async function loadLogs() {
+  const container = document.getElementById("logContainer").value;
+  const level = document.getElementById("logLevel").value;
+  const out = document.getElementById("logOutput");
+  out.textContent = "加载中...";
+  try {
+    const d = await api(`/api/health/logs?container=${container}&lines=200&level=${level}`);
+    out.textContent = d.log || "(空)";
+    out.scrollTop = out.scrollHeight;
+  } catch (e) {
+    out.textContent = "错误: " + e.message;
+  }
+}
+
+function startAutoRefresh() {
+  if (timer) clearInterval(timer);
+  timer = setInterval(() => {
+    if (document.getElementById("autoRefresh").checked) loadHealth();
+  }, 30000);
+}
+
+loadHealth();
+startAutoRefresh();
+</script>
+</body>
+</html>

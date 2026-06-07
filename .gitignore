@@ -1,0 +1,16 @@
+.DS_Store
+*.log
+*.tar.gz
+*.pyc
+__pycache__/
+
+kb-admin/.env
+xiaozhi-server/data/.config.yaml
+sync_from_server.py
+
+xiaozhi-esp32-server-main/.git
+xiaozhi-esp32-server-main.partial.*
+.git-backups/
+
+kb-admin/data/files/
+kb-admin/data/prompts/
