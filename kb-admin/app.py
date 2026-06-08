@@ -4,6 +4,7 @@
 import os
 import json
 import time
+import base64
 import subprocess
 import shutil
 from functools import wraps
@@ -1681,31 +1682,55 @@ def page_dingyi_models():
     return send_from_directory("static", "dingyi-models.html")
 
 
+@app.route("/dingyi-chat")
+@requires_auth
+def page_dingyi_chat():
+    return send_from_directory("static", "dingyi-chat.html")
+
+
 def _sql_safe(value):
     return str(value).replace("'", "''")
 
 
 def _load_dingyiguo_llm_binding():
-    rows = mysql_query(
+    binding_rows = mysql_query(
         "SELECT a.id AS agent_id, a.agent_name, a.llm_model_id, "
         "m.model_name, m.config_json "
         "FROM ai_agent a "
         "LEFT JOIN ai_model_config m ON a.llm_model_id = m.id "
         f"WHERE a.id='{DINGYIGUO_AGENT_ID}' LIMIT 1"
     )
-    if not rows:
+    if not binding_rows:
         raise RuntimeError("丁一锅 agent 不存在")
-    row = rows[0]
+    prompt_rows = mysql_query(
+        "SELECT HEX(CAST(system_prompt AS BINARY)) AS system_prompt_hex, "
+        "HEX(CAST(summary_memory AS BINARY)) AS summary_memory_hex "
+        "FROM ai_agent "
+        f"WHERE id='{DINGYIGUO_AGENT_ID}' LIMIT 1"
+    )
+    row = binding_rows[0]
+    prompt_row = prompt_rows[0] if prompt_rows else {}
     raw = row.get("config_json") or "{}"
     try:
         cfg = json.loads(raw)
     except Exception:
         cfg = {}
+
+    def _decode_hex(value):
+        if not value or value == "NULL":
+            return ""
+        try:
+            return bytes.fromhex(value).decode("utf-8", errors="replace")
+        except Exception:
+            return ""
+
     return {
         "agent_id": row.get("agent_id"),
         "agent_name": row.get("agent_name"),
         "llm_model_id": row.get("llm_model_id"),
         "llm_model_name": row.get("model_name"),
+        "system_prompt": _decode_hex(prompt_row.get("system_prompt_hex")),
+        "summary_memory": _decode_hex(prompt_row.get("summary_memory_hex")),
         "config": cfg,
     }
 
@@ -1742,6 +1767,62 @@ def _fetch_model_ids(base_url, api_key):
     return model_ids, ""
 
 
+def _call_dingyiguo_chat(messages):
+    binding = _load_dingyiguo_llm_binding()
+    cfg = binding["config"]
+    base_url = (cfg.get("base_url") or cfg.get("url") or "").strip()
+    api_key = (cfg.get("api_key") or "").strip()
+    model_name = (cfg.get("model_name") or "").strip()
+    if not base_url or not api_key or not model_name:
+        raise RuntimeError("丁一锅当前 LLM 配置不完整")
+
+    payload = {
+        "model": model_name,
+        "messages": messages,
+        "stream": False,
+    }
+
+    for key in ("max_tokens", "temperature", "top_p", "frequency_penalty"):
+        value = cfg.get(key)
+        if value in (None, ""):
+            continue
+        try:
+            payload[key] = int(value) if key == "max_tokens" else float(value)
+        except (TypeError, ValueError):
+            pass
+
+    resp = requests.post(
+        base_url.rstrip("/") + "/chat/completions",
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        },
+        json=payload,
+        timeout=90,
+    )
+    body = resp.json() if "application/json" in resp.headers.get("Content-Type", "") else {}
+    if not resp.ok:
+        detail = body or resp.text[:1000]
+        raise RuntimeError(f"对话请求失败: HTTP {resp.status_code} {detail}")
+
+    choices = body.get("choices") or []
+    if not choices:
+        raise RuntimeError("模型返回为空")
+    message = choices[0].get("message") or {}
+    content = message.get("content") or ""
+    if isinstance(content, list):
+        content = "".join(
+            item.get("text", "") if isinstance(item, dict) else str(item)
+            for item in content
+        )
+    return {
+        "reply": str(content).strip(),
+        "binding": binding,
+        "usage": body.get("usage") or {},
+        "model": body.get("model") or model_name,
+    }
+
+
 @app.route("/api/dingyi-models", methods=["GET"])
 @requires_auth
 def api_dingyi_models():
@@ -1764,6 +1845,69 @@ def api_dingyi_models():
             "models": model_ids,
             "current_model_name": current_model_name,
             "models_error": models_error,
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/dingyi-chat/config", methods=["GET"])
+@requires_auth
+def api_dingyi_chat_config():
+    try:
+        binding = _load_dingyiguo_llm_binding()
+        cfg = binding["config"]
+        return jsonify({
+            "agent_id": binding["agent_id"],
+            "agent_name": binding["agent_name"],
+            "llm_model_id": binding["llm_model_id"],
+            "llm_model_name": binding["llm_model_name"],
+            "model_name": (cfg.get("model_name") or "").strip(),
+            "base_url": (cfg.get("base_url") or cfg.get("url") or "").strip(),
+            "has_api_key": bool((cfg.get("api_key") or "").strip()),
+            "system_prompt": binding.get("system_prompt") or "",
+            "summary_memory": binding.get("summary_memory") or "",
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/dingyi-chat/send", methods=["POST"])
+@requires_auth
+def api_dingyi_chat_send():
+    data = request.get_json(silent=True) or {}
+    user_text = (data.get("text") or "").strip()
+    history = data.get("history") or []
+    if not user_text:
+        return jsonify({"error": "text required"}), 400
+    if not isinstance(history, list):
+        return jsonify({"error": "history must be a list"}), 400
+
+    try:
+        binding = _load_dingyiguo_llm_binding()
+        messages = []
+        if binding.get("system_prompt"):
+            messages.append({"role": "system", "content": binding["system_prompt"]})
+        if binding.get("summary_memory"):
+            messages.append({
+                "role": "system",
+                "content": "以下是长期记忆摘要，请作为陪伴上下文参考：\n" + binding["summary_memory"],
+            })
+
+        for item in history[-20:]:
+            role = item.get("role")
+            content = str(item.get("content") or "").strip()
+            if role not in {"user", "assistant"} or not content:
+                continue
+            messages.append({"role": role, "content": content})
+
+        messages.append({"role": "user", "content": user_text})
+        result = _call_dingyiguo_chat(messages)
+        return jsonify({
+            "ok": True,
+            "reply": result["reply"],
+            "model": result["model"],
+            "usage": result["usage"],
+            "agent_name": binding["agent_name"],
         })
     except Exception as e:
         return jsonify({"error": str(e)}), 500
