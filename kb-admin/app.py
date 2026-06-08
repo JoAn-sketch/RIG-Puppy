@@ -29,6 +29,7 @@ H = {"Authorization": f"Bearer {ZHIPU_API_KEY}"}
 DB_CONTAINER = "xiaozhi-esp32-server-db"
 DB_NAME = "xiaozhi_esp32_server"
 DB_PASS = "123456"
+DINGYIGUO_AGENT_ID = "1822c2babf1b44cca6b25d0bdebc796f"
 
 def check_auth(u, p):
     return u == ADMIN_USER and p == ADMIN_PASS and ADMIN_PASS != ""
@@ -1672,6 +1673,152 @@ def api_voiceprint_verify():
 @requires_auth
 def page_kid():
     return send_from_directory("static", "kid.html")
+
+
+@app.route("/dingyi-models")
+@requires_auth
+def page_dingyi_models():
+    return send_from_directory("static", "dingyi-models.html")
+
+
+def _sql_safe(value):
+    return str(value).replace("'", "''")
+
+
+def _load_dingyiguo_llm_binding():
+    rows = mysql_query(
+        "SELECT a.id AS agent_id, a.agent_name, a.llm_model_id, "
+        "m.model_name, m.config_json "
+        "FROM ai_agent a "
+        "LEFT JOIN ai_model_config m ON a.llm_model_id = m.id "
+        f"WHERE a.id='{DINGYIGUO_AGENT_ID}' LIMIT 1"
+    )
+    if not rows:
+        raise RuntimeError("丁一锅 agent 不存在")
+    row = rows[0]
+    raw = row.get("config_json") or "{}"
+    try:
+        cfg = json.loads(raw)
+    except Exception:
+        cfg = {}
+    return {
+        "agent_id": row.get("agent_id"),
+        "agent_name": row.get("agent_name"),
+        "llm_model_id": row.get("llm_model_id"),
+        "llm_model_name": row.get("model_name"),
+        "config": cfg,
+    }
+
+
+def _save_dingyiguo_llm_config(binding, cfg):
+    safe_cfg = _sql_safe(json.dumps(cfg, ensure_ascii=False))
+    safe_model_id = _sql_safe(binding["llm_model_id"])
+    mysql_exec(
+        "UPDATE ai_model_config "
+        f"SET config_json='{safe_cfg}', update_date=NOW() "
+        f"WHERE id='{safe_model_id}'"
+    )
+
+
+def _fetch_model_ids(base_url, api_key):
+    if not base_url or not api_key:
+        return [], "未配置 base_url 或 api_key"
+
+    resp = requests.get(
+        base_url.rstrip("/") + "/models",
+        headers={"Authorization": f"Bearer {api_key}"},
+        timeout=20,
+    )
+    body = resp.json() if "application/json" in resp.headers.get("Content-Type", "") else {}
+    if not resp.ok:
+        detail = body or resp.text[:1000]
+        return [], f"模型列表请求失败: HTTP {resp.status_code} {detail}"
+
+    model_ids = []
+    for item in body.get("data", []):
+        model_id = item.get("id")
+        if model_id:
+            model_ids.append(model_id)
+    return model_ids, ""
+
+
+@app.route("/api/dingyi-models", methods=["GET"])
+@requires_auth
+def api_dingyi_models():
+    try:
+        binding = _load_dingyiguo_llm_binding()
+        cfg = binding["config"]
+        base_url = (cfg.get("base_url") or cfg.get("url") or "").strip()
+        api_key = (cfg.get("api_key") or "").strip()
+        current_model_name = (cfg.get("model_name") or "").strip()
+        model_ids, models_error = _fetch_model_ids(base_url, api_key)
+
+        return jsonify({
+            "binding": binding,
+            "source": {
+                "base_url": base_url,
+                "api_key": api_key,
+                "api_key_masked": (api_key[:6] + "..." + api_key[-4:]) if len(api_key) > 12 else api_key,
+                "models_url": base_url.rstrip("/") + "/models",
+            },
+            "models": model_ids,
+            "current_model_name": current_model_name,
+            "models_error": models_error,
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/dingyi-models/config", methods=["POST"])
+@requires_auth
+def api_dingyi_models_config():
+    data = request.get_json(silent=True) or {}
+    try:
+        binding = _load_dingyiguo_llm_binding()
+        cfg = dict(binding["config"])
+        if "base_url" in data:
+            cfg["base_url"] = (data.get("base_url") or "").strip()
+        if "api_key" in data:
+            cfg["api_key"] = (data.get("api_key") or "").strip()
+        if "model_name" in data:
+            cfg["model_name"] = (data.get("model_name") or "").strip()
+        _save_dingyiguo_llm_config(binding, cfg)
+        return jsonify({
+            "ok": True,
+            "agent_id": binding["agent_id"],
+            "agent_name": binding["agent_name"],
+            "llm_model_id": binding["llm_model_id"],
+            "config": {
+                "base_url": cfg.get("base_url") or cfg.get("url") or "",
+                "api_key": cfg.get("api_key") or "",
+                "model_name": cfg.get("model_name") or "",
+            },
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/dingyi-models/switch", methods=["POST"])
+@requires_auth
+def api_dingyi_models_switch():
+    data = request.get_json(silent=True) or {}
+    model_name = (data.get("model_name") or "").strip()
+    if not model_name:
+        return jsonify({"error": "model_name required"}), 400
+    try:
+        binding = _load_dingyiguo_llm_binding()
+        cfg = dict(binding["config"])
+        cfg["model_name"] = model_name
+        _save_dingyiguo_llm_config(binding, cfg)
+        return jsonify({
+            "ok": True,
+            "agent_id": binding["agent_id"],
+            "agent_name": binding["agent_name"],
+            "llm_model_id": binding["llm_model_id"],
+            "model_name": model_name,
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 @app.route("/api/kid/stats", methods=["GET"])

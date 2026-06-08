@@ -160,7 +160,17 @@ def upload_file(
     local_stat = local_file.stat()
     sftp.chmod(temp_remote, stat.S_IMODE(local_stat.st_mode))
     sftp.utime(temp_remote, (int(local_stat.st_atime), int(local_stat.st_mtime)))
-    sftp.rename(temp_remote, remote_file)
+    try:
+        if hasattr(sftp, "posix_rename"):
+            sftp.posix_rename(temp_remote, remote_file)
+        else:
+            raise IOError("posix_rename unavailable")
+    except Exception:
+        try:
+            sftp.remove(remote_file)
+        except FileNotFoundError:
+            pass
+        sftp.rename(temp_remote, remote_file)
     print(f"UPLOADED {local_file} -> {remote_file}")
     return True
 
