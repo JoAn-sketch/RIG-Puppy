@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Scene Router · 噜噜</title>
+<style>
+* { box-sizing: border-box; }
+body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; margin: 0; background: #f4f7fb; color: #0f172a; }
+header { background: #0f172a; color: #fff; padding: 14px 24px; display:flex; justify-content:space-between; align-items:center; }
+header h1 { margin: 0; font-size: 18px; font-weight: 600; }
+header a { color: #94a3b8; text-decoration: none; font-size: 13px; margin-left: 16px; }
+header a:hover { color: #fff; }
+main { max-width: 1220px; margin: 24px auto; padding: 0 16px 40px; }
+.hero { background: linear-gradient(135deg, #e0f2fe 0%, #f8fafc 55%, #ecfeff 100%); border: 1px solid #bae6fd; border-radius: 18px; padding: 22px 24px; box-shadow: 0 10px 30px rgba(14, 116, 144, .08); margin-bottom: 20px; }
+.hero h2 { margin: 0 0 10px; font-size: 20px; }
+.hero p { margin: 0; color: #334155; line-height: 1.7; }
+.row { display:flex; gap: 12px; flex-wrap: wrap; align-items: center; }
+.card { background: #fff; border: 1px solid #e2e8f0; border-radius: 16px; padding: 18px; box-shadow: 0 4px 20px rgba(15, 23, 42, .04); }
+.stats { display:grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; margin-bottom: 20px; }
+.stat { background: #fff; border: 1px solid #dbeafe; border-radius: 14px; padding: 16px; }
+.stat .label { font-size: 12px; color: #64748b; margin-bottom: 8px; }
+.stat .value { font-size: 24px; font-weight: 700; color: #0f172a; }
+.muted { color: #64748b; font-size: 12px; }
+.toolbar { display:flex; justify-content:space-between; align-items:center; gap: 12px; margin-bottom: 18px; }
+button { background: #0284c7; color:#fff; border:0; border-radius: 10px; padding: 10px 16px; font-size: 13px; cursor:pointer; }
+button:hover { background:#0369a1; }
+.scene-grid { display:grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
+.scene-card { background: #fff; border: 1px solid #dbeafe; border-radius: 18px; padding: 18px; box-shadow: 0 8px 24px rgba(59, 130, 246, .05); }
+.scene-head { display:flex; justify-content:space-between; align-items:flex-start; gap: 12px; margin-bottom: 14px; }
+.scene-title { font-size: 18px; font-weight: 700; }
+.pill { display:inline-flex; align-items:center; gap: 6px; border-radius: 999px; padding: 5px 10px; font-size: 12px; border: 1px solid transparent; }
+.pill.low { background: #ecfdf5; border-color: #bbf7d0; color: #166534; }
+.pill.medium { background: #fefce8; border-color: #fde68a; color: #854d0e; }
+.pill.high { background: #fef2f2; border-color: #fecaca; color: #991b1b; }
+.meta-grid { display:grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-bottom: 14px; }
+.meta-box { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; padding: 10px 12px; }
+.meta-box .label { font-size: 12px; color: #64748b; margin-bottom: 4px; }
+.meta-box .value { font-size: 13px; color: #0f172a; word-break: break-word; }
+.subscene-list { display:grid; gap: 10px; }
+.subscene-item { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; padding: 12px; }
+.subscene-name { font-size: 13px; font-weight: 700; margin-bottom: 8px; color: #0f172a; }
+.keywords { display:flex; flex-wrap: wrap; gap: 8px; }
+.keyword { display:inline-flex; padding: 4px 8px; border-radius: 999px; background: #eff6ff; color: #1d4ed8; font-size: 12px; border: 1px solid #bfdbfe; }
+.empty { padding: 60px 12px; text-align: center; color: #94a3b8; }
+.error { background: #fef2f2; border-color: #fecaca; color: #991b1b; }
+@media (max-width: 960px) {
+  .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .scene-grid { grid-template-columns: 1fr; }
+}
+</style>
+</head>
+<body>
+<header>
+  <h1>Scene Router</h1>
+  <div>
+    <a href="/">📚 后端</a>
+    <a href="/scene-router" style="color:#38bdf8">🧭 Scene Router</a>
+    <a href="/dingyi-chat" style="color:#f59e0b">💬 对话模拟</a>
+    <a href="/dingyi-models" style="color:#34d399">🤖 模型切换</a>
+    <a href="/kid" style="color:#fbbf24">🧒 儿童</a>
+  </div>
+</header>
+
+<main>
+  <section class="hero">
+    <h2>当前 Scene Router 结构</h2>
+    <p>这个页面直接从服务器上的 `scene_router/rules.py` 读取当前 scene 定义。以后你更新 scene、subscene 或关键词后，这里刷新就会同步显示，不需要手工改页面。</p>
+  </section>
+
+  <section class="stats" id="stats">
+    <div class="stat"><div class="label">主 Scene 数量</div><div class="value">-</div></div>
+    <div class="stat"><div class="label">Subscene 总数</div><div class="value">-</div></div>
+    <div class="stat"><div class="label">默认 Scene</div><div class="value">-</div></div>
+    <div class="stat"><div class="label">规则文件</div><div class="value">-</div></div>
+  </section>
+
+  <section class="card">
+    <div class="toolbar">
+      <div>
+        <div style="font-size:16px;font-weight:700;margin-bottom:4px;">Scene 列表</div>
+        <div class="muted">展示主 scene、policy、工具开关与 subscene 关键词。</div>
+      </div>
+      <button onclick="loadScenes()">刷新</button>
+    </div>
+    <div id="sceneGrid" class="scene-grid">
+      <div class="empty">加载中...</div>
+    </div>
+  </section>
+</main>
+
+<script>
+function esc(s) {
+  return String(s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+function riskClass(level) {
+  if (level === 'high') return 'high';
+  if (level === 'medium') return 'medium';
+  return 'low';
+}
+
+async function loadScenes() {
+  const stats = document.getElementById('stats');
+  const grid = document.getElementById('sceneGrid');
+  grid.innerHTML = '<div class="empty">加载中...</div>';
+  try {
+    const res = await fetch('/api/scene-router/scenes');
+    const data = await res.json();
+    if (!res.ok || data.error) throw new Error(data.error || ('HTTP ' + res.status));
+
+    const scenes = data.scenes || [];
+    const totalSubscenes = scenes.reduce((sum, item) => sum + ((item.subscenes || []).length), 0);
+    const defaultScene = data.default_scene || {};
+    stats.innerHTML = `
+      <div class="stat"><div class="label">主 Scene 数量</div><div class="value">${esc(data.scene_count || 0)}</div></div>
+      <div class="stat"><div class="label">Subscene 总数</div><div class="value">${esc(totalSubscenes)}</div></div>
+      <div class="stat"><div class="label">默认 Scene</div><div class="value">${esc(defaultScene.primary_scene || '-')} / ${esc(defaultScene.subscene || '-')}</div></div>
+      <div class="stat"><div class="label">规则文件</div><div class="value" style="font-size:12px">${esc(data.rules_path || '-')}</div></div>
+    `;
+
+    if (!scenes.length) {
+      grid.innerHTML = '<div class="empty">当前没有读取到 scene 定义。</div>';
+      return;
+    }
+
+    grid.innerHTML = scenes.map(scene => `
+      <article class="scene-card">
+        <div class="scene-head">
+          <div>
+            <div class="scene-title">${esc(scene.scene_name)}</div>
+            <div class="muted" style="margin-top:4px;">policy: ${esc(scene.policy_profile || '-')}</div>
+          </div>
+          <span class="pill ${riskClass(scene.risk_level)}">risk: ${esc(scene.risk_level || 'low')}</span>
+        </div>
+
+        <div class="meta-grid">
+          <div class="meta-box"><div class="label">Memory</div><div class="value">${scene.should_use_memory ? 'on' : 'off'}</div></div>
+          <div class="meta-box"><div class="label">RAG</div><div class="value">${scene.should_use_rag ? 'on' : 'off'}</div></div>
+          <div class="meta-box"><div class="label">VLM</div><div class="value">${scene.should_use_vlm ? 'on' : 'off'}</div></div>
+          <div class="meta-box"><div class="label">Safe Template</div><div class="value">${scene.should_force_safe_template ? 'on' : 'off'}</div></div>
+        </div>
+
+        <div class="meta-box" style="margin-bottom:14px;">
+          <div class="label">Parent Escalation</div>
+          <div class="value">${scene.should_escalate_parent ? 'required' : 'no'}</div>
+        </div>
+
+        <div class="subscene-list">
+          ${(scene.subscenes || []).map(sub => `
+            <div class="subscene-item">
+              <div class="subscene-name">${esc(sub.subscene)}</div>
+              <div class="keywords">
+                ${(sub.keywords || []).map(keyword => `<span class="keyword">${esc(keyword)}</span>`).join('')}
+              </div>
+            </div>
+          `).join('')}
+        </div>
+      </article>
+    `).join('');
+  } catch (e) {
+    stats.innerHTML = `
+      <div class="stat error"><div class="label">错误</div><div class="value" style="font-size:14px;">${esc(String(e))}</div></div>
+    `;
+    grid.innerHTML = `<div class="empty">加载失败：${esc(String(e))}</div>`;
+  }
+}
+
+loadScenes();
+</script>
+</body>
+</html>

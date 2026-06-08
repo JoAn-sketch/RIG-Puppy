@@ -8,6 +8,7 @@ import base64
 import subprocess
 import shutil
 import sys
+import importlib.util
 from functools import wraps
 from datetime import datetime, timedelta
 from flask import Flask, request, jsonify, send_from_directory, send_file, Response
@@ -42,6 +43,13 @@ SCENE_ROUTER_ROOT = os.path.join(
 )
 if SCENE_ROUTER_ROOT not in sys.path:
     sys.path.insert(0, SCENE_ROUTER_ROOT)
+
+SCENE_ROUTER_RULES_PATH = os.path.join(
+    SCENE_ROUTER_ROOT,
+    "core",
+    "scene_router",
+    "rules.py",
+)
 
 try:
     from core.scene_router import ChildProfile, DialogState, SceneRouter, SceneRouterInput, SignalState
@@ -117,6 +125,47 @@ def _route_scene_for_text(user_text, history):
     }
 
 
+def _load_scene_router_snapshot():
+    spec = importlib.util.spec_from_file_location(
+        f"scene_router_rules_snapshot_{int(time.time() * 1000)}",
+        SCENE_ROUTER_RULES_PATH,
+    )
+    if spec is None or spec.loader is None:
+        raise RuntimeError("scene router rules load failed")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    scene_rules = getattr(module, "SCENE_RULES", {}) or {}
+    default_scene = getattr(module, "DEFAULT_SCENE", {}) or {}
+    scenes = []
+    for scene_name, scene_rule in scene_rules.items():
+        subscene_rules = scene_rule.get("subscene_rules") or []
+        scenes.append({
+            "scene_name": scene_name,
+            "risk_level": scene_rule.get("risk_level") or "low",
+            "policy_profile": scene_rule.get("policy_profile") or "",
+            "should_force_safe_template": bool(scene_rule.get("should_force_safe_template")),
+            "should_use_memory": bool(scene_rule.get("should_use_memory")),
+            "should_use_rag": bool(scene_rule.get("should_use_rag")),
+            "should_use_vlm": bool(scene_rule.get("should_use_vlm")),
+            "should_escalate_parent": bool(scene_rule.get("should_escalate_parent")),
+            "subscenes": [
+                {
+                    "subscene": subscene,
+                    "keywords": keywords,
+                }
+                for subscene, keywords in subscene_rules
+            ],
+        })
+
+    return {
+        "scenes": scenes,
+        "default_scene": default_scene,
+        "rules_path": SCENE_ROUTER_RULES_PATH,
+        "scene_count": len(scenes),
+    }
+
+
 register_messaging_routes(app, requires_auth)
 
 
@@ -152,6 +201,12 @@ def mysql_exec(sql):
 @requires_auth
 def index():
     return send_from_directory("static", "index.html")
+
+
+@app.route("/scene-router")
+@requires_auth
+def scene_router_page():
+    return send_from_directory("static", "scene-router.html")
 
 
 @app.route("/monitor")
@@ -1979,6 +2034,18 @@ def api_dingyi_chat_send():
             "usage": result["usage"],
             "agent_name": binding["agent_name"],
             "scene": scene,
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/scene-router/scenes", methods=["GET"])
+@requires_auth
+def api_scene_router_scenes():
+    try:
+        return jsonify({
+            "ok": True,
+            **_load_scene_router_snapshot(),
         })
     except Exception as e:
         return jsonify({"error": str(e)}), 500
