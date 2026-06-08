@@ -10,6 +10,8 @@ from core.handle.abortHandle import handleAbortMessage
 from core.handle.intentHandler import handle_user_intent
 from core.utils.output_counter import check_device_output_limit
 from core.handle.sendAudioHandle import send_stt_message, SentenceType
+from core.scene_router import ChildProfile, DialogState, SceneRouterInput, SignalState
+from core.scene_router.policy import build_scene_prompt_patch
 
 TAG = __name__
 
@@ -79,6 +81,40 @@ async def startToChat(conn: "ConnectionHandler", text):
     # manual 模式下不打断正在播放的内容
     if conn.client_is_speaking and conn.client_listen_mode != "manual":
         await handleAbortMessage(conn)
+
+    try:
+        age_band = "6-8"
+        if getattr(conn, "prompt", None) and "3-5" in conn.prompt and "6-8" in conn.prompt and "9-12" in conn.prompt:
+            if "kid_age_band" in conn.prompt:
+                age_band = "6-8"
+        router_input = SceneRouterInput(
+            text=actual_text,
+            child_profile=ChildProfile(age_band=age_band),
+            dialog_state=DialogState(
+                current_scene=getattr(getattr(conn, "last_scene_output", None), "primary_scene", None),
+                turn_index=len(getattr(conn.dialogue, "dialogue", [])),
+                last_policy=getattr(getattr(conn, "last_scene_output", None), "policy_profile", None),
+            ),
+            signals=SignalState(
+                emotion_hint="neutral",
+                interruption=bool(conn.client_is_speaking),
+                silence_ms=0,
+                vlm_tags=[],
+            ),
+        )
+        conn.last_scene_output = conn.scene_router.route(router_input)
+        conn.scene_prompt_patch = build_scene_prompt_patch(conn.last_scene_output)
+        if getattr(conn, "prompt", None):
+            base_prompt = conn.prompt.split("\n<scene_router>\n", 1)[0]
+            conn.change_system_prompt(base_prompt + "\n" + conn.scene_prompt_patch)
+        conn.logger.bind(tag=TAG).info(
+            f"scene_router => scene={conn.last_scene_output.primary_scene}, "
+            f"subscene={conn.last_scene_output.subscene}, "
+            f"policy={conn.last_scene_output.policy_profile}, "
+            f"risk={conn.last_scene_output.risk_level}"
+        )
+    except Exception as e:
+        conn.logger.bind(tag=TAG).warning(f"scene router 运行失败，已跳过: {e}")
 
     # 首先进行意图分析，使用实际文本内容
     intent_handled = await handle_user_intent(conn, actual_text)

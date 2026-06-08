@@ -32,6 +32,8 @@ from core.utils.dialogue import Message, Dialogue
 from core.providers.asr.dto.dto import InterfaceType
 from core.handle.textHandle import handleTextMessage
 from core.providers.tools.unified_tool_handler import UnifiedToolHandler
+from core.scene_router import SceneRouter
+from core.scene_router.policy import build_safe_response, build_scene_prompt_patch
 from plugins_func.loadplugins import auto_import_modules
 from plugins_func.register import Action, ActionResponse
 from core.auth import AuthenticationError
@@ -175,6 +177,9 @@ class ConnectionHandler:
         self.close_after_chat = False
         self.load_function_plugin = False
         self.intent_type = "nointent"
+        self.scene_router = SceneRouter()
+        self.last_scene_output = None
+        self.scene_prompt_patch = ""
 
         self.timeout_seconds = (
                 int(self.config.get("close_connection_no_voice_time", 120)) + 60
@@ -983,10 +988,42 @@ class ConnectionHandler:
         if query is not None:
             self.logger.bind(tag=TAG).info(f"大模型收到用户消息: {query}")
 
+        if depth == 0 and current_sentence_id is None:
+            current_sentence_id = str(uuid.uuid4().hex)
+            self.sentence_id = current_sentence_id
+
+        if (
+            depth == 0
+            and query
+            and self.last_scene_output is not None
+            and self.last_scene_output.should_force_safe_template
+        ):
+            safe_text = build_safe_response(self.last_scene_output)
+            self.tts.store_tts_text(current_sentence_id, safe_text)
+            self.dialogue.put(Message(role="user", content=query))
+            self.dialogue.put(Message(role="assistant", content=safe_text))
+            self.tts.tts_text_queue.put(
+                TTSMessageDTO(
+                    sentence_id=current_sentence_id,
+                    sentence_type=SentenceType.FIRST,
+                    content_type=ContentType.ACTION,
+                )
+            )
+            self.tts.tts_one_sentence(self, ContentType.TEXT, content_detail=safe_text)
+            self.tts.tts_text_queue.put(
+                TTSMessageDTO(
+                    sentence_id=current_sentence_id,
+                    sentence_type=SentenceType.LAST,
+                    content_type=ContentType.ACTION,
+                )
+            )
+            return True
+
         # 为最顶层时新建会话ID和发送FIRST请求
         if depth == 0:
-            current_sentence_id = str(uuid.uuid4().hex)
-            self.sentence_id = current_sentence_id  # 更新共享属性
+            if current_sentence_id is None:
+                current_sentence_id = str(uuid.uuid4().hex)
+                self.sentence_id = current_sentence_id  # 更新共享属性
             self.dialogue.put(Message(role="user", content=query))
             self.tts.tts_text_queue.put(
                 TTSMessageDTO(
@@ -1023,6 +1060,7 @@ class ConnectionHandler:
                 self.intent_type == "function_call"
                 and hasattr(self, "func_handler")
                 and not force_final_answer
+                and not (self.last_scene_output and self.last_scene_output.should_force_safe_template)
         ):
             functions = self.func_handler.get_functions()
             # 仅在第一层调用时注入 direct_answer 虚拟工具
@@ -1036,7 +1074,7 @@ class ConnectionHandler:
             # 使用带记忆的对话
             memory_str = None
             # 仅当query非空（代表用户询问）时查询记忆
-            if self.memory is not None and query:
+            if self.memory is not None and query and not (self.last_scene_output and not self.last_scene_output.should_use_memory):
                 future = asyncio.run_coroutine_threadsafe(
                     self.memory.query_memory(query), self.loop
                 )
