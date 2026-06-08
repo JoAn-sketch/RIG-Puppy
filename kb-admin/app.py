@@ -7,6 +7,7 @@ import time
 import base64
 import subprocess
 import shutil
+import sys
 from functools import wraps
 from datetime import datetime, timedelta
 from flask import Flask, request, jsonify, send_from_directory, send_file, Response
@@ -32,6 +33,27 @@ DB_NAME = "xiaozhi_esp32_server"
 DB_PASS = "123456"
 DINGYIGUO_AGENT_ID = "1822c2babf1b44cca6b25d0bdebc796f"
 
+SCENE_ROUTER_ROOT = os.path.join(
+    os.path.dirname(__file__),
+    "..",
+    "xiaozhi-esp32-server-main",
+    "main",
+    "xiaozhi-server",
+)
+if SCENE_ROUTER_ROOT not in sys.path:
+    sys.path.insert(0, SCENE_ROUTER_ROOT)
+
+try:
+    from core.scene_router import ChildProfile, DialogState, SceneRouter, SceneRouterInput, SignalState
+except Exception:
+    SceneRouter = None
+    ChildProfile = None
+    DialogState = None
+    SceneRouterInput = None
+    SignalState = None
+
+SCENE_ROUTER = SceneRouter() if SceneRouter else None
+
 def check_auth(u, p):
     return u == ADMIN_USER and p == ADMIN_PASS and ADMIN_PASS != ""
 
@@ -46,6 +68,53 @@ def requires_auth(f):
             )
         return f(*a, **kw)
     return wrapped
+
+
+def _route_scene_for_text(user_text, history):
+    if not SCENE_ROUTER or not user_text:
+        return None
+
+    turn_index = 0
+    last_scene = None
+    for item in history or []:
+        if item.get("role") == "user":
+            turn_index += 1
+            scene = item.get("scene") or {}
+            if scene.get("primary_scene"):
+                last_scene = scene.get("primary_scene")
+
+    routed = SCENE_ROUTER.route(
+        SceneRouterInput(
+            text=user_text,
+            child_profile=ChildProfile(age_band="6-8"),
+            dialog_state=DialogState(
+                current_scene=last_scene,
+                turn_index=turn_index,
+            ),
+            signals=SignalState(
+                emotion_hint="neutral",
+                interruption=False,
+                silence_ms=0,
+                vlm_tags=[],
+            ),
+        )
+    )
+    return {
+        "primary_scene": routed.primary_scene,
+        "subscene": routed.subscene,
+        "secondary_scene": routed.secondary_scene,
+        "risk_level": routed.risk_level,
+        "emotion_state": routed.emotion_state,
+        "age_band": routed.age_band,
+        "policy_profile": routed.policy_profile,
+        "should_use_rag": routed.should_use_rag,
+        "should_use_memory": routed.should_use_memory,
+        "should_use_vlm": routed.should_use_vlm,
+        "should_escalate_parent": routed.should_escalate_parent,
+        "should_force_safe_template": routed.should_force_safe_template,
+        "confidence": routed.confidence,
+        "reason_codes": routed.reason_codes,
+    }
 
 
 register_messaging_routes(app, requires_auth)
@@ -1884,6 +1953,7 @@ def api_dingyi_chat_send():
 
     try:
         binding = _load_dingyiguo_llm_binding()
+        scene = _route_scene_for_text(user_text, history)
         messages = []
         if binding.get("system_prompt"):
             messages.append({"role": "system", "content": binding["system_prompt"]})
@@ -1908,6 +1978,7 @@ def api_dingyi_chat_send():
             "model": result["model"],
             "usage": result["usage"],
             "agent_name": binding["agent_name"],
+            "scene": scene,
         })
     except Exception as e:
         return jsonify({"error": str(e)}), 500
