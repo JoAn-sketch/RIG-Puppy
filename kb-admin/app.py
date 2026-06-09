@@ -113,6 +113,18 @@ def _route_scene_for_text(user_text, history):
             ),
         )
     )
+    snapshot = _load_scene_router_snapshot()
+    scene_policy = None
+    subscene_hint = ""
+    for scene_item in snapshot.get("scenes", []):
+        if scene_item.get("scene_name") != routed.primary_scene:
+            continue
+        scene_policy = scene_item.get("policy")
+        for subscene_item in scene_item.get("subscenes", []):
+            if subscene_item.get("subscene") == routed.subscene:
+                subscene_hint = subscene_item.get("hint") or ""
+                break
+        break
     return {
         "primary_scene": routed.primary_scene,
         "subscene": routed.subscene,
@@ -128,6 +140,9 @@ def _route_scene_for_text(user_text, history):
         "should_force_safe_template": routed.should_force_safe_template,
         "confidence": routed.confidence,
         "reason_codes": routed.reason_codes,
+        "policy": scene_policy,
+        "subscene_hint": subscene_hint,
+        "age_style_hint": (snapshot.get("age_style_hints") or {}).get(routed.age_band) or "",
     }
 
 

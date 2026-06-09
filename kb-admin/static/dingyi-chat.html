@@ -31,6 +31,13 @@ h2 { margin: 0 0 14px; font-size: 15px; color: #374151; border-left: 3px solid #
 .scene-pill { display:inline-flex; gap: 8px; align-items:center; max-width: 100%; padding: 6px 10px; border-radius: 999px; background: #eff6ff; border: 1px solid #bfdbfe; color: #1d4ed8; font-size: 12px; line-height: 1.2; white-space: normal; word-break: break-word; }
 .scene-pill .risk { color: #b45309; }
 .scene-pill .confidence { color: #475569; }
+.policy-panel { max-width: 78%; background: #f8fafc; border: 1px solid #dbeafe; border-radius: 12px; padding: 12px 14px; color: #0f172a; font-size: 12px; line-height: 1.6; }
+.policy-title { font-weight: 700; color: #0369a1; margin-bottom: 8px; }
+.policy-row { margin-bottom: 8px; }
+.policy-row:last-child { margin-bottom: 0; }
+.policy-row .label { display:block; font-size: 11px; color: #64748b; margin-bottom: 2px; }
+.policy-list { margin: 0; padding-left: 18px; }
+.policy-list li { margin: 2px 0; }
 .composer { margin-top: 14px; display:grid; gap: 10px; }
 textarea { width: 100%; min-height: 110px; resize: vertical; border: 1px solid #d1d5db; border-radius: 12px; padding: 12px 14px; font-size: 14px; outline: none; }
 textarea:focus { border-color: #2563eb; box-shadow: 0 0 0 3px rgba(37,99,235,.12); }
@@ -151,10 +158,55 @@ function renderChat() {
       </div>
     `;
   };
+  const listHtml = (items) => {
+    if (!items || !items.length) return '<div class="muted">-</div>';
+    return `<ul class="policy-list">${items.map(item => `<li>${esc(item)}</li>`).join('')}</ul>`;
+  };
+  const policyHtml = (scene) => {
+    if (!scene || !scene.policy) return '';
+    return `
+      <div class="policy-panel">
+        <div class="policy-title">Scene Policy</div>
+        <div class="policy-row">
+          <span class="label">Goal</span>
+          <div>${esc(scene.policy.goal || '-')}</div>
+        </div>
+        <div class="policy-row">
+          <span class="label">Tone</span>
+          <div>${esc(scene.policy.tone || '-')}</div>
+        </div>
+        <div class="policy-row">
+          <span class="label">Response Strategy</span>
+          <div>${listHtml(scene.policy.response_style || [])}</div>
+        </div>
+        <div class="policy-row">
+          <span class="label">Ask Strategy</span>
+          <div>${listHtml(scene.policy.ask_strategy || [])}</div>
+        </div>
+        <div class="policy-row">
+          <span class="label">Avoid</span>
+          <div>${listHtml(scene.policy.avoid || [])}</div>
+        </div>
+        <div class="policy-row">
+          <span class="label">Exit Condition</span>
+          <div>${esc(scene.policy.exit_condition || '-')}</div>
+        </div>
+        <div class="policy-row">
+          <span class="label">Subscene Hint</span>
+          <div>${esc(scene.subscene_hint || '-')}</div>
+        </div>
+        <div class="policy-row">
+          <span class="label">Age Style Hint</span>
+          <div>${esc(scene.age_style_hint || '-')}</div>
+        </div>
+      </div>
+    `;
+  };
   log.innerHTML = history.map(item => `
     <div class="msg ${item.role}">
       <div class="msg-wrap">
         ${item.role === 'user' ? sceneHtml(item.scene) : ''}
+        ${item.role === 'user' ? policyHtml(item.scene) : ''}
         <div class="bubble">${esc(item.content)}</div>
       </div>
     </div>
