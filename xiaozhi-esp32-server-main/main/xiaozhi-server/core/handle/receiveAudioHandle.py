@@ -5,6 +5,12 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from core.connection import ConnectionHandler
+from core.dialogue_state import (
+    ChildProfileSnapshot,
+    DialogueStateManagerInput,
+    RuntimeSignals,
+    build_dialogue_state_prompt_patch,
+)
 from core.utils.util import audio_to_data
 from core.handle.abortHandle import handleAbortMessage
 from core.handle.intentHandler import handle_user_intent
@@ -104,17 +110,43 @@ async def startToChat(conn: "ConnectionHandler", text):
         )
         conn.last_scene_output = conn.scene_router.route(router_input)
         conn.scene_prompt_patch = build_scene_prompt_patch(conn.last_scene_output)
-        if getattr(conn, "prompt", None):
-            base_prompt = conn.prompt.split("\n<scene_router>\n", 1)[0]
-            conn.change_system_prompt(base_prompt + "\n" + conn.scene_prompt_patch)
+        manager_input = DialogueStateManagerInput(
+            text=actual_text,
+            timestamp_ms=int(time.time() * 1000),
+            scene_router_output=conn.last_scene_output,
+            dialogue_state=getattr(conn, "dialogue_state_runtime", None),
+            signals=RuntimeSignals(
+                emotion_hint="neutral",
+                interruption=bool(conn.client_is_speaking),
+                silence_ms=0,
+                user_move="unknown",
+                understanding_signal="unknown",
+                topic_switch_signal=False,
+                frustration_signal=0,
+            ),
+            child_profile=ChildProfileSnapshot(age_band=age_band),
+        )
+        conn.last_dialogue_state_result = conn.dialogue_state_manager.update(manager_input)
+        conn.dialogue_state_runtime = conn.last_dialogue_state_result.state
+        conn.dialogue_state_prompt_patch = build_dialogue_state_prompt_patch(
+            conn.last_dialogue_state_result
+        )
+        if getattr(conn, "prompt", None) or getattr(conn, "base_prompt", None):
+            conn._refresh_runtime_prompt()
         conn.logger.bind(tag=TAG).info(
             f"scene_router => scene={conn.last_scene_output.primary_scene}, "
             f"subscene={conn.last_scene_output.subscene}, "
             f"policy={conn.last_scene_output.policy_profile}, "
             f"risk={conn.last_scene_output.risk_level}"
         )
+        conn.logger.bind(tag=TAG).info(
+            f"dialogue_state => phase={conn.last_dialogue_state_result.control.current_phase}, "
+            f"next_action={conn.last_dialogue_state_result.control.next_action}, "
+            f"rule={conn.last_dialogue_state_result.debug.matched_rule}, "
+            f"close={conn.last_dialogue_state_result.control.should_close_scene}"
+        )
     except Exception as e:
-        conn.logger.bind(tag=TAG).warning(f"scene router 运行失败，已跳过: {e}")
+        conn.logger.bind(tag=TAG).warning(f"scene/dialogue_state 运行失败，已跳过: {e}")
 
     # 首先进行意图分析，使用实际文本内容
     intent_handled = await handle_user_intent(conn, actual_text)

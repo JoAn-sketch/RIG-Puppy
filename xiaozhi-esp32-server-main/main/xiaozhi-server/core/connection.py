@@ -32,8 +32,12 @@ from core.utils.dialogue import Message, Dialogue
 from core.providers.asr.dto.dto import InterfaceType
 from core.handle.textHandle import handleTextMessage
 from core.providers.tools.unified_tool_handler import UnifiedToolHandler
+from core.dialogue_state import (
+    DialogueStateManager,
+    strip_runtime_prompt_sections,
+)
 from core.scene_router import SceneRouter
-from core.scene_router.policy import build_safe_response, build_scene_prompt_patch
+from core.scene_router.policy import build_safe_response
 from plugins_func.loadplugins import auto_import_modules
 from plugins_func.register import Action, ActionResponse
 from core.auth import AuthenticationError
@@ -178,8 +182,13 @@ class ConnectionHandler:
         self.load_function_plugin = False
         self.intent_type = "nointent"
         self.scene_router = SceneRouter()
+        self.dialogue_state_manager = DialogueStateManager()
         self.last_scene_output = None
+        self.last_dialogue_state_result = None
+        self.dialogue_state_runtime = None
+        self.base_prompt = None
         self.scene_prompt_patch = ""
+        self.dialogue_state_prompt_patch = ""
 
         self.timeout_seconds = (
                 int(self.config.get("close_connection_no_voice_time", 120)) + 60
@@ -977,9 +986,38 @@ class ConnectionHandler:
             asyncio.run_coroutine_threadsafe(self.func_handler._initialize(), self.loop)
 
     def change_system_prompt(self, prompt):
-        self.prompt = prompt
-        # 更新系统prompt至上下文
+        self.base_prompt = strip_runtime_prompt_sections(prompt)
+        self._refresh_runtime_prompt()
+
+    def _refresh_runtime_prompt(self):
+        prompt_parts = []
+        if self.base_prompt:
+            prompt_parts.append(self.base_prompt.strip())
+        if self.scene_prompt_patch:
+            prompt_parts.append(self.scene_prompt_patch.strip())
+        if self.dialogue_state_prompt_patch:
+            prompt_parts.append(self.dialogue_state_prompt_patch.strip())
+        self.prompt = "\n\n".join(part for part in prompt_parts if part)
         self.dialogue.update_system_message(self.prompt)
+
+    def _get_dialogue_next_action(self):
+        if self.last_dialogue_state_result is None:
+            return None
+        control = getattr(self.last_dialogue_state_result, "control", None)
+        if control is None:
+            return None
+        return getattr(control, "next_action", None)
+
+    def _record_assistant_reply(self, reply_text, next_action=None):
+        if not reply_text:
+            return
+        self.dialogue_state_runtime = self.dialogue_state_manager.post_reply_update(
+            self.dialogue_state_runtime,
+            reply_text,
+            next_action=next_action,
+        )
+        if self.last_dialogue_state_result is not None:
+            self.last_dialogue_state_result.state = self.dialogue_state_runtime
 
     def chat(self, query, depth=0):
         # 保存当前任务的sentence_id到局部变量，避免被新任务覆盖
@@ -1017,6 +1055,7 @@ class ConnectionHandler:
                     content_type=ContentType.ACTION,
                 )
             )
+            self._record_assistant_reply(safe_text, next_action="direct_safe_response")
             return True
 
         # 为最顶层时新建会话ID和发送FIRST请求
@@ -1251,6 +1290,10 @@ class ConnectionHandler:
                             da_response = self._clean_response_garbage(da_response)
                             self.tts.store_tts_text(current_sentence_id, da_response)
                             self.dialogue.put(Message(role="assistant", content=da_response))
+                            self._record_assistant_reply(
+                                da_response,
+                                next_action=self._get_dialogue_next_action(),
+                            )
 
                     if not real_tool_calls:
                         if depth == 0:
@@ -1276,6 +1319,10 @@ class ConnectionHandler:
                     streamed_text = "".join(response_message)
                     self.tts.store_tts_text(current_sentence_id, streamed_text)
                     self.dialogue.put(Message(role="assistant", content=streamed_text))
+                    self._record_assistant_reply(
+                        streamed_text,
+                        next_action=self._get_dialogue_next_action(),
+                    )
                 response_message.clear()
 
                 # 收集所有工具调用的 Future
@@ -1330,6 +1377,10 @@ class ConnectionHandler:
             text_buff = "".join(response_message)
             self.tts.store_tts_text(current_sentence_id, text_buff)
             self.dialogue.put(Message(role="assistant", content=text_buff))
+            self._record_assistant_reply(
+                text_buff,
+                next_action=self._get_dialogue_next_action(),
+            )
 
         if depth == 0:
             self.tts.tts_text_queue.put(
@@ -1367,6 +1418,10 @@ class ConnectionHandler:
                     self.tts.tts_one_sentence(self, ContentType.TEXT, content_detail=text)
                     self.tts.store_tts_text(self.sentence_id, text)
                 self.dialogue.put(Message(role="assistant", content=text))
+                self._record_assistant_reply(
+                    text,
+                    next_action=self._get_dialogue_next_action(),
+                )
             elif result.action == Action.REQLLM:
                 need_llm_tools.append((result, tool_call_data))
             elif result.action == Action.RECORD:
@@ -1418,7 +1473,12 @@ class ConnectionHandler:
                 if resp:
                     response_parts.append(resp)
             if response_parts:
-                self.dialogue.put(Message(role="assistant", content="，".join(response_parts)))
+                merged_response = "，".join(response_parts)
+                self.dialogue.put(Message(role="assistant", content=merged_response))
+                self._record_assistant_reply(
+                    merged_response,
+                    next_action=self._get_dialogue_next_action(),
+                )
 
         if need_llm_tools:
             all_tool_calls = [
