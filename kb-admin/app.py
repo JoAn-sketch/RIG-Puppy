@@ -66,7 +66,21 @@ except Exception:
     SceneRouterInput = None
     SignalState = None
 
+try:
+    from core.dialogue_state import DialogueStateManager
+    from core.dialogue_state.schema import (
+        ChildProfileSnapshot,
+        DialogueStateManagerInput,
+        RuntimeSignals,
+    )
+except Exception:
+    DialogueStateManager = None
+    ChildProfileSnapshot = None
+    DialogueStateManagerInput = None
+    RuntimeSignals = None
+
 SCENE_ROUTER = SceneRouter() if SceneRouter else None
+DIALOGUE_STATE_MANAGER = DialogueStateManager() if DialogueStateManager else None
 
 def check_auth(u, p):
     return u == ADMIN_USER and p == ADMIN_PASS and ADMIN_PASS != ""
@@ -144,6 +158,49 @@ def _route_scene_for_text(user_text, history):
         "subscene_hint": subscene_hint,
         "age_style_hint": (snapshot.get("age_style_hints") or {}).get(routed.age_band) or "",
     }
+
+
+def _resolve_dialogue_state_for_text(user_text, history, scene):
+    if (
+        not DIALOGUE_STATE_MANAGER
+        or not DialogueStateManagerInput
+        or not RuntimeSignals
+        or not ChildProfileSnapshot
+        or not scene
+        or not user_text
+    ):
+        return None
+
+    previous_runtime_state = None
+    for item in reversed(history or []):
+        if item.get("role") != "user":
+            continue
+        dialogue_state = item.get("dialogue_state") or {}
+        state = dialogue_state.get("state")
+        if isinstance(state, dict):
+            previous_runtime_state = state
+            break
+
+    scene_router_output = type("SceneOutput", (), scene)()
+    result = DIALOGUE_STATE_MANAGER.update(
+        DialogueStateManagerInput(
+            text=user_text,
+            timestamp_ms=int(time.time() * 1000),
+            scene_router_output=scene_router_output,
+            dialogue_state=previous_runtime_state,
+            signals=RuntimeSignals(
+                emotion_hint="neutral",
+                interruption=False,
+                silence_ms=0,
+                user_move="unknown",
+                understanding_signal="unknown",
+                topic_switch_signal=False,
+                frustration_signal=0,
+            ),
+            child_profile=ChildProfileSnapshot(age_band=scene.get("age_band") or "6-8"),
+        )
+    )
+    return result.to_dict()
 
 
 def _load_scene_router_snapshot():
@@ -1839,6 +1896,7 @@ def api_dingyi_chat_send():
     try:
         binding = _load_dingyiguo_llm_binding()
         scene = _route_scene_for_text(user_text, history)
+        dialogue_state = _resolve_dialogue_state_for_text(user_text, history, scene)
         messages = []
         if binding.get("system_prompt"):
             messages.append({"role": "system", "content": binding["system_prompt"]})
@@ -1864,6 +1922,7 @@ def api_dingyi_chat_send():
             "usage": result["usage"],
             "agent_name": binding["agent_name"],
             "scene": scene,
+            "dialogue_state": dialogue_state,
         })
     except Exception as e:
         return jsonify({"error": str(e)}), 500
