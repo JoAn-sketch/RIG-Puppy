@@ -7,7 +7,6 @@
     { href: "/reminders", label: "⏰ 提醒计划" },
     { href: "/monitor", label: "📊 系统监控" },
     { href: "/prompt", label: "📝 Prompt" },
-    { href: "/modes", label: "🎭 模式管理" },
     { href: "/portrait", label: "🧑 画像" },
     { href: "/mood", label: "😊 情绪" },
     { href: "/actions", label: "🐕 动作" },
