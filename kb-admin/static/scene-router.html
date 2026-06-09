@@ -17,7 +17,7 @@ main { max-width: 1220px; margin: 24px auto; padding: 0 16px 40px; }
 .hero p { margin: 0; color: #334155; line-height: 1.7; }
 .row { display:flex; gap: 12px; flex-wrap: wrap; align-items: center; }
 .card { background: #fff; border: 1px solid #e2e8f0; border-radius: 16px; padding: 18px; box-shadow: 0 4px 20px rgba(15, 23, 42, .04); }
-.stats { display:grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; margin-bottom: 20px; }
+.stats { display:grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 14px; margin-bottom: 20px; }
 .stat { background: #fff; border: 1px solid #dbeafe; border-radius: 14px; padding: 16px; }
 .stat .label { font-size: 12px; color: #64748b; margin-bottom: 8px; }
 .stat .value { font-size: 24px; font-weight: 700; color: #0f172a; }
@@ -37,6 +37,14 @@ button:hover { background:#0369a1; }
 .meta-box { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; padding: 10px 12px; }
 .meta-box .label { font-size: 12px; color: #64748b; margin-bottom: 4px; }
 .meta-box .value { font-size: 13px; color: #0f172a; word-break: break-word; }
+.policy-block { background: linear-gradient(180deg, #f8fafc 0%, #f0f9ff 100%); border: 1px solid #dbeafe; border-radius: 14px; padding: 14px; margin-bottom: 14px; }
+.policy-title { font-size: 14px; font-weight: 700; margin-bottom: 10px; color: #0f172a; }
+.policy-row { margin-bottom: 10px; }
+.policy-row:last-child { margin-bottom: 0; }
+.policy-row .label { font-size: 12px; color: #64748b; margin-bottom: 4px; }
+.policy-row .value { font-size: 13px; color: #0f172a; line-height: 1.7; }
+.policy-list { margin: 0; padding-left: 18px; }
+.policy-list li { margin: 4px 0; color: #0f172a; font-size: 13px; line-height: 1.6; }
 .subscene-list { display:grid; gap: 10px; }
 .subscene-item { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; padding: 12px; }
 .subscene-name { font-size: 13px; font-weight: 700; margin-bottom: 8px; color: #0f172a; }
@@ -65,7 +73,7 @@ button:hover { background:#0369a1; }
 <main>
   <section class="hero">
     <h2>当前 Scene Router 结构</h2>
-    <p>这个页面直接从服务器上的 `scene_router/rules.py` 读取当前 scene 定义。以后你更新 scene、subscene 或关键词后，这里刷新就会同步显示，不需要手工改页面。</p>
+    <p>这个页面直接从服务器上的 `scene_router/rules.py` 和 `scene_router/policy.py` 读取当前 scene 定义与 policy。以后你更新 scene、subscene、关键词或 policy 后，这里刷新就会同步显示，不需要手工改页面。</p>
   </section>
 
   <section class="stats" id="stats">
@@ -73,6 +81,7 @@ button:hover { background:#0369a1; }
     <div class="stat"><div class="label">Subscene 总数</div><div class="value">-</div></div>
     <div class="stat"><div class="label">默认 Scene</div><div class="value">-</div></div>
     <div class="stat"><div class="label">规则文件</div><div class="value">-</div></div>
+    <div class="stat"><div class="label">Policy 文件</div><div class="value">-</div></div>
   </section>
 
   <section class="card">
@@ -100,6 +109,11 @@ function riskClass(level) {
   return 'low';
 }
 
+function listHtml(items) {
+  if (!items || !items.length) return '<div class="muted">-</div>';
+  return `<ul class="policy-list">${items.map(item => `<li>${esc(item)}</li>`).join('')}</ul>`;
+}
+
 async function loadScenes() {
   const stats = document.getElementById('stats');
   const grid = document.getElementById('sceneGrid');
@@ -117,6 +131,7 @@ async function loadScenes() {
       <div class="stat"><div class="label">Subscene 总数</div><div class="value">${esc(totalSubscenes)}</div></div>
       <div class="stat"><div class="label">默认 Scene</div><div class="value">${esc(defaultScene.primary_scene || '-')} / ${esc(defaultScene.subscene || '-')}</div></div>
       <div class="stat"><div class="label">规则文件</div><div class="value" style="font-size:12px">${esc(data.rules_path || '-')}</div></div>
+      <div class="stat"><div class="label">Policy 文件</div><div class="value" style="font-size:12px">${esc(data.policy_path || '-')}</div></div>
     `;
 
     if (!scenes.length) {
@@ -146,10 +161,39 @@ async function loadScenes() {
           <div class="value">${scene.should_escalate_parent ? 'required' : 'no'}</div>
         </div>
 
+        <div class="policy-block">
+          <div class="policy-title">Policy</div>
+          <div class="policy-row">
+            <div class="label">Goal</div>
+            <div class="value">${esc(scene.policy?.goal || '-')}</div>
+          </div>
+          <div class="policy-row">
+            <div class="label">Tone</div>
+            <div class="value">${esc(scene.policy?.tone || '-')}</div>
+          </div>
+          <div class="policy-row">
+            <div class="label">Response Strategy</div>
+            <div class="value">${listHtml(scene.policy?.response_style || [])}</div>
+          </div>
+          <div class="policy-row">
+            <div class="label">Ask Strategy</div>
+            <div class="value">${listHtml(scene.policy?.ask_strategy || [])}</div>
+          </div>
+          <div class="policy-row">
+            <div class="label">Avoid</div>
+            <div class="value">${listHtml(scene.policy?.avoid || [])}</div>
+          </div>
+          <div class="policy-row">
+            <div class="label">Exit Condition</div>
+            <div class="value">${esc(scene.policy?.exit_condition || '-')}</div>
+          </div>
+        </div>
+
         <div class="subscene-list">
           ${(scene.subscenes || []).map(sub => `
             <div class="subscene-item">
               <div class="subscene-name">${esc(sub.subscene)}</div>
+              ${sub.hint ? `<div class="muted" style="margin-bottom:8px;line-height:1.6;">${esc(sub.hint)}</div>` : ''}
               <div class="keywords">
                 ${(sub.keywords || []).map(keyword => `<span class="keyword">${esc(keyword)}</span>`).join('')}
               </div>

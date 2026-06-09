@@ -50,6 +50,12 @@ SCENE_ROUTER_RULES_PATH = os.path.join(
     "scene_router",
     "rules.py",
 )
+SCENE_ROUTER_POLICY_PATH = os.path.join(
+    SCENE_ROUTER_ROOT,
+    "core",
+    "scene_router",
+    "policy.py",
+)
 
 try:
     from core.scene_router import ChildProfile, DialogState, SceneRouter, SceneRouterInput, SignalState
@@ -126,20 +132,42 @@ def _route_scene_for_text(user_text, history):
 
 
 def _load_scene_router_snapshot():
-    spec = importlib.util.spec_from_file_location(
+    rules_spec = importlib.util.spec_from_file_location(
         f"scene_router_rules_snapshot_{int(time.time() * 1000)}",
         SCENE_ROUTER_RULES_PATH,
     )
-    if spec is None or spec.loader is None:
+    policy_spec = importlib.util.spec_from_file_location(
+        f"scene_router_policy_snapshot_{int(time.time() * 1000)}",
+        SCENE_ROUTER_POLICY_PATH,
+    )
+    if rules_spec is None or rules_spec.loader is None:
         raise RuntimeError("scene router rules load failed")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    if policy_spec is None or policy_spec.loader is None:
+        raise RuntimeError("scene router policy load failed")
+    rules_module = importlib.util.module_from_spec(rules_spec)
+    policy_module = importlib.util.module_from_spec(policy_spec)
+    rules_spec.loader.exec_module(rules_module)
+    policy_spec.loader.exec_module(policy_module)
 
-    scene_rules = getattr(module, "SCENE_RULES", {}) or {}
-    default_scene = getattr(module, "DEFAULT_SCENE", {}) or {}
+    scene_rules = getattr(rules_module, "SCENE_RULES", {}) or {}
+    default_scene = getattr(rules_module, "DEFAULT_SCENE", {}) or {}
+    policy_specs = getattr(policy_module, "SCENE_POLICY_SPECS", {}) or {}
+    subscene_hints = getattr(policy_module, "SUBSCENE_HINTS", {}) or {}
+    age_style_hints = getattr(policy_module, "AGE_STYLE_HINTS", {}) or {}
     scenes = []
     for scene_name, scene_rule in scene_rules.items():
         subscene_rules = scene_rule.get("subscene_rules") or []
+        policy_spec_value = policy_specs.get(scene_name)
+        policy_data = None
+        if policy_spec_value is not None:
+            policy_data = {
+                "goal": getattr(policy_spec_value, "goal", ""),
+                "tone": getattr(policy_spec_value, "tone", ""),
+                "response_style": list(getattr(policy_spec_value, "response_style", []) or []),
+                "ask_strategy": list(getattr(policy_spec_value, "ask_strategy", []) or []),
+                "avoid": list(getattr(policy_spec_value, "avoid", []) or []),
+                "exit_condition": getattr(policy_spec_value, "exit_condition", ""),
+            }
         scenes.append({
             "scene_name": scene_name,
             "risk_level": scene_rule.get("risk_level") or "low",
@@ -149,10 +177,12 @@ def _load_scene_router_snapshot():
             "should_use_rag": bool(scene_rule.get("should_use_rag")),
             "should_use_vlm": bool(scene_rule.get("should_use_vlm")),
             "should_escalate_parent": bool(scene_rule.get("should_escalate_parent")),
+            "policy": policy_data,
             "subscenes": [
                 {
                     "subscene": subscene,
                     "keywords": keywords,
+                    "hint": subscene_hints.get(subscene) or "",
                 }
                 for subscene, keywords in subscene_rules
             ],
@@ -162,6 +192,8 @@ def _load_scene_router_snapshot():
         "scenes": scenes,
         "default_scene": default_scene,
         "rules_path": SCENE_ROUTER_RULES_PATH,
+        "policy_path": SCENE_ROUTER_POLICY_PATH,
+        "age_style_hints": age_style_hints,
         "scene_count": len(scenes),
     }
 
