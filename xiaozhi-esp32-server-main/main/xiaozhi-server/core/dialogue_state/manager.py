@@ -11,6 +11,7 @@ from .rules import (
     CLOSE_MARKERS,
     DEFAULT_PHASES,
     EMOTION_CAUSE_MARKERS,
+    FOLLOWUP_CLARIFY_MARKERS,
     GREETING_MARKERS,
     MAX_SENTENCES_BY_SCENE,
     PHASE_POLICY_HINTS,
@@ -280,6 +281,13 @@ class DialogueStateManager:
                 return "short_answer", "give_short_answer", True, "C2", "scene_switch", notes
             if contains_any(text, CLOSE_MARKERS):
                 return "close", "close_current_scene", previous_phase != "close", "C6", "close_scene", notes
+            if self._is_context_followup_clarification(text):
+                notes.append("context_followup")
+                if previous_phase in {None, "short_answer"}:
+                    return "short_answer", "give_short_answer", False, "C2F", "phase_repeat", notes
+                if previous_phase in {"analogy_or_example", "check_understanding", "optional_followup"}:
+                    state["turn_state"]["followup_count"] += 1
+                    return "optional_followup", "answer_followup_once", previous_phase != "optional_followup", "C5F", "phase_advance", notes
             if previous_phase == "short_answer":
                 return "analogy_or_example", "give_example_then_check", True, "C3", "phase_advance", notes
             if previous_phase == "analogy_or_example":
@@ -294,6 +302,12 @@ class DialogueStateManager:
         if current_scene == "learning_support":
             if scene_changed:
                 return "find_block", "find_where_child_stuck", True, "L1", "scene_switch", notes
+            if self._is_context_followup_clarification(text):
+                notes.append("context_followup")
+                if previous_phase in {"find_block", "split_step", None}:
+                    return "split_step", "give_one_step_hint", previous_phase != "split_step", "L2F", "phase_repeat" if previous_phase == "split_step" else "phase_advance", notes
+                if previous_phase in {"child_try", "feedback", "next_step_or_close"}:
+                    return "split_step", "give_one_step_hint", True, "L2F", "phase_adjust", notes
             if previous_phase == "find_block":
                 return "split_step", "give_one_step_hint", True, "L2", "phase_advance", notes
             if previous_phase == "split_step":
@@ -379,6 +393,8 @@ class DialogueStateManager:
             return "repair_request"
         if contains_any(text, ADVICE_MARKERS):
             return "ask_help"
+        if self._is_context_followup_clarification(text):
+            return "ask_followup"
         if current_scene == "curiosity":
             return "ask_why"
         if current_scene == "learning_support":
@@ -390,3 +406,15 @@ class DialogueStateManager:
         if current_scene == "relationship_building":
             return "social_opening"
         return "unknown"
+
+    def _is_context_followup_clarification(self, text: str) -> bool:
+        normalized = normalize_text(text)
+        if not normalized or len(normalized) > 18:
+            return False
+        if contains_any(text, REPAIR_MARKERS) or contains_any(text, TOPIC_SWITCH_MARKERS):
+            return False
+        if contains_any(text, FOLLOWUP_CLARIFY_MARKERS):
+            return True
+        if any(normalized.startswith(prefix) for prefix in ("那", "这个", "这", "它")):
+            return any(marker in normalized for marker in ("什么", "怎么", "为什么", "哪", "哪里", "是不是", "能不能"))
+        return False

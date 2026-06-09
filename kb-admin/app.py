@@ -104,12 +104,14 @@ def _route_scene_for_text(user_text, history):
 
     turn_index = 0
     last_scene = None
+    last_subscene = None
     for item in history or []:
         if item.get("role") == "user":
             turn_index += 1
             scene = item.get("scene") or {}
             if scene.get("primary_scene"):
                 last_scene = scene.get("primary_scene")
+                last_subscene = scene.get("subscene")
 
     routed = SCENE_ROUTER.route(
         SceneRouterInput(
@@ -117,6 +119,7 @@ def _route_scene_for_text(user_text, history):
             child_profile=ChildProfile(age_band="6-8"),
             dialog_state=DialogState(
                 current_scene=last_scene,
+                current_subscene=last_subscene,
                 turn_index=turn_index,
             ),
             signals=SignalState(

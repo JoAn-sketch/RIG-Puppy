@@ -90,10 +90,10 @@ SCENE_RULES: Dict[str, Dict[str, object]] = {
         "risk_level": "low",
         "policy_profile": "repair_and_recover",
         "subscene_rules": [
-            ("repeat_question", ["你再说一遍", "没听清", "什么意思", "再来一次"]),
+            ("repeat_question", ["你再说一遍", "没听清", "什么意思", "再来一次", "没明白", "没听明白"]),
             ("silence_repair", ["...", "嗯", "啊"]),
-            ("frustration_repair", ["你怎么回事", "你听不懂", "你又错了"]),
-            ("topic_switch", ["换一个", "不聊这个", "下一题"]),
+            ("frustration_repair", ["你怎么回事", "你听不懂", "你没听懂", "你又错了", "你没回答", "答非所问"]),
+            ("topic_switch", ["换一个", "不聊这个", "下一题", "换个话题"]),
         ],
         "should_force_safe_template": False,
         "should_use_memory": False,

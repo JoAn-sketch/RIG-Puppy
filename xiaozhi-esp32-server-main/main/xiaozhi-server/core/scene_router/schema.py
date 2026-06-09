@@ -10,6 +10,7 @@ class ChildProfile:
 @dataclass
 class DialogState:
     current_scene: Optional[str] = None
+    current_subscene: Optional[str] = None
     turn_index: int = 0
     question_count_in_current_topic: int = 0
     last_policy: Optional[str] = None
@@ -48,4 +49,3 @@ class SceneRouterOutput:
     should_force_safe_template: bool
     confidence: float
     reason_codes: List[str] = field(default_factory=list)
-

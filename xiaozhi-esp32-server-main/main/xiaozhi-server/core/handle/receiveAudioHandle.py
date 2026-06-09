@@ -98,6 +98,7 @@ async def startToChat(conn: "ConnectionHandler", text):
             child_profile=ChildProfile(age_band=age_band),
             dialog_state=DialogState(
                 current_scene=getattr(getattr(conn, "last_scene_output", None), "primary_scene", None),
+                current_subscene=getattr(getattr(conn, "last_scene_output", None), "subscene", None),
                 turn_index=len(getattr(conn.dialogue, "dialogue", [])),
                 last_policy=getattr(getattr(conn, "last_scene_output", None), "policy_profile", None),
             ),
