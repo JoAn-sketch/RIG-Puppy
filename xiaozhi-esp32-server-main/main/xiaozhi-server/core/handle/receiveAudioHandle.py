@@ -132,8 +132,7 @@ async def startToChat(conn: "ConnectionHandler", text):
         conn.dialogue_state_prompt_patch = build_dialogue_state_prompt_patch(
             conn.last_dialogue_state_result
         )
-        if getattr(conn, "prompt", None) or getattr(conn, "base_prompt", None):
-            conn._refresh_runtime_prompt()
+        conn._refresh_response_plan()
         conn.logger.bind(tag=TAG).info(
             f"scene_router => scene={conn.last_scene_output.primary_scene}, "
             f"subscene={conn.last_scene_output.subscene}, "
@@ -146,6 +145,15 @@ async def startToChat(conn: "ConnectionHandler", text):
             f"rule={conn.last_dialogue_state_result.debug.matched_rule}, "
             f"close={conn.last_dialogue_state_result.control.should_close_scene}"
         )
+        if getattr(conn, "last_response_plan", None) is not None:
+            conn.logger.bind(tag=TAG).info(
+                f"response_plan => action={conn.last_response_plan.primary_action}, "
+                f"sentence_budget={conn.last_response_plan.sentence_budget}, "
+                f"ask_followup={conn.last_response_plan.ask_followup}, "
+                f"allow_summary={conn.last_response_plan.allow_summary}"
+            )
+        if hasattr(conn, "_publish_runtime_debug"):
+            conn._publish_runtime_debug("turn_ready")
     except Exception as e:
         conn.logger.bind(tag=TAG).warning(f"scene/dialogue_state 运行失败，已跳过: {e}")
 

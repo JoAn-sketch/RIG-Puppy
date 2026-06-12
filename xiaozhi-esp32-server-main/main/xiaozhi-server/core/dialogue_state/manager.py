@@ -19,8 +19,13 @@ from .rules import (
     REPLY_STYLE_BY_SCENE,
     TOPIC_SWITCH_MARKERS,
     contains_any,
+    extract_time_greeting_slot,
+    get_recommended_greeting,
+    get_time_slot_label,
     normalize_text,
     reply_length_bucket,
+    resolve_time_slot_from_timestamp,
+    time_greeting_matches_current_slot,
 )
 from .schema import (
     DialogueControlOutput,
@@ -28,6 +33,7 @@ from .schema import (
     DialogueStateManagerInput,
     DialogueStateManagerResult,
 )
+from core.response_orchestrator.planner import build_response_plan
 
 
 RUNTIME_SECTION_TAGS = (
@@ -55,6 +61,8 @@ def strip_runtime_prompt_sections(prompt: str) -> str:
 def build_dialogue_state_prompt_patch(result: DialogueStateManagerResult) -> str:
     state = result.state
     control = result.control
+    social_state = state.get("social_state", {})
+    turn_contract = control.turn_contract or {}
     dialogue_state_lines = [
         "<dialogue_state>",
         f"current_scene={control.current_scene}",
@@ -66,7 +74,16 @@ def build_dialogue_state_prompt_patch(result: DialogueStateManagerResult) -> str
         f"next_action={control.next_action}",
         f"reply_style={control.reply_style}",
         f"max_reply_sentences={control.max_reply_sentences}",
+        f"planner_primary_action={turn_contract.get('primary_action', 'answer_only')}",
+        f"planner_sentence_budget={turn_contract.get('sentence_budget', control.max_reply_sentences)}",
+        f"planner_concept_budget={turn_contract.get('concept_budget', 1)}",
+        f"planner_allow_summary={str(bool(turn_contract.get('allow_summary', False))).lower()}",
+        f"planner_ask_followup={str(bool(turn_contract.get('ask_followup', False))).lower()}",
         f"should_close_scene={str(control.should_close_scene).lower()}",
+        f"time_slot={social_state.get('current_time_slot') or 'unknown'}",
+        f"is_greeting_turn={str(bool(social_state.get('is_greeting_turn'))).lower()}",
+        f"greeting_conflict_with_time={str(bool(social_state.get('greeting_conflict_with_time'))).lower()}",
+        f"greeting_conflict_with_previous={str(bool(social_state.get('greeting_conflict_with_previous'))).lower()}",
         "</dialogue_state>",
         "<phase_policy>",
         f"当前 phase 是 {control.current_phase}，本轮 next_action 是 {control.next_action}。",
@@ -77,10 +94,21 @@ def build_dialogue_state_prompt_patch(result: DialogueStateManagerResult) -> str
         ["一轮只推进一件事，尽量短句、具体、儿童可懂。"],
     )
     dialogue_state_lines.extend(phase_hints)
-    if control.should_ask_followup:
+    if turn_contract.get("ask_followup"):
         dialogue_state_lines.append("如果要追问，只问一个轻量问题。")
     else:
         dialogue_state_lines.append("本轮优先直接推进，不额外连续追问。")
+    if not turn_contract.get("allow_summary", False):
+        dialogue_state_lines.append("本轮不要自己总结，不要用“总的来说/简单来说/换句话说”。")
+    dialogue_state_lines.append("本轮不要同时解释、总结、追问。")
+    if social_state.get("greeting_conflict_with_previous"):
+        dialogue_state_lines.append("如果上一轮和这一轮都是问候，但时段词变了，把它当作同一轮寒暄里的修正，不要重新完整开场。")
+    if social_state.get("greeting_conflict_with_time"):
+        expected_label = social_state.get("current_time_label") or "当前时段"
+        recommended = social_state.get("recommended_greeting") or "你好"
+        dialogue_state_lines.append(
+            f"如果用户的问候和当前时段不一致，轻轻纠偏即可。当前更接近{expected_label}，可顺带带出“{recommended}”，不要生硬纠错。"
+        )
     dialogue_state_lines.append("</phase_policy>")
     return "\n".join(dialogue_state_lines)
 
@@ -122,6 +150,7 @@ class DialogueStateManager:
         state["user_state"]["emotion_state"] = scene_output.emotion_state
         state["user_state"]["frustration_level"] = manager_input.signals.frustration_signal
         state["meta"]["updated_at_ms"] = timestamp_ms
+        self._update_greeting_context(state, manager_input.text, timestamp_ms)
 
         if current_scene == "safety_risk":
             current_phase = DEFAULT_PHASES["safety_risk"]
@@ -182,6 +211,8 @@ class DialogueStateManager:
             router_confidence=scene_output.confidence,
             notes=notes,
         )
+        response_plan = build_response_plan(scene_output, type("ResultView", (), {"control": control})())
+        control.turn_contract = response_plan.to_dict()
         return DialogueStateManagerResult(state=state, control=control, debug=debug)
 
     def post_reply_update(
@@ -236,6 +267,18 @@ class DialogueStateManager:
                 "task_type": "unknown",
                 "task_completed": False,
                 "completion_signal": None,
+            },
+            "social_state": {
+                "is_greeting_turn": False,
+                "last_turn_was_greeting": False,
+                "last_greeting_slot": None,
+                "last_greeting_text": None,
+                "greeting_turn_streak": 0,
+                "current_time_slot": None,
+                "current_time_label": None,
+                "greeting_conflict_with_time": False,
+                "greeting_conflict_with_previous": False,
+                "recommended_greeting": None,
             },
             "meta": {
                 "version": "v1",
@@ -347,6 +390,13 @@ class DialogueStateManager:
             return previous_phase or "recognize_mismatch", "acknowledge_mismatch", False, "R1", "phase_repeat", notes
 
         if current_scene == "relationship_building":
+            social_state = state.get("social_state", {})
+            if social_state.get("greeting_conflict_with_previous"):
+                notes.append("greeting_revision")
+                return "light_followup", "acknowledge_greeting_revision", previous_phase != "light_followup", "B2T", "greeting_revision", notes
+            if social_state.get("greeting_conflict_with_time"):
+                notes.append("time_grounded_greeting")
+                return "warm_opening", "soft_correct_greeting", previous_phase != "warm_opening", "B1T", "time_grounded_greeting", notes
             if scene_changed:
                 return "warm_opening", "greet_warmly", True, "B1", "scene_switch", notes
             if contains_any(text, GREETING_MARKERS) or len(normalized) <= 8:
@@ -389,6 +439,8 @@ class DialogueStateManager:
         return bool(state["task_state"].get("task_completed"))
 
     def _detect_user_move(self, current_scene: str, text: str) -> str:
+        if contains_any(text, GREETING_MARKERS):
+            return "social_opening"
         if contains_any(text, REPAIR_MARKERS):
             return "repair_request"
         if contains_any(text, ADVICE_MARKERS):
@@ -418,3 +470,45 @@ class DialogueStateManager:
         if any(normalized.startswith(prefix) for prefix in ("那", "这个", "这", "它")):
             return any(marker in normalized for marker in ("什么", "怎么", "为什么", "哪", "哪里", "是不是", "能不能"))
         return False
+
+    def _update_greeting_context(
+        self,
+        state: Dict[str, Any],
+        text: str,
+        timestamp_ms: int,
+    ) -> None:
+        social_state = state.setdefault("social_state", {})
+        previous_greeting_slot = social_state.get("last_greeting_slot")
+        previous_turn_was_greeting = bool(social_state.get("last_turn_was_greeting"))
+        previous_streak = int(social_state.get("greeting_turn_streak") or 0)
+
+        current_time_slot = resolve_time_slot_from_timestamp(timestamp_ms)
+        greeting_slot = extract_time_greeting_slot(text)
+        is_greeting_turn = contains_any(text, GREETING_MARKERS)
+        conflict_with_time = is_greeting_turn and not time_greeting_matches_current_slot(
+            greeting_slot, current_time_slot
+        )
+        conflict_with_previous = (
+            is_greeting_turn
+            and previous_turn_was_greeting
+            and bool(greeting_slot)
+            and bool(previous_greeting_slot)
+            and greeting_slot != previous_greeting_slot
+        )
+
+        social_state["is_greeting_turn"] = is_greeting_turn
+        social_state["current_time_slot"] = current_time_slot
+        social_state["current_time_label"] = get_time_slot_label(current_time_slot)
+        social_state["greeting_conflict_with_time"] = conflict_with_time
+        social_state["greeting_conflict_with_previous"] = conflict_with_previous
+        social_state["recommended_greeting"] = get_recommended_greeting(current_time_slot)
+
+        if is_greeting_turn:
+            social_state["greeting_turn_streak"] = previous_streak + 1 if previous_turn_was_greeting else 1
+            social_state["last_turn_was_greeting"] = True
+            social_state["last_greeting_slot"] = greeting_slot
+            social_state["last_greeting_text"] = text
+            return
+
+        social_state["greeting_turn_streak"] = 0
+        social_state["last_turn_was_greeting"] = False

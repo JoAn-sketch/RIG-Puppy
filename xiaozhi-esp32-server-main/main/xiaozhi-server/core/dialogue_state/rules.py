@@ -1,4 +1,7 @@
+from __future__ import annotations
+
 import re
+from datetime import datetime
 from typing import Dict, List, Tuple
 
 
@@ -126,7 +129,7 @@ ADVICE_MARKERS = ("怎么办", "怎么做", "那我明天怎么办", "我该怎�
 EMOTION_CAUSE_MARKERS = ("因为", "刚才", "他们", "同学", "妈妈说", "老师说")
 ATTEMPT_MARKERS = ("我试了", "我算出来了", "我写了", "是不是", "答案是")
 CHOICE_MARKERS = ("选", "我要", "a", "b", "A", "B")
-GREETING_MARKERS = ("你好", "嗨", "在吗", "早上好", "晚上好")
+GREETING_MARKERS = ("你好", "嗨", "在吗", "早上好", "上午好", "中午好", "下午好", "晚上好")
 REPAIR_MARKERS = ("你没听懂", "不是这个", "答错了", "你说的不对", "你没回答")
 FOLLOWUP_CLARIFY_MARKERS = (
     "是什么",
@@ -155,6 +158,27 @@ FOLLOWUP_CLARIFY_MARKERS = (
     "能不能",
 )
 
+TIME_GREETING_SLOTS: Dict[str, Tuple[str, ...]] = {
+    "morning": ("早上好", "早安", "上午好"),
+    "noon": ("中午好",),
+    "afternoon": ("下午好",),
+    "evening": ("晚上好",),
+}
+
+TIME_SLOT_LABELS: Dict[str, str] = {
+    "morning": "上午",
+    "noon": "中午",
+    "afternoon": "下午",
+    "evening": "晚上",
+}
+
+RECOMMENDED_GREETING_BY_SLOT: Dict[str, str] = {
+    "morning": "早上好或上午好",
+    "noon": "中午好",
+    "afternoon": "下午好",
+    "evening": "晚上好",
+}
+
 
 def normalize_text(text: str) -> str:
     text = (text or "").strip().lower()
@@ -174,3 +198,40 @@ def reply_length_bucket(reply_text: str) -> str:
     if length <= 80:
         return "medium"
     return "long"
+
+
+def extract_time_greeting_slot(text: str) -> str | None:
+    normalized = normalize_text(text)
+    for slot, markers in TIME_GREETING_SLOTS.items():
+        if any(normalize_text(marker) in normalized for marker in markers):
+            return slot
+    return None
+
+
+def resolve_time_slot_from_timestamp(timestamp_ms: int) -> str:
+    if timestamp_ms:
+        dt = datetime.fromtimestamp(timestamp_ms / 1000)
+    else:
+        dt = datetime.now()
+    minute_of_day = dt.hour * 60 + dt.minute
+    if 5 * 60 <= minute_of_day < 11 * 60 + 30:
+        return "morning"
+    if 11 * 60 + 30 <= minute_of_day < 13 * 60 + 30:
+        return "noon"
+    if 13 * 60 + 30 <= minute_of_day < 18 * 60:
+        return "afternoon"
+    return "evening"
+
+
+def time_greeting_matches_current_slot(greeting_slot: str | None, current_slot: str | None) -> bool:
+    if not greeting_slot or not current_slot:
+        return True
+    return greeting_slot == current_slot
+
+
+def get_time_slot_label(slot: str | None) -> str:
+    return TIME_SLOT_LABELS.get(slot or "", "")
+
+
+def get_recommended_greeting(slot: str | None) -> str:
+    return RECOMMENDED_GREETING_BY_SLOT.get(slot or "", "你好")

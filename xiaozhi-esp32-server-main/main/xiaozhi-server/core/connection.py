@@ -36,6 +36,11 @@ from core.dialogue_state import (
     DialogueStateManager,
     strip_runtime_prompt_sections,
 )
+from core.response_orchestrator import (
+    build_response_plan,
+    build_response_plan_prompt_patch,
+    rewrite_reply_text,
+)
 from core.scene_router import SceneRouter
 from core.scene_router.policy import build_safe_response
 from plugins_func.loadplugins import auto_import_modules
@@ -102,6 +107,7 @@ class ConnectionHandler:
         self.bind_code = None  # 绑定设备的验证码
         self.last_bind_prompt_time = 0  # 上次播放绑定提示的时间戳(秒)
         self.bind_prompt_interval = 60  # 绑定提示播放间隔(秒)
+        self.debug_bypass_bind = False  # 仅供已认证的调试链路跳过设备绑定
 
         self.read_config_from_api = self.config.get("read_config_from_api", False)
 
@@ -189,6 +195,9 @@ class ConnectionHandler:
         self.base_prompt = None
         self.scene_prompt_patch = ""
         self.dialogue_state_prompt_patch = ""
+        self.response_plan_prompt_patch = ""
+        self.last_response_plan = None
+        self.last_response_rewrite = None
 
         self.timeout_seconds = (
                 int(self.config.get("close_connection_no_voice_time", 120)) + 60
@@ -223,6 +232,14 @@ class ConnectionHandler:
             )
 
             self.device_id = self.headers.get("device-id", None)
+            client_id = self.headers.get("client-id", "")
+            self.debug_bypass_bind = (
+                str(self.headers.get("x-debug-bypass-bind", "")).strip().lower()
+                in {"1", "true", "yes", "on"}
+            ) or (
+                str(self.device_id or "").startswith("kb-admin-debug-")
+                and str(client_id or "").startswith("kb-admin-client-")
+            )
 
             # 认证通过,继续处理
             self.websocket = ws
@@ -759,6 +776,11 @@ class ConnectionHandler:
             self.need_bind = False
             self.bind_completed_event.set()
             return
+        if self.debug_bypass_bind:
+            self.logger.bind(tag=TAG).info("调试链路启用免绑定直通，跳过差异化配置绑定检查")
+            self.need_bind = False
+            self.bind_completed_event.set()
+            return
         try:
             begin_time = time.time()
             private_config = await get_private_config_from_api(
@@ -997,6 +1019,8 @@ class ConnectionHandler:
             prompt_parts.append(self.scene_prompt_patch.strip())
         if self.dialogue_state_prompt_patch:
             prompt_parts.append(self.dialogue_state_prompt_patch.strip())
+        if self.response_plan_prompt_patch:
+            prompt_parts.append(self.response_plan_prompt_patch.strip())
         self.prompt = "\n\n".join(part for part in prompt_parts if part)
         self.dialogue.update_system_message(self.prompt)
 
@@ -1018,6 +1042,86 @@ class ConnectionHandler:
         )
         if self.last_dialogue_state_result is not None:
             self.last_dialogue_state_result.state = self.dialogue_state_runtime
+        self._publish_runtime_debug("post_reply")
+
+    def _refresh_response_plan(self):
+        if self.last_scene_output is None or self.last_dialogue_state_result is None:
+            self.last_response_plan = None
+            self.response_plan_prompt_patch = ""
+            return
+        self.last_response_plan = build_response_plan(
+            self.last_scene_output,
+            self.last_dialogue_state_result,
+        )
+        self.response_plan_prompt_patch = build_response_plan_prompt_patch(
+            self.last_response_plan
+        )
+        self._refresh_runtime_prompt()
+
+    def _rewrite_assistant_reply(self, reply_text):
+        rewrite_result = rewrite_reply_text(reply_text, self.last_response_plan)
+        self.last_response_rewrite = rewrite_result
+        return rewrite_result.rewritten_reply
+
+    def _build_runtime_debug_payload(self):
+        scene = None
+        if self.last_scene_output is not None:
+            scene = {
+                "primary_scene": getattr(self.last_scene_output, "primary_scene", None),
+                "subscene": getattr(self.last_scene_output, "subscene", None),
+                "secondary_scene": getattr(self.last_scene_output, "secondary_scene", None),
+                "risk_level": getattr(self.last_scene_output, "risk_level", None),
+                "emotion_state": getattr(self.last_scene_output, "emotion_state", None),
+                "age_band": getattr(self.last_scene_output, "age_band", None),
+                "policy_profile": getattr(self.last_scene_output, "policy_profile", None),
+                "should_use_rag": getattr(self.last_scene_output, "should_use_rag", None),
+                "should_use_memory": getattr(self.last_scene_output, "should_use_memory", None),
+                "should_use_vlm": getattr(self.last_scene_output, "should_use_vlm", None),
+                "should_escalate_parent": getattr(self.last_scene_output, "should_escalate_parent", None),
+                "should_force_safe_template": getattr(self.last_scene_output, "should_force_safe_template", None),
+                "confidence": getattr(self.last_scene_output, "confidence", None),
+                "reason_codes": list(getattr(self.last_scene_output, "reason_codes", []) or []),
+            }
+        dialogue_state = None
+        if self.last_dialogue_state_result is not None:
+            dialogue_state = self.last_dialogue_state_result.to_dict()
+        response_plan = None
+        if self.last_response_plan is not None:
+            response_plan = self.last_response_plan.to_dict()
+        response_rewrite = None
+        if self.last_response_rewrite is not None:
+            response_rewrite = self.last_response_rewrite.to_dict()
+        return {
+            "scene": scene,
+            "dialogue_state": dialogue_state,
+            "response_plan": response_plan,
+            "response_rewrite": response_rewrite,
+        }
+
+    async def _send_runtime_debug_message(self, stage="turn_ready"):
+        if self.websocket is None:
+            return
+        try:
+            payload = {
+                "type": "runtime_debug",
+                "stage": stage,
+                "session_id": self.session_id,
+                **self._build_runtime_debug_payload(),
+            }
+            await self.websocket.send(json.dumps(payload, ensure_ascii=False))
+        except Exception as e:
+            self.logger.bind(tag=TAG).warning(f"发送 runtime debug 失败: {e}")
+
+    def _publish_runtime_debug(self, stage="turn_ready"):
+        if self.loop is None:
+            return
+        try:
+            asyncio.run_coroutine_threadsafe(
+                self._send_runtime_debug_message(stage),
+                self.loop,
+            )
+        except Exception as e:
+            self.logger.bind(tag=TAG).warning(f"调度 runtime debug 失败: {e}")
 
     def chat(self, query, depth=0):
         # 保存当前任务的sentence_id到局部变量，避免被新任务覆盖
@@ -1037,6 +1141,7 @@ class ConnectionHandler:
             and self.last_scene_output.should_force_safe_template
         ):
             safe_text = build_safe_response(self.last_scene_output)
+            safe_text = self._rewrite_assistant_reply(safe_text)
             self.tts.store_tts_text(current_sentence_id, safe_text)
             self.dialogue.put(Message(role="user", content=query))
             self.dialogue.put(Message(role="assistant", content=safe_text))
@@ -1165,29 +1270,6 @@ class ConnectionHandler:
                         tool_call_flag = True
                         self._merge_tool_calls(tool_calls_list, tools_call)
 
-                    # 流式提取 direct_answer 的 response 参数，实时送 TTS
-                    # 使用安全缓冲区，防止 JSON 闭合符号泄漏到 TTS
-                    _DA_STREAM_BUFFER = 5
-                    for tc in tool_calls_list:
-                        if tc["name"] == "direct_answer" and tc.get("arguments"):
-                            da_text = self._extract_direct_answer_response(tc["arguments"])
-                            sent_len = tc.get("_da_sent", 0)
-                            if da_text and len(da_text) > sent_len:
-                                safe_end = max(sent_len, len(da_text) - _DA_STREAM_BUFFER)
-                                if safe_end > sent_len:
-                                    new_part = da_text[sent_len:safe_end]
-                                    # 清理 delta 中可能泄漏的 JSON 闭合垃圾
-                                    new_part = self._clean_response_garbage(new_part)
-                                    if new_part:
-                                        tc["_da_sent"] = safe_end
-                                        self.tts.tts_text_queue.put(
-                                            TTSMessageDTO(
-                                                sentence_id=current_sentence_id,
-                                                sentence_type=SentenceType.MIDDLE,
-                                                content_type=ContentType.TEXT,
-                                                content_detail=new_part,
-                                            )
-                                        )
                 else:
                     content = response
 
@@ -1203,14 +1285,6 @@ class ConnectionHandler:
                 if content is not None and len(content) > 0:
                     if not tool_call_flag:
                         response_message.append(content)
-                        self.tts.tts_text_queue.put(
-                            TTSMessageDTO(
-                                sentence_id=current_sentence_id,
-                                sentence_type=SentenceType.MIDDLE,
-                                content_type=ContentType.TEXT,
-                                content_detail=content,
-                            )
-                        )
         except Exception as e:
             self.logger.bind(tag=TAG).error(f"LLM stream processing error: {e}")
             self.tts.tts_text_queue.put(
@@ -1267,33 +1341,28 @@ class ConnectionHandler:
 
                 if direct_answer_calls:
                     self.logger.bind(tag=TAG).debug(
-                        f"模型选择 direct_answer，流式已播报，写入对话历史"
+                        "模型选择 direct_answer，使用 response rewriter 后回写对话历史"
                     )
                     for tc in direct_answer_calls:
-                        da_response = self._extract_direct_answer_response(tc.get("arguments", "{}"))
-                        if da_response:
-                            # 刷新流式缓冲区中未发送的部分
-                            sent_len = tc.get("_da_sent", 0)
-                            remaining = da_response[sent_len:]
-                            if remaining:
-                                remaining = self._clean_response_garbage(remaining)
-                                if remaining:
-                                    self.tts.tts_text_queue.put(
-                                        TTSMessageDTO(
-                                            sentence_id=current_sentence_id,
-                                            sentence_type=SentenceType.MIDDLE,
-                                            content_type=ContentType.TEXT,
-                                            content_detail=remaining,
-                                        )
-                                    )
-                            # 写入对话历史
-                            da_response = self._clean_response_garbage(da_response)
-                            self.tts.store_tts_text(current_sentence_id, da_response)
-                            self.dialogue.put(Message(role="assistant", content=da_response))
-                            self._record_assistant_reply(
-                                da_response,
-                                next_action=self._get_dialogue_next_action(),
-                            )
+                        da_response = self._extract_direct_answer_response(
+                            tc.get("arguments", "{}")
+                        )
+                        if not da_response:
+                            continue
+                        da_response = self._clean_response_garbage(da_response)
+                        da_response = self._rewrite_assistant_reply(da_response)
+                        self.tts.store_tts_text(current_sentence_id, da_response)
+                        self.tts.tts_one_sentence(
+                            self,
+                            ContentType.TEXT,
+                            content_detail=da_response,
+                            sentence_id=current_sentence_id,
+                        )
+                        self.dialogue.put(Message(role="assistant", content=da_response))
+                        self._record_assistant_reply(
+                            da_response,
+                            next_action=self._get_dialogue_next_action(),
+                        )
 
                     if not real_tool_calls:
                         if depth == 0:
@@ -1317,7 +1386,9 @@ class ConnectionHandler:
                 streamed_text = ""
                 if len(response_message) > 0:
                     streamed_text = "".join(response_message)
+                    streamed_text = self._rewrite_assistant_reply(streamed_text)
                     self.tts.store_tts_text(current_sentence_id, streamed_text)
+                    self.tts.tts_one_sentence(self, ContentType.TEXT, content_detail=streamed_text, sentence_id=current_sentence_id)
                     self.dialogue.put(Message(role="assistant", content=streamed_text))
                     self._record_assistant_reply(
                         streamed_text,
@@ -1375,7 +1446,9 @@ class ConnectionHandler:
         # 存储对话内容
         if len(response_message) > 0:
             text_buff = "".join(response_message)
+            text_buff = self._rewrite_assistant_reply(text_buff)
             self.tts.store_tts_text(current_sentence_id, text_buff)
+            self.tts.tts_one_sentence(self, ContentType.TEXT, content_detail=text_buff, sentence_id=current_sentence_id)
             self.dialogue.put(Message(role="assistant", content=text_buff))
             self._record_assistant_reply(
                 text_buff,
@@ -1410,12 +1483,17 @@ class ConnectionHandler:
                 Action.ERROR,
             ]:
                 text = result.response if result.response else result.result
+                text = self._rewrite_assistant_reply(text)
                 if streamed_text and text in streamed_text:
                     self.logger.bind(tag=TAG).debug(
                         f"Skipping duplicate TTS for tool {tool_call_data['name']}, already streamed"
                     )
                 else:
-                    self.tts.tts_one_sentence(self, ContentType.TEXT, content_detail=text)
+                    self.tts.tts_one_sentence(
+                        self,
+                        ContentType.TEXT,
+                        content_detail=text,
+                    )
                     self.tts.store_tts_text(self.sentence_id, text)
                 self.dialogue.put(Message(role="assistant", content=text))
                 self._record_assistant_reply(
@@ -1474,6 +1552,7 @@ class ConnectionHandler:
                     response_parts.append(resp)
             if response_parts:
                 merged_response = "，".join(response_parts)
+                merged_response = self._rewrite_assistant_reply(merged_response)
                 self.dialogue.put(Message(role="assistant", content=merged_response))
                 self._record_assistant_reply(
                     merged_response,

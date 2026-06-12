@@ -48,6 +48,7 @@ class DialogueControlOutput:
     should_use_memory: bool
     should_use_rag: bool
     should_force_safe_template: bool
+    turn_contract: Dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)

@@ -37,6 +37,10 @@ h2 { margin: 0 0 14px; font-size: 15px; color: #374151; border-left: 3px solid #
 .state-item { background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; padding: 8px 10px; }
 .state-item .label { display:block; font-size: 11px; color: #64748b; margin-bottom: 2px; }
 .state-item .value { font-size: 12px; color: #0f172a; word-break: break-word; }
+.state-panel.plan { border-color: #c7d2fe; background: #f8faff; }
+.state-panel.plan .state-title { color: #4338ca; }
+.state-panel.rewrite { border-color: #fde68a; background: #fffbeb; }
+.state-panel.rewrite .state-title { color: #b45309; }
 .composer { margin-top: 14px; display:grid; gap: 10px; }
 textarea { width: 100%; min-height: 110px; resize: vertical; border: 1px solid #d1d5db; border-radius: 12px; padding: 12px 14px; font-size: 14px; outline: none; }
 textarea:focus { border-color: #2563eb; box-shadow: 0 0 0 3px rgba(37,99,235,.12); }
@@ -95,7 +99,7 @@ button:disabled { opacity:.5; cursor:not-allowed; }
 
   <div class="card chat-shell">
     <h2>文字模拟</h2>
-    <div class="muted" style="margin-bottom:12px">这里会直接调用丁一锅当前绑定的模型接口，并带上当前 system prompt 与这页里的多轮上下文。</div>
+    <div class="muted" style="margin-bottom:12px">这里会把文本直接送进机器人主链路，跳过语音识别，但复用 scene router、dialogue state、intent、memory、tools 与真实回复链。</div>
     <div id="chatLog" class="chat-log">
       <div class="empty">输入一句话，模拟和机器狗对话。</div>
     </div>
@@ -115,6 +119,14 @@ button:disabled { opacity:.5; cursor:not-allowed; }
 <script>
 let history = [];
 let sending = false;
+let sessionKey = createSessionKey();
+
+function createSessionKey() {
+  if (window.crypto && typeof window.crypto.randomUUID === 'function') {
+    return window.crypto.randomUUID();
+  }
+  return 'sess-' + Date.now() + '-' + Math.random().toString(16).slice(2);
+}
 
 function esc(s) {
   return String(s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
@@ -136,6 +148,7 @@ function renderMeta(data) {
     <div class="meta-item"><div class="label">当前模型名</div><div class="value">${esc(data.model_name || "-")}</div></div>
     <div class="meta-item"><div class="label">Base URL</div><div class="value">${esc(data.base_url || "-")}</div></div>
     <div class="meta-item"><div class="label">API Key</div><div class="value">${data.has_api_key ? "已配置" : "未配置"}</div></div>
+    <div class="meta-item"><div class="label">运行链路</div><div class="value">${esc(data.runtime_mode || "-")}<br><span class="muted">${esc(data.runtime_ws_base || "-")}</span></div></div>
     <div class="meta-item"><div class="label">System Prompt</div><div class="value">${esc((data.system_prompt || "").slice(0, 400) || "-")}${(data.system_prompt || "").length > 400 ? "\\n..." : ""}</div></div>
   `;
 }
@@ -183,11 +196,48 @@ function renderChat() {
       </div>
     `;
   };
+  const responsePlanHtml = (plan, source) => {
+    if (!plan) return '';
+    return `
+      <div class="state-panel plan">
+        <div class="state-title">Response Plan</div>
+        <div class="state-grid">
+          <div class="state-item"><span class="label">Source</span><div class="value">${esc(source || '-')}</div></div>
+          <div class="state-item"><span class="label">Primary Action</span><div class="value">${esc(plan.primary_action || '-')}</div></div>
+          <div class="state-item"><span class="label">Sentence Budget</span><div class="value">${esc(plan.sentence_budget ?? '-')}</div></div>
+          <div class="state-item"><span class="label">Concept Budget</span><div class="value">${esc(plan.concept_budget ?? '-')}</div></div>
+          <div class="state-item"><span class="label">Ask Followup</span><div class="value">${esc(String(plan.ask_followup ?? false))}</div></div>
+          <div class="state-item"><span class="label">Allow Summary</span><div class="value">${esc(String(plan.allow_summary ?? false))}</div></div>
+          <div class="state-item"><span class="label">Blocks</span><div class="value">${esc((plan.content_blocks || []).join(', ') || '-')}</div></div>
+          <div class="state-item"><span class="label">Style Tags</span><div class="value">${esc((plan.style_tags || []).join(', ') || '-')}</div></div>
+        </div>
+      </div>
+    `;
+  };
+  const responseRewriteHtml = (rewrite) => {
+    if (!rewrite) return '';
+    const flags = rewrite.quality_flags || {};
+    return `
+      <div class="state-panel rewrite">
+        <div class="state-title">Response Rewrite</div>
+        <div class="state-grid">
+          <div class="state-item"><span class="label">Actions</span><div class="value">${esc((rewrite.rewrite_actions || []).join(', ') || 'none')}</div></div>
+          <div class="state-item"><span class="label">Raw Reply</span><div class="value">${esc(rewrite.raw_reply || '-')}</div></div>
+          <div class="state-item"><span class="label">too_long</span><div class="value">${esc(String(flags.too_long ?? false))}</div></div>
+          <div class="state-item"><span class="label">has_summary</span><div class="value">${esc(String(flags.has_summary ?? false))}</div></div>
+          <div class="state-item"><span class="label">has_followup</span><div class="value">${esc(String(flags.has_followup ?? false))}</div></div>
+          <div class="state-item"><span class="label">multi_concept</span><div class="value">${esc(String(flags.multi_concept ?? false))}</div></div>
+        </div>
+      </div>
+    `;
+  };
   log.innerHTML = history.map(item => `
     <div class="msg ${item.role}">
       <div class="msg-wrap">
         ${item.role === 'user' ? sceneHtml(item.scene) : ''}
         ${item.role === 'user' ? dialogueStateHtml(item.dialogue_state) : ''}
+        ${item.role === 'user' ? responsePlanHtml(item.response_plan, item.debug_source) : ''}
+        ${item.role === 'assistant' ? responseRewriteHtml(item.response_rewrite) : ''}
         <div class="bubble">${esc(item.content)}</div>
       </div>
     </div>
@@ -207,10 +257,21 @@ async function loadConfig() {
   }
 }
 
-function clearChat() {
+async function clearChat() {
+  const oldSessionKey = sessionKey;
+  sessionKey = createSessionKey();
   history = [];
   document.getElementById('usageText').textContent = '';
   renderChat();
+  try {
+    await fetch('/api/dingyi-chat/reset', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ session_key: oldSessionKey })
+    });
+  } catch (e) {
+    console.warn('reset session failed', e);
+  }
 }
 
 async function sendMessage() {
@@ -229,15 +290,21 @@ async function sendMessage() {
     const res = await fetch('/api/dingyi-chat/send', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text, history: history.slice(0, -1) })
+      body: JSON.stringify({ text, history: history.slice(0, -1), session_key: sessionKey })
     });
     const data = await res.json();
     if (!res.ok || data.error) throw new Error(data.error || ('HTTP ' + res.status));
     history[history.length - 1].scene = data.scene || null;
     history[history.length - 1].dialogue_state = data.dialogue_state || null;
-    history.push({ role: 'assistant', content: data.reply || '(空回复)' });
+    history[history.length - 1].response_plan = data.response_plan || null;
+    history[history.length - 1].debug_source = data.debug_source || null;
+    history.push({
+      role: 'assistant',
+      content: data.reply || '(空回复)',
+      response_rewrite: data.response_rewrite || null
+    });
     document.getElementById('usageText').textContent =
-      `模型: ${data.model || '-'}${data.usage && data.usage.total_tokens ? ' · total_tokens: ' + data.usage.total_tokens : ''}`;
+      `链路: ${data.model || '-'} · debug: ${data.debug_source || '-'}${data.usage && data.usage.total_tokens ? ' · total_tokens: ' + data.usage.total_tokens : ''}`;
     renderChat();
   } catch (e) {
     history.push({ role: 'assistant', content: '请求失败：' + String(e) });

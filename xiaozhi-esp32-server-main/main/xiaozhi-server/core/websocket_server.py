@@ -104,6 +104,10 @@ class WebSocketServer:
                 websocket.request.headers["authorization"] = query_params[
                     "authorization"
                 ][0]
+            if "x-debug-bypass-bind" in query_params:
+                websocket.request.headers["x-debug-bypass-bind"] = query_params[
+                    "x-debug-bypass-bind"
+                ][0]
 
         """处理新连接，每次创建独立的ConnectionHandler"""
         # 先认证，后建立连接

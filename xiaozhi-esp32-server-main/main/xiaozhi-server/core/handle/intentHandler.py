@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import json
 import uuid
 import asyncio
@@ -13,8 +15,82 @@ from core.handle.sendAudioHandle import send_stt_message
 from core.handle.reportHandle import enqueue_tool_report
 from core.utils.util import remove_punctuation_and_length
 from core.providers.tts.dto.dto import TTSMessageDTO, SentenceType
+from core.response_orchestrator import rewrite_reply_text
 
 TAG = __name__
+
+TIME_QUERY_MARKERS = ("现在几点", "几点了", "几点啦", "当前时间", "现在时间", "时间是多少")
+DATE_QUERY_MARKERS = ("今天几号", "今天多少号", "今天日期", "今天是什么日期", "今天星期几", "今天周几")
+LUNAR_QUERY_MARKERS = ("今天农历", "农历几号", "农历多少", "今天什么节气")
+
+
+def _normalize_text(text: str) -> str:
+    return "".join((text or "").strip().split())
+
+
+def _is_time_query(text: str) -> bool:
+    normalized = _normalize_text(text)
+    if any(marker in normalized for marker in TIME_QUERY_MARKERS):
+        return True
+    return ("现在" in normalized or "当前" in normalized) and ("几点" in normalized or "时间" in normalized)
+
+
+def _is_date_query(text: str) -> bool:
+    normalized = _normalize_text(text)
+    return any(marker in normalized for marker in DATE_QUERY_MARKERS)
+
+
+def _is_lunar_query(text: str) -> bool:
+    normalized = _normalize_text(text)
+    return any(marker in normalized for marker in LUNAR_QUERY_MARKERS)
+
+
+def _build_grounded_context_reply(text: str) -> str | None:
+    from core.utils.current_time import get_current_time_info
+
+    normalized = _normalize_text(text)
+    current_time, today_date, today_weekday, lunar_date = get_current_time_info()
+    wants_time = _is_time_query(normalized)
+    wants_date = _is_date_query(normalized)
+    wants_lunar = _is_lunar_query(normalized)
+
+    if not any((wants_time, wants_date, wants_lunar)):
+        return None
+
+    parts = []
+    if wants_time:
+        parts.append(f"现在是{current_time}")
+    if wants_date:
+        parts.append(f"今天是{today_date}，{today_weekday}")
+    if wants_lunar:
+        parts.append(f"今天农历是{lunar_date}")
+    return "。".join(parts) + "。"
+
+
+def _build_grounded_greeting_reply(conn: "ConnectionHandler", text: str) -> str | None:
+    state_result = getattr(conn, "last_dialogue_state_result", None)
+    if state_result is None:
+        return None
+    social_state = (getattr(state_result, "state", {}) or {}).get("social_state", {})
+    if not social_state.get("is_greeting_turn"):
+        return None
+    if not social_state.get("greeting_conflict_with_time"):
+        return None
+
+    current_label = social_state.get("current_time_label") or "现在这个时段"
+    recommended = social_state.get("recommended_greeting") or "你好"
+    if social_state.get("greeting_conflict_with_previous"):
+        return f"现在还是{current_label}呢，我们接着聊吧，{recommended}。"
+    return f"现在更像{current_label}呢，不过见到你很开心，{recommended}。"
+
+
+async def _speak_grounded_reply(conn: "ConnectionHandler", original_text: str, reply_text: str) -> bool:
+    await send_stt_message(conn, original_text)
+    conn.client_abort = False
+    conn.sentence_id = str(uuid.uuid4().hex)
+    conn.dialogue.put(Message(role="user", content=original_text))
+    speak_txt(conn, reply_text)
+    return True
 
 
 async def handle_user_intent(conn: "ConnectionHandler", text):
@@ -36,6 +112,16 @@ async def handle_user_intent(conn: "ConnectionHandler", text):
     # 检查是否是唤醒词
     if await checkWakeupWords(conn, filtered_text):
         return True
+
+    grounded_context_reply = _build_grounded_context_reply(text)
+    if grounded_context_reply:
+        conn.logger.bind(tag=TAG).info(f"命中确定性时间/日期回复: {text}")
+        return await _speak_grounded_reply(conn, text, grounded_context_reply)
+
+    grounded_greeting_reply = _build_grounded_greeting_reply(conn, text)
+    if grounded_greeting_reply:
+        conn.logger.bind(tag=TAG).info(f"命中时间感知问候纠偏: {text}")
+        return await _speak_grounded_reply(conn, text, grounded_greeting_reply)
 
     if conn.intent_type == "function_call":
         # 使用支持function calling的聊天方法,不再进行意图分析
@@ -214,6 +300,10 @@ async def process_intent_result(
 
 
 def speak_txt(conn: "ConnectionHandler", text):
+    response_plan = getattr(conn, "last_response_plan", None)
+    rewrite_result = rewrite_reply_text(text, response_plan)
+    text = rewrite_result.rewritten_reply
+    conn.last_response_rewrite = rewrite_result
     # 记录文本到 sentence_id 映射
     conn.tts.store_tts_text(conn.sentence_id, text)
 
@@ -233,3 +323,8 @@ def speak_txt(conn: "ConnectionHandler", text):
         )
     )
     conn.dialogue.put(Message(role="assistant", content=text))
+    if hasattr(conn, "_record_assistant_reply"):
+        conn._record_assistant_reply(
+            text,
+            next_action=getattr(conn, "_get_dialogue_next_action", lambda: None)(),
+        )
