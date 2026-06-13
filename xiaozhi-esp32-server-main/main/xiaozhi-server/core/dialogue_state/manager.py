@@ -63,51 +63,45 @@ def build_dialogue_state_prompt_patch(result: DialogueStateManagerResult) -> str
     control = result.control
     social_state = state.get("social_state", {})
     turn_contract = control.turn_contract or {}
-    dialogue_state_lines = [
-        "<dialogue_state>",
-        f"current_scene={control.current_scene}",
-        f"current_subscene={control.current_subscene}",
-        f"current_phase={control.current_phase}",
-        f"scene_turn_count={state['scene_state']['scene_turn_count']}",
-        f"phase_turn_count={state['phase_state']['phase_turn_count']}",
-        f"followup_count={state['turn_state']['followup_count']}",
-        f"next_action={control.next_action}",
-        f"reply_style={control.reply_style}",
-        f"max_reply_sentences={control.max_reply_sentences}",
-        f"planner_primary_action={turn_contract.get('primary_action', 'answer_only')}",
-        f"planner_sentence_budget={turn_contract.get('sentence_budget', control.max_reply_sentences)}",
-        f"planner_concept_budget={turn_contract.get('concept_budget', 1)}",
-        f"planner_allow_summary={str(bool(turn_contract.get('allow_summary', False))).lower()}",
-        f"planner_ask_followup={str(bool(turn_contract.get('ask_followup', False))).lower()}",
-        f"should_close_scene={str(control.should_close_scene).lower()}",
-        f"time_slot={social_state.get('current_time_slot') or 'unknown'}",
-        f"is_greeting_turn={str(bool(social_state.get('is_greeting_turn'))).lower()}",
-        f"greeting_conflict_with_time={str(bool(social_state.get('greeting_conflict_with_time'))).lower()}",
-        f"greeting_conflict_with_previous={str(bool(social_state.get('greeting_conflict_with_previous'))).lower()}",
-        "</dialogue_state>",
-        "<phase_policy>",
-        f"当前 phase 是 {control.current_phase}，本轮 next_action 是 {control.next_action}。",
-        f"回复风格使用 {control.reply_style}，最多 {control.max_reply_sentences} 句。",
-    ]
     phase_hints = PHASE_POLICY_HINTS.get(
         (control.current_scene, control.current_phase),
         ["一轮只推进一件事，尽量短句、具体、儿童可懂。"],
     )
-    dialogue_state_lines.extend(phase_hints)
+    dialogue_state_lines = [
+        "<dialogue_state>",
+        f"scene={control.current_scene}",
+        f"subscene={control.current_subscene}",
+        f"phase={control.current_phase}",
+        f"scene_turn={state['scene_state']['scene_turn_count']}",
+        f"phase_turn={state['phase_state']['phase_turn_count']}",
+        f"next={control.next_action}",
+        f"style={control.reply_style}",
+        f"max_sentences={turn_contract.get('sentence_budget', control.max_reply_sentences)}",
+        f"concepts={turn_contract.get('concept_budget', 1)}",
+        f"ask_followup={str(bool(turn_contract.get('ask_followup', False))).lower()}",
+        f"allow_summary={str(bool(turn_contract.get('allow_summary', False))).lower()}",
+        f"close={str(control.should_close_scene).lower()}",
+        f"time_slot={social_state.get('current_time_slot') or 'unknown'}",
+        f"greeting_conflict={str(bool(social_state.get('greeting_conflict_with_time'))).lower()}",
+        "</dialogue_state>",
+        "<phase_policy>",
+        f"action={turn_contract.get('primary_action', 'answer_only')}",
+        f"hint={phase_hints[0]}",
+    ]
     if turn_contract.get("ask_followup"):
-        dialogue_state_lines.append("如果要追问，只问一个轻量问题。")
+        dialogue_state_lines.append("followup=只问一个轻量问题")
     else:
-        dialogue_state_lines.append("本轮优先直接推进，不额外连续追问。")
+        dialogue_state_lines.append("followup=不额外连续追问")
     if not turn_contract.get("allow_summary", False):
-        dialogue_state_lines.append("本轮不要自己总结，不要用“总的来说/简单来说/换句话说”。")
-    dialogue_state_lines.append("本轮不要同时解释、总结、追问。")
+        dialogue_state_lines.append("summary=不要总结")
+    dialogue_state_lines.append("rule=不要同时解释、总结、追问")
     if social_state.get("greeting_conflict_with_previous"):
-        dialogue_state_lines.append("如果上一轮和这一轮都是问候，但时段词变了，把它当作同一轮寒暄里的修正，不要重新完整开场。")
+        dialogue_state_lines.append("greeting=同一轮寒暄修正,不要重新完整开场")
     if social_state.get("greeting_conflict_with_time"):
         expected_label = social_state.get("current_time_label") or "当前时段"
         recommended = social_state.get("recommended_greeting") or "你好"
         dialogue_state_lines.append(
-            f"如果用户的问候和当前时段不一致，轻轻纠偏即可。当前更接近{expected_label}，可顺带带出“{recommended}”，不要生硬纠错。"
+            f"greeting=当前更接近{expected_label},可说{recommended},轻轻纠偏"
         )
     dialogue_state_lines.append("</phase_policy>")
     return "\n".join(dialogue_state_lines)

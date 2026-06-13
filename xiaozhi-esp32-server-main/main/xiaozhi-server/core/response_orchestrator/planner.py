@@ -82,15 +82,15 @@ def build_response_plan(scene_output, dialogue_state_result) -> ResponsePlan:
 def build_response_plan_prompt_patch(plan: ResponsePlan) -> str:
     lines = [
         "<response_plan>",
-        f"primary_action={plan.primary_action}",
-        f"sentence_budget={plan.sentence_budget}",
-        f"concept_budget={plan.concept_budget}",
+        f"action={plan.primary_action}",
+        f"sentences={plan.sentence_budget}",
+        f"concepts={plan.concept_budget}",
         f"ask_followup={str(plan.ask_followup).lower()}",
-        f"allow_summary={str(plan.allow_summary).lower()}",
-        f"stop_after_answer={str(plan.stop_after_answer).lower()}",
-        f"style_tags={','.join(plan.style_tags)}",
-        f"forbidden_patterns={','.join(plan.forbidden_patterns)}",
-        "本轮只完成一个主动作，不要同时解释、总结、追问。",
+        f"summary={str(plan.allow_summary).lower()}",
+        f"stop_after={str(plan.stop_after_answer).lower()}",
+        f"style={','.join(plan.style_tags)}",
+        f"avoid={','.join(plan.forbidden_patterns)}",
+        "rule=本轮只完成一个主动作",
         "</response_plan>",
     ]
     return "\n".join(lines)

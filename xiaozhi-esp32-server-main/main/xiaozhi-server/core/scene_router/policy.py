@@ -223,22 +223,34 @@ def _get_policy_instruction_lines(scene_output: SceneRouterOutput) -> List[str]:
 
 
 def build_scene_prompt_patch(scene_output: SceneRouterOutput) -> str:
-    policy_lines = _get_policy_instruction_lines(scene_output)
+    spec = get_scene_policy_spec(scene_output)
+    age_style = AGE_STYLE_HINTS.get(scene_output.age_band, AGE_STYLE_HINTS["6-8"])
+    subscene_hint = SUBSCENE_HINTS.get(scene_output.subscene, "")
+    style_summary = " / ".join(spec.response_style[:2])
+    ask_summary = " / ".join(spec.ask_strategy[:2])
+    avoid_summary = " / ".join(spec.avoid[:2])
     return (
         "<scene_router>\n"
-        f"primary_scene={scene_output.primary_scene}\n"
+        f"scene={scene_output.primary_scene}\n"
         f"subscene={scene_output.subscene}\n"
-        f"risk_level={scene_output.risk_level}\n"
-        f"emotion_state={scene_output.emotion_state}\n"
-        f"policy_profile={scene_output.policy_profile}\n"
-        f"should_use_rag={str(scene_output.should_use_rag).lower()}\n"
-        f"should_use_memory={str(scene_output.should_use_memory).lower()}\n"
-        f"should_use_vlm={str(scene_output.should_use_vlm).lower()}\n"
-        f"should_force_safe_template={str(scene_output.should_force_safe_template).lower()}\n"
+        f"risk={scene_output.risk_level}\n"
+        f"emotion={scene_output.emotion_state}\n"
+        f"policy={scene_output.policy_profile}\n"
+        f"rag={str(scene_output.should_use_rag).lower()}\n"
+        f"memory={str(scene_output.should_use_memory).lower()}\n"
+        f"vlm={str(scene_output.should_use_vlm).lower()}\n"
+        f"safe_template={str(scene_output.should_force_safe_template).lower()}\n"
         "</scene_router>\n"
         "<scene_policy>\n"
-        + "\n".join(policy_lines)
-        + "\n</scene_policy>"
+        f"goal={spec.goal}\n"
+        f"tone={spec.tone}\n"
+        f"age_style={age_style}\n"
+        f"style={style_summary}\n"
+        f"ask={ask_summary}\n"
+        f"avoid={avoid_summary}\n"
+        f"sub_hint={subscene_hint or 'none'}\n"
+        "global=一轮一件事,短句,具体,不要成人化说教\n"
+        "</scene_policy>"
     )
 
 

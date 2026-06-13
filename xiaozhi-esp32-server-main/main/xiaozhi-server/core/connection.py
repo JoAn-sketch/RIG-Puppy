@@ -1063,6 +1063,80 @@ class ConnectionHandler:
         self.last_response_rewrite = rewrite_result
         return rewrite_result.rewritten_reply
 
+    def _has_memory_trigger(self, query):
+        normalized = re.sub(r"\s+", "", (query or "").strip().lower())
+        markers = (
+            "上次",
+            "刚才",
+            "之前",
+            "昨天",
+            "前天",
+            "还记得",
+            "你记得",
+            "我说过",
+            "你还记得",
+            "我的名字",
+            "我喜欢",
+            "你认识我吗",
+        )
+        return any(marker in normalized for marker in markers)
+
+    def _should_query_memory(self, query):
+        if self.memory is None or not query:
+            return False
+        scene_output = self.last_scene_output
+        if scene_output is None or not scene_output.should_use_memory:
+            return False
+
+        current_scene = getattr(scene_output, "primary_scene", None)
+        if self._has_memory_trigger(query):
+            return True
+
+        scene_turn_count = 0
+        if self.last_dialogue_state_result is not None:
+            state = getattr(self.last_dialogue_state_result, "state", {}) or {}
+            scene_turn_count = int(
+                (state.get("scene_state", {}) or {}).get("scene_turn_count") or 0
+            )
+
+        if current_scene == "emotion_support":
+            return scene_turn_count >= 2
+        if current_scene == "play_interaction":
+            return scene_turn_count >= 3 and len((query or "").strip()) <= 12
+        return False
+
+    def _extract_stream_preview_text(self, text):
+        candidate = (text or "").strip()
+        if len(candidate) < 8:
+            return None
+
+        sentence_endings = "。！？!?；;\n"
+        soft_endings = "，,、：:~"
+
+        for idx, char in enumerate(candidate):
+            if char in sentence_endings and idx >= 7:
+                return candidate[: idx + 1].strip()
+            if char in soft_endings and idx >= 11:
+                return candidate[: idx + 1].strip()
+
+        if len(candidate) >= 24:
+            return candidate[:24].strip()
+        return None
+
+    def _strip_streamed_prefix(self, full_text, streamed_text):
+        full = (full_text or "").strip()
+        streamed = (streamed_text or "").strip()
+        if not full or not streamed:
+            return full
+        if full == streamed:
+            return ""
+        if full.startswith(streamed):
+            return full[len(streamed):].lstrip(" \n，,。！？!?；;：:、~")
+        streamed_core = streamed.rstrip("。！？!?；;，,：:、~ ")
+        if streamed_core and full.startswith(streamed_core):
+            return full[len(streamed_core):].lstrip(" \n，,。！？!?；;：:、~")
+        return full
+
     def _build_runtime_debug_payload(self):
         scene = None
         if self.last_scene_output is not None:
@@ -1213,12 +1287,13 @@ class ConnectionHandler:
                 functions.append(DIRECT_ANSWER_TOOL)
 
         response_message = []
+        preview_enabled = depth == 0 and functions is None
+        streamed_preview_text = None
 
         try:
             # 使用带记忆的对话
             memory_str = None
-            # 仅当query非空（代表用户询问）时查询记忆
-            if self.memory is not None and query and not (self.last_scene_output and not self.last_scene_output.should_use_memory):
+            if self._should_query_memory(query):
                 future = asyncio.run_coroutine_threadsafe(
                     self.memory.query_memory(query), self.loop
                 )
@@ -1285,6 +1360,20 @@ class ConnectionHandler:
                 if content is not None and len(content) > 0:
                     if not tool_call_flag:
                         response_message.append(content)
+                        if preview_enabled and streamed_preview_text is None:
+                            preview_text = self._extract_stream_preview_text(
+                                "".join(response_message)
+                            )
+                            if preview_text:
+                                preview_text = self._rewrite_assistant_reply(preview_text)
+                                if preview_text:
+                                    self.tts.tts_one_sentence(
+                                        self,
+                                        ContentType.TEXT,
+                                        content_detail=preview_text,
+                                        sentence_id=current_sentence_id,
+                                    )
+                                    streamed_preview_text = preview_text
         except Exception as e:
             self.logger.bind(tag=TAG).error(f"LLM stream processing error: {e}")
             self.tts.tts_text_queue.put(
@@ -1448,7 +1537,14 @@ class ConnectionHandler:
             text_buff = "".join(response_message)
             text_buff = self._rewrite_assistant_reply(text_buff)
             self.tts.store_tts_text(current_sentence_id, text_buff)
-            self.tts.tts_one_sentence(self, ContentType.TEXT, content_detail=text_buff, sentence_id=current_sentence_id)
+            tts_text = self._strip_streamed_prefix(text_buff, streamed_preview_text)
+            if tts_text:
+                self.tts.tts_one_sentence(
+                    self,
+                    ContentType.TEXT,
+                    content_detail=tts_text,
+                    sentence_id=current_sentence_id,
+                )
             self.dialogue.put(Message(role="assistant", content=text_buff))
             self._record_assistant_reply(
                 text_buff,

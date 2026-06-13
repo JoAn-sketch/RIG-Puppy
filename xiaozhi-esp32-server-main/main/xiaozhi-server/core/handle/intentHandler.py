@@ -22,6 +22,31 @@ TAG = __name__
 TIME_QUERY_MARKERS = ("现在几点", "几点了", "几点啦", "当前时间", "现在时间", "时间是多少")
 DATE_QUERY_MARKERS = ("今天几号", "今天多少号", "今天日期", "今天是什么日期", "今天星期几", "今天周几")
 LUNAR_QUERY_MARKERS = ("今天农历", "农历几号", "农历多少", "今天什么节气")
+TOOL_INTENT_MARKERS = (
+    "打开",
+    "关闭",
+    "调高",
+    "调低",
+    "设置",
+    "播放",
+    "暂停",
+    "停止播放",
+    "音量",
+    "亮度",
+    "灯",
+    "音乐",
+    "歌曲",
+    "天气",
+    "电池",
+    "设备",
+)
+CHAT_FAST_PATH_SCENES = {
+    "curiosity",
+    "relationship_building",
+    "emotion_support",
+    "learning_support",
+    "play_interaction",
+}
 
 
 def _normalize_text(text: str) -> str:
@@ -43,6 +68,17 @@ def _is_date_query(text: str) -> bool:
 def _is_lunar_query(text: str) -> bool:
     normalized = _normalize_text(text)
     return any(marker in normalized for marker in LUNAR_QUERY_MARKERS)
+
+
+def _should_skip_llm_intent(conn: "ConnectionHandler", text: str) -> bool:
+    if getattr(conn, "intent_type", None) != "intent_llm":
+        return False
+    scene_output = getattr(conn, "last_scene_output", None)
+    current_scene = getattr(scene_output, "primary_scene", None)
+    if current_scene not in CHAT_FAST_PATH_SCENES:
+        return False
+    normalized = _normalize_text(text)
+    return not any(marker in normalized for marker in TOOL_INTENT_MARKERS)
 
 
 def _build_grounded_context_reply(text: str) -> str | None:
@@ -122,6 +158,13 @@ async def handle_user_intent(conn: "ConnectionHandler", text):
     if grounded_greeting_reply:
         conn.logger.bind(tag=TAG).info(f"命中时间感知问候纠偏: {text}")
         return await _speak_grounded_reply(conn, text, grounded_greeting_reply)
+
+    if _should_skip_llm_intent(conn, text):
+        conn.logger.bind(tag=TAG).debug(f"普通儿童聊天跳过 LLM 意图识别: {text}")
+        return False
+
+    if conn.intent_type == "nointent":
+        return False
 
     if conn.intent_type == "function_call":
         # 使用支持function calling的聊天方法,不再进行意图分析
