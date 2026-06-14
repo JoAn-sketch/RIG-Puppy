@@ -36,6 +36,28 @@ ADULT_STYLE_REPLACEMENTS = {
 }
 
 LEADING_PUNCTUATION = "，,。；;：:、 "
+ACK_MARKERS = (
+    "这个问题",
+    "这个想法",
+    "这个呀",
+    "好呀",
+    "好，我们",
+    "我在呢",
+    "没事",
+    "嗯",
+    "诶",
+    "哇",
+)
+DEFAULT_ACK_BY_MODE = {
+    "explain_first": "这个问题问得好呀。",
+    "coach_step": "好，我们一步一步来。",
+    "emotion_hold": "我在呢。",
+    "playful_round": "好呀，我们来试试看。",
+    "safe_direct": "先听我说。",
+    "repair_reset": "好，我们重新来一下。",
+    "warm_connect": "好呀。",
+    "freeform": "好呀。",
+}
 
 
 @dataclass
@@ -91,6 +113,8 @@ def rewrite_reply_text(reply_text: str, plan: ResponsePlan | None) -> ResponseRe
             continue
         filtered.append(sentence)
 
+    filtered = _enforce_question_order(filtered, plan, rewrite_actions)
+
     if plan.primary_action in {"ask_one_clarify", "offer_choice"}:
         question_sentences = [sentence for sentence in filtered if _looks_like_question(sentence)]
         if question_sentences:
@@ -98,7 +122,7 @@ def rewrite_reply_text(reply_text: str, plan: ResponsePlan | None) -> ResponseRe
             rewrite_actions.append("keep_single_question")
         else:
             filtered = filtered[:1]
-    elif plan.primary_action == "answer_then_invite":
+    elif plan.primary_action in {"answer_then_invite", "micro_answer_then_invite"}:
         answer_sentences = [sentence for sentence in filtered if not _looks_like_question(sentence)]
         question_sentences = [sentence for sentence in filtered if _looks_like_question(sentence)]
         rebuilt = []
@@ -112,6 +136,8 @@ def rewrite_reply_text(reply_text: str, plan: ResponsePlan | None) -> ResponseRe
         filtered = [sentence for sentence in filtered if not _looks_like_question(sentence)]
         if not filtered:
             filtered = [sentences[0]]
+
+    filtered = _enforce_child_explore_protocol(filtered, plan, rewrite_actions)
 
     if plan.primary_action == "emotion_validate":
         no_advice = []
@@ -180,6 +206,106 @@ def _looks_like_question(sentence: str) -> bool:
 def _is_followup_sentence(sentence: str) -> bool:
     stripped = sentence.strip()
     return _looks_like_question(stripped) and any(pattern in stripped for pattern in FOLLOWUP_PATTERNS)
+
+
+def _enforce_question_order(
+    sentences: List[str], plan: ResponsePlan, rewrite_actions: List[str]
+) -> List[str]:
+    if not sentences:
+        return sentences
+    if not plan.allow_question:
+        no_question = [sentence for sentence in sentences if not _looks_like_question(sentence)]
+        if len(no_question) != len(sentences):
+            rewrite_actions.append("remove_all_questions")
+        return no_question or sentences[:1]
+    if not plan.must_answer_before_question:
+        return sentences
+
+    answer_sentences = [sentence for sentence in sentences if not _looks_like_question(sentence)]
+    question_sentences = [sentence for sentence in sentences if _looks_like_question(sentence)]
+    if not question_sentences:
+        return sentences
+    if sentences and _looks_like_question(sentences[0]):
+        rewrite_actions.append("remove_leading_question")
+    rebuilt = []
+    if answer_sentences:
+        rebuilt.extend(answer_sentences[:2])
+    if question_sentences and plan.question_position == "after_answer_only":
+        rebuilt.append(question_sentences[0])
+    return rebuilt or answer_sentences or sentences[:1]
+
+
+def _enforce_child_explore_protocol(
+    sentences: List[str], plan: ResponsePlan, rewrite_actions: List[str]
+) -> List[str]:
+    if plan.interaction_protocol != "child_explore_v1":
+        return sentences
+
+    non_question = [sentence for sentence in sentences if not _looks_like_question(sentence)]
+    question_sentences = [sentence for sentence in sentences if _looks_like_question(sentence)]
+    ack_sentence = _extract_ack_sentence(non_question)
+    answer_sentences = [sentence for sentence in non_question if sentence != ack_sentence]
+
+    if plan.open_with_ack:
+        if ack_sentence is None:
+            ack_sentence = DEFAULT_ACK_BY_MODE.get(plan.protocol_mode, DEFAULT_ACK_BY_MODE["freeform"])
+            rewrite_actions.append("prepend_protocol_ack")
+        if not answer_sentences and non_question:
+            first_non_question = non_question[0]
+            if first_non_question != ack_sentence:
+                answer_sentences = [first_non_question]
+        rebuilt = [ack_sentence]
+        if answer_sentences:
+            rebuilt.append(answer_sentences[0])
+        elif non_question and non_question[0] != ack_sentence:
+            rebuilt.append(non_question[0])
+        if plan.allow_question and question_sentences:
+            rebuilt.append(question_sentences[0])
+            rewrite_actions.append("keep_single_protocol_invite")
+        sentences = rebuilt
+    else:
+        rebuilt = []
+        if answer_sentences:
+            rebuilt.append(answer_sentences[0])
+        elif non_question:
+            rebuilt.append(non_question[0])
+        if plan.allow_question and question_sentences:
+            rebuilt.append(question_sentences[0])
+            rewrite_actions.append("keep_single_protocol_invite")
+        sentences = rebuilt or sentences[:1]
+
+    max_non_question = 2 if plan.open_with_ack else 1
+    final_sentences = []
+    non_question_count = 0
+    question_kept = False
+    for sentence in sentences:
+        if _looks_like_question(sentence):
+            if plan.allow_question and not question_kept:
+                final_sentences.append(sentence)
+                question_kept = True
+            continue
+        if non_question_count >= max_non_question:
+            rewrite_actions.append("trim_extra_concepts")
+            continue
+        final_sentences.append(sentence)
+        non_question_count += 1
+
+    deduped = []
+    for sentence in final_sentences:
+        if deduped and deduped[-1] == sentence:
+            continue
+        deduped.append(sentence)
+    return deduped
+
+
+def _extract_ack_sentence(sentences: List[str]) -> str | None:
+    for sentence in sentences[:2]:
+        stripped = sentence.strip()
+        if any(marker in stripped for marker in ACK_MARKERS):
+            return sentence
+        if len(stripped) <= 12 and stripped.endswith(("呀。", "呀", "呢。", "呢", "哦。", "哦")):
+            return sentence
+    return None
 
 
 def _dedupe_preserve_order(items: List[str]) -> List[str]:

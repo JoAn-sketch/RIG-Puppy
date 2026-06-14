@@ -62,6 +62,7 @@ def build_dialogue_state_prompt_patch(result: DialogueStateManagerResult) -> str
     state = result.state
     control = result.control
     social_state = state.get("social_state", {})
+    protocol_state = state.get("protocol_state", {})
     turn_contract = control.turn_contract or {}
     phase_hints = PHASE_POLICY_HINTS.get(
         (control.current_scene, control.current_phase),
@@ -72,6 +73,9 @@ def build_dialogue_state_prompt_patch(result: DialogueStateManagerResult) -> str
         f"scene={control.current_scene}",
         f"subscene={control.current_subscene}",
         f"phase={control.current_phase}",
+        f"protocol={control.interaction_protocol}",
+        f"mode={control.protocol_mode}",
+        f"protocol_stage={control.protocol_stage}",
         f"scene_turn={state['scene_state']['scene_turn_count']}",
         f"phase_turn={state['phase_state']['phase_turn_count']}",
         f"next={control.next_action}",
@@ -81,12 +85,14 @@ def build_dialogue_state_prompt_patch(result: DialogueStateManagerResult) -> str
         f"ask_followup={str(bool(turn_contract.get('ask_followup', False))).lower()}",
         f"allow_summary={str(bool(turn_contract.get('allow_summary', False))).lower()}",
         f"close={str(control.should_close_scene).lower()}",
+        f"has_explained={str(bool(protocol_state.get('has_explained_in_scene'))).lower()}",
         f"time_slot={social_state.get('current_time_slot') or 'unknown'}",
         f"greeting_conflict={str(bool(social_state.get('greeting_conflict_with_time'))).lower()}",
         "</dialogue_state>",
         "<phase_policy>",
         f"action={turn_contract.get('primary_action', 'answer_only')}",
         f"hint={phase_hints[0]}",
+        f"blocks={','.join(turn_contract.get('required_blocks', []))}",
     ]
     if turn_contract.get("ask_followup"):
         dialogue_state_lines.append("followup=只问一个轻量问题")
@@ -95,6 +101,10 @@ def build_dialogue_state_prompt_patch(result: DialogueStateManagerResult) -> str
     if not turn_contract.get("allow_summary", False):
         dialogue_state_lines.append("summary=不要总结")
     dialogue_state_lines.append("rule=不要同时解释、总结、追问")
+    if turn_contract.get("must_answer_before_question", False):
+        dialogue_state_lines.append("question=必须先回答再提问")
+    if not turn_contract.get("allow_question", True):
+        dialogue_state_lines.append("question=本轮不要提问")
     if social_state.get("greeting_conflict_with_previous"):
         dialogue_state_lines.append("greeting=同一轮寒暄修正,不要重新完整开场")
     if social_state.get("greeting_conflict_with_time"):
@@ -140,6 +150,11 @@ class DialogueStateManager:
                 state["turn_state"]["repair_count"] += 1
             else:
                 state["turn_state"]["repair_count"] = 0
+            state["protocol_state"]["has_explained_in_scene"] = False
+            state["protocol_state"]["invite_used_in_scene"] = False
+            state["protocol_state"]["question_used_in_turn"] = 0
+            state["protocol_state"]["summary_used_in_turn"] = 0
+            state["protocol_state"]["concepts_used_in_turn"] = 0
 
         state["user_state"]["emotion_state"] = scene_output.emotion_state
         state["user_state"]["frustration_level"] = manager_input.signals.frustration_signal
@@ -182,6 +197,15 @@ class DialogueStateManager:
             current_subscene=current_subscene,
             current_phase=current_phase,
             next_action=next_action,
+            interaction_protocol=scene_output.interaction_protocol,
+            protocol_mode=scene_output.protocol_mode,
+            protocol_stage=self._resolve_protocol_stage(
+                state=state,
+                scene_output=scene_output,
+                current_phase=current_phase,
+                scene_changed=scene_changed,
+                text=manager_input.text,
+            ),
             reply_style=REPLY_STYLE_BY_SCENE.get(current_scene, "warm_brief"),
             max_reply_sentences=MAX_SENTENCES_BY_SCENE.get(current_scene, 3),
             should_ask_followup=current_phase in {
@@ -197,6 +221,9 @@ class DialogueStateManager:
             should_use_rag=scene_output.should_use_rag,
             should_force_safe_template=scene_output.should_force_safe_template,
         )
+        state["protocol_state"]["interaction_protocol"] = control.interaction_protocol
+        state["protocol_state"]["protocol_mode"] = control.protocol_mode
+        state["protocol_state"]["current_stage"] = control.protocol_stage
         debug = DialogueDebugOutput(
             transition_reason=transition_reason,
             scene_changed=scene_changed,
@@ -205,7 +232,10 @@ class DialogueStateManager:
             router_confidence=scene_output.confidence,
             notes=notes,
         )
-        response_plan = build_response_plan(scene_output, type("ResultView", (), {"control": control})())
+        response_plan = build_response_plan(
+            scene_output,
+            type("ResultView", (), {"control": control, "state": state})(),
+        )
         control.turn_contract = response_plan.to_dict()
         return DialogueStateManagerResult(state=state, control=control, debug=debug)
 
@@ -220,6 +250,18 @@ class DialogueStateManager:
         updated_state = copy.deepcopy(runtime_state)
         updated_state["turn_state"]["last_bot_action"] = next_action or updated_state["phase_state"].get("next_action")
         updated_state["turn_state"]["last_reply_length_bucket"] = reply_length_bucket(reply_text)
+        protocol_state = updated_state.setdefault("protocol_state", {})
+        protocol_state["has_explained_in_scene"] = bool(reply_text.strip())
+        protocol_state["question_used_in_turn"] = reply_text.count("？") + reply_text.count("?")
+        protocol_state["summary_used_in_turn"] = int(
+            any(marker in reply_text for marker in ("总的来说", "总之", "简单来说", "换句话说"))
+        )
+        protocol_state["concepts_used_in_turn"] = max(
+            1,
+            sum(1 for piece in reply_text.replace("！", "。").replace("？", "。").split("。") if piece.strip()),
+        ) if reply_text.strip() else 0
+        if protocol_state["question_used_in_turn"] > 0:
+            protocol_state["invite_used_in_scene"] = True
         if updated_state["phase_state"].get("current_phase") == "close":
             updated_state["task_state"]["task_completed"] = True
         updated_state["meta"]["updated_at_ms"] = int(time.time() * 1000)
@@ -273,6 +315,16 @@ class DialogueStateManager:
                 "greeting_conflict_with_time": False,
                 "greeting_conflict_with_previous": False,
                 "recommended_greeting": None,
+            },
+            "protocol_state": {
+                "interaction_protocol": "warm_companion_v1",
+                "protocol_mode": "warm_connect",
+                "current_stage": "freeform",
+                "has_explained_in_scene": False,
+                "invite_used_in_scene": False,
+                "question_used_in_turn": 0,
+                "summary_used_in_turn": 0,
+                "concepts_used_in_turn": 0,
             },
             "meta": {
                 "version": "v1",
@@ -404,6 +456,50 @@ class DialogueStateManager:
             "find_block": "find_where_child_stuck",
         }.get(default_phase, "greet_warmly")
         return default_phase, default_action, scene_changed, "G4" if scene_changed else "G3", "scene_switch" if scene_changed else "scene_continue", notes
+
+    def _resolve_protocol_stage(
+        self,
+        state: Dict[str, Any],
+        scene_output,
+        current_phase: str,
+        scene_changed: bool,
+        text: str,
+    ) -> str:
+        current_scene = scene_output.primary_scene
+        scene_turn_count = int(state["scene_state"].get("scene_turn_count") or 0)
+        protocol = scene_output.interaction_protocol
+        if protocol != "child_explore_v1":
+            return "freeform"
+
+        if current_scene == "curiosity":
+            if scene_changed or scene_turn_count <= 1:
+                return "ack_then_micro_answer"
+            if self._is_context_followup_clarification(text):
+                return "micro_answer"
+            if current_phase in {"optional_followup", "check_understanding"}:
+                return "invite_optional"
+            return "micro_answer"
+
+        if current_scene == "learning_support":
+            if scene_changed or scene_turn_count <= 1:
+                return "ack_then_micro_answer"
+            if current_phase in {"child_try", "next_step_or_close"}:
+                return "invite_optional"
+            return "micro_answer"
+
+        if current_scene == "emotion_support":
+            if scene_changed or scene_turn_count <= 1:
+                return "ack_then_micro_answer"
+            if current_phase == "clarify_event" and scene_turn_count > 1:
+                return "invite_optional"
+            return "micro_answer"
+
+        if current_scene == "play_interaction":
+            if scene_changed or scene_turn_count <= 1:
+                return "ack_then_micro_answer"
+            return "invite_optional"
+
+        return "freeform"
 
     def _resolve_task_type(self, current_scene: str) -> str:
         return {

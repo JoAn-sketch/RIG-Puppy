@@ -30,6 +30,8 @@ class SceneRouter:
                     should_use_vlm=bool(scene_rule["should_use_vlm"]),
                     should_escalate_parent=bool(scene_rule["should_escalate_parent"]),
                     should_force_safe_template=bool(scene_rule["should_force_safe_template"]),
+                    interaction_protocol=self._resolve_interaction_protocol(scene_name),
+                    protocol_mode=self._resolve_protocol_mode(scene_name),
                     confidence=0.92 if scene_name == "safety_risk" else 0.82,
                     reason_codes=reason_codes,
                 )
@@ -56,6 +58,10 @@ class SceneRouter:
             should_use_vlm=DEFAULT_SCENE["should_use_vlm"],
             should_escalate_parent=DEFAULT_SCENE["should_escalate_parent"],
             should_force_safe_template=DEFAULT_SCENE["should_force_safe_template"],
+            interaction_protocol=self._resolve_interaction_protocol(
+                DEFAULT_SCENE["primary_scene"]
+            ),
+            protocol_mode=self._resolve_protocol_mode(DEFAULT_SCENE["primary_scene"]),
             confidence=0.55,
             reason_codes=["default_fallback"],
         )
@@ -117,9 +123,31 @@ class SceneRouter:
             should_use_vlm=bool(scene_rule["should_use_vlm"]),
             should_escalate_parent=bool(scene_rule["should_escalate_parent"]),
             should_force_safe_template=bool(scene_rule["should_force_safe_template"]),
+            interaction_protocol=self._resolve_interaction_protocol(scene_name),
+            protocol_mode=self._resolve_protocol_mode(scene_name),
             confidence=0.78,
             reason_codes=reason_codes,
         )
+
+    def _resolve_interaction_protocol(self, scene_name):
+        if scene_name in {"curiosity", "learning_support", "emotion_support", "play_interaction"}:
+            return "child_explore_v1"
+        if scene_name == "safety_risk":
+            return "child_safe_v1"
+        if scene_name == "system_repair":
+            return "repair_reset_v1"
+        return "warm_companion_v1"
+
+    def _resolve_protocol_mode(self, scene_name):
+        return {
+            "curiosity": "explain_first",
+            "learning_support": "coach_step",
+            "emotion_support": "emotion_hold",
+            "play_interaction": "playful_round",
+            "safety_risk": "safe_direct",
+            "system_repair": "repair_reset",
+            "relationship_building": "warm_connect",
+        }.get(scene_name, "warm_connect")
 
     def _is_context_followup_question(self, text):
         if not text or len(text) > 16:

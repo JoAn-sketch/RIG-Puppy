@@ -236,6 +236,8 @@ def build_scene_prompt_patch(scene_output: SceneRouterOutput) -> str:
         f"risk={scene_output.risk_level}\n"
         f"emotion={scene_output.emotion_state}\n"
         f"policy={scene_output.policy_profile}\n"
+        f"protocol={scene_output.interaction_protocol}\n"
+        f"protocol_mode={scene_output.protocol_mode}\n"
         f"rag={str(scene_output.should_use_rag).lower()}\n"
         f"memory={str(scene_output.should_use_memory).lower()}\n"
         f"vlm={str(scene_output.should_use_vlm).lower()}\n"

@@ -1153,6 +1153,8 @@ class ConnectionHandler:
                 "should_use_vlm": getattr(self.last_scene_output, "should_use_vlm", None),
                 "should_escalate_parent": getattr(self.last_scene_output, "should_escalate_parent", None),
                 "should_force_safe_template": getattr(self.last_scene_output, "should_force_safe_template", None),
+                "interaction_protocol": getattr(self.last_scene_output, "interaction_protocol", None),
+                "protocol_mode": getattr(self.last_scene_output, "protocol_mode", None),
                 "confidence": getattr(self.last_scene_output, "confidence", None),
                 "reason_codes": list(getattr(self.last_scene_output, "reason_codes", []) or []),
             }

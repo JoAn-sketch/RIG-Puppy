@@ -47,5 +47,7 @@ class SceneRouterOutput:
     should_use_vlm: bool
     should_escalate_parent: bool
     should_force_safe_template: bool
+    interaction_protocol: str
+    protocol_mode: str
     confidence: float
     reason_codes: List[str] = field(default_factory=list)

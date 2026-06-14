@@ -40,6 +40,9 @@ class DialogueControlOutput:
     current_subscene: str
     current_phase: str
     next_action: str
+    interaction_protocol: str
+    protocol_mode: str
+    protocol_stage: str
     reply_style: str
     max_reply_sentences: int
     should_ask_followup: bool

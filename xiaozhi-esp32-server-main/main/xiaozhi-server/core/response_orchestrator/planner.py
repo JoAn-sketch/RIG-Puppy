@@ -15,6 +15,16 @@ class ResponsePlan:
     stop_after_answer: bool = True
     style_tags: List[str] = field(default_factory=list)
     forbidden_patterns: List[str] = field(default_factory=list)
+    interaction_protocol: str = "default"
+    protocol_mode: str = "freeform"
+    protocol_stage: str = "freeform"
+    required_blocks: List[str] = field(default_factory=list)
+    optional_blocks: List[str] = field(default_factory=list)
+    allow_question: bool = True
+    must_answer_before_question: bool = False
+    question_position: str = "free"
+    open_with_ack: bool = False
+    pause_after_answer: bool = False
 
     def to_dict(self):
         return asdict(self)
@@ -34,10 +44,14 @@ def build_response_plan(scene_output, dialogue_state_result) -> ResponsePlan:
             stop_after_answer=True,
             style_tags=["brief", "child_friendly", "spoken"],
             forbidden_patterns=_default_forbidden_patterns(),
+            required_blocks=["micro_answer"],
         )
 
     current_scene = getattr(control, "current_scene", "") or ""
     current_phase = getattr(control, "current_phase", "") or ""
+    interaction_protocol = getattr(control, "interaction_protocol", "default") or "default"
+    protocol_mode = getattr(control, "protocol_mode", "freeform") or "freeform"
+    protocol_stage = getattr(control, "protocol_stage", "freeform") or "freeform"
     proactive_followup = _should_offer_proactive_followup(
         current_scene,
         current_phase,
@@ -62,6 +76,15 @@ def build_response_plan(scene_output, dialogue_state_result) -> ResponsePlan:
         getattr(control, "should_ask_followup", False) or proactive_followup
     )
 
+    if interaction_protocol == "child_explore_v1":
+        return _build_child_explore_plan(
+            current_scene=current_scene,
+            current_phase=current_phase,
+            protocol_mode=protocol_mode,
+            protocol_stage=protocol_stage,
+            state=state,
+        )
+
     return ResponsePlan(
         primary_action=primary_action,
         content_blocks=_resolve_content_blocks(primary_action),
@@ -76,6 +99,10 @@ def build_response_plan(scene_output, dialogue_state_result) -> ResponsePlan:
         },
         style_tags=_resolve_style_tags(current_scene, primary_action),
         forbidden_patterns=_default_forbidden_patterns(primary_action),
+        interaction_protocol=interaction_protocol,
+        protocol_mode=protocol_mode,
+        protocol_stage=protocol_stage,
+        required_blocks=["core_answer"],
     )
 
 
@@ -90,10 +117,90 @@ def build_response_plan_prompt_patch(plan: ResponsePlan) -> str:
         f"stop_after={str(plan.stop_after_answer).lower()}",
         f"style={','.join(plan.style_tags)}",
         f"avoid={','.join(plan.forbidden_patterns)}",
+        f"protocol={plan.interaction_protocol}",
+        f"mode={plan.protocol_mode}",
+        f"stage={plan.protocol_stage}",
+        f"allow_question={str(plan.allow_question).lower()}",
+        f"answer_before_question={str(plan.must_answer_before_question).lower()}",
+        f"required={','.join(plan.required_blocks)}",
+        f"optional={','.join(plan.optional_blocks)}",
         "rule=本轮只完成一个主动作",
         "</response_plan>",
     ]
     return "\n".join(lines)
+
+
+def _build_child_explore_plan(
+    current_scene: str,
+    current_phase: str,
+    protocol_mode: str,
+    protocol_stage: str,
+    state,
+) -> ResponsePlan:
+    scene_state = (state or {}).get("scene_state", {})
+    scene_turn_count = int(scene_state.get("scene_turn_count") or 0)
+    first_scene_turn = scene_turn_count <= 1
+
+    primary_action = "micro_answer_only"
+    required_blocks = ["micro_answer"]
+    optional_blocks: List[str] = []
+    allow_question = False
+    ask_followup = False
+    sentence_budget = 2
+    style_tags = ["child_friendly", "spoken", "brief", "explore_protocol"]
+    forbidden_patterns = _default_forbidden_patterns()
+
+    if protocol_stage == "ack_then_micro_answer":
+        primary_action = "ack_and_micro_answer"
+        required_blocks = ["ack", "micro_answer"]
+        optional_blocks = ["pause"]
+    elif protocol_stage == "invite_optional":
+        primary_action = "micro_answer_then_invite"
+        required_blocks = ["micro_answer"]
+        optional_blocks = ["pause", "invite_optional"]
+        allow_question = current_scene in {"curiosity", "learning_support", "play_interaction"}
+        ask_followup = allow_question
+    elif protocol_stage == "micro_answer":
+        primary_action = "micro_answer_only"
+        required_blocks = ["micro_answer"]
+        optional_blocks = ["pause"]
+
+    if current_scene == "learning_support":
+        style_tags.append("coach_like")
+        if current_phase in {"child_try", "next_step_or_close"}:
+            primary_action = "micro_answer_then_invite"
+            required_blocks = ["ack", "micro_answer"]
+            optional_blocks = ["pause", "invite_optional"]
+            allow_question = True
+            ask_followup = True
+    elif current_scene == "emotion_support":
+        style_tags.append("gentle")
+        allow_question = False if first_scene_turn else allow_question
+    elif current_scene == "play_interaction":
+        style_tags.append("playful")
+        sentence_budget = 2
+
+    return ResponsePlan(
+        primary_action=primary_action,
+        content_blocks=_resolve_content_blocks(primary_action),
+        sentence_budget=sentence_budget,
+        concept_budget=1,
+        ask_followup=ask_followup,
+        allow_summary=False,
+        stop_after_answer=not allow_question,
+        style_tags=style_tags,
+        forbidden_patterns=forbidden_patterns,
+        interaction_protocol="child_explore_v1",
+        protocol_mode=protocol_mode,
+        protocol_stage=protocol_stage,
+        required_blocks=required_blocks,
+        optional_blocks=optional_blocks,
+        allow_question=allow_question and not first_scene_turn,
+        must_answer_before_question=True,
+        question_position="after_answer_only",
+        open_with_ack="ack" in required_blocks,
+        pause_after_answer=True,
+    )
 
 
 def _resolve_primary_action(
@@ -149,6 +256,9 @@ def _resolve_content_blocks(primary_action: str) -> List[str]:
         "answer_only": ["core_answer"],
         "answer_then_invite": ["core_answer", "one_light_question"],
         "answer_with_example": ["core_answer", "one_example"],
+        "ack_and_micro_answer": ["ack", "micro_answer"],
+        "micro_answer_only": ["micro_answer"],
+        "micro_answer_then_invite": ["micro_answer", "invite_optional"],
         "emotion_validate": ["emotion_ack"],
         "ask_one_clarify": ["one_question"],
         "guide_one_step": ["one_step"],
@@ -180,6 +290,8 @@ def _default_forbidden_patterns(primary_action: str | None = None) -> List[str]:
         "teacher_checking",
         "encyclopedia_explaining",
         "multi_question",
+        "multi_concept",
+        "leading_question",
     ]
     if primary_action not in {"ask_one_clarify", "offer_choice"}:
         patterns.append("extra_followup")
