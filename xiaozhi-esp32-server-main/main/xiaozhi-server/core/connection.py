@@ -29,6 +29,7 @@ from core.handle.reportHandle import report, enqueue_tool_report
 from core.providers.tts.default import DefaultTTS
 from concurrent.futures import ThreadPoolExecutor
 from core.utils.dialogue import Message, Dialogue
+from core.conversation_session_state import ConversationSessionState
 from core.providers.asr.dto.dto import InterfaceType
 from core.handle.textHandle import handleTextMessage
 from core.providers.tools.unified_tool_handler import UnifiedToolHandler
@@ -95,6 +96,7 @@ class ConnectionHandler:
             _memory,
             _intent,
             server=None,
+            session_state=None,
     ):
         self.common_config = config
         self.config = copy.deepcopy(config)
@@ -152,6 +154,9 @@ class ConnectionHandler:
         # 为每个连接单独管理声纹识别
         self.voiceprint_provider = None
 
+        # Shared runtime/session state
+        self.session_state = session_state or ConversationSessionState()
+
         # vad相关变量
         self.client_audio_buffer = bytearray()
         self.client_have_voice = False
@@ -169,11 +174,7 @@ class ConnectionHandler:
         self.asr_audio_queue = queue.Queue()
         self.current_speaker = None  # 存储当前说话人
 
-        # llm相关变量
-        self.dialogue = Dialogue()
-
         # tts相关变量
-        self.sentence_id = None
         # 处理TTS响应没有文本返回
         self.tts_MessageText = ""
 
@@ -189,15 +190,6 @@ class ConnectionHandler:
         self.intent_type = "nointent"
         self.scene_router = SceneRouter()
         self.dialogue_state_manager = DialogueStateManager()
-        self.last_scene_output = None
-        self.last_dialogue_state_result = None
-        self.dialogue_state_runtime = None
-        self.base_prompt = None
-        self.scene_prompt_patch = ""
-        self.dialogue_state_prompt_patch = ""
-        self.response_plan_prompt_patch = ""
-        self.last_response_plan = None
-        self.last_response_rewrite = None
 
         self.timeout_seconds = (
                 int(self.config.get("close_connection_no_voice_time", 120)) + 60
@@ -212,6 +204,94 @@ class ConnectionHandler:
 
         # 初始化提示词管理器
         self.prompt_manager = PromptManager(self.config, self.logger)
+
+    @property
+    def dialogue(self):
+        return self.session_state.dialogue
+
+    @dialogue.setter
+    def dialogue(self, value):
+        self.session_state.dialogue = value
+
+    @property
+    def sentence_id(self):
+        return self.session_state.sentence_id
+
+    @sentence_id.setter
+    def sentence_id(self, value):
+        self.session_state.sentence_id = value
+
+    @property
+    def last_scene_output(self):
+        return self.session_state.last_scene_output
+
+    @last_scene_output.setter
+    def last_scene_output(self, value):
+        self.session_state.last_scene_output = value
+
+    @property
+    def last_dialogue_state_result(self):
+        return self.session_state.last_dialogue_state_result
+
+    @last_dialogue_state_result.setter
+    def last_dialogue_state_result(self, value):
+        self.session_state.last_dialogue_state_result = value
+
+    @property
+    def dialogue_state_runtime(self):
+        return self.session_state.dialogue_state_runtime
+
+    @dialogue_state_runtime.setter
+    def dialogue_state_runtime(self, value):
+        self.session_state.dialogue_state_runtime = value
+
+    @property
+    def base_prompt(self):
+        return self.session_state.base_prompt
+
+    @base_prompt.setter
+    def base_prompt(self, value):
+        self.session_state.base_prompt = value
+
+    @property
+    def scene_prompt_patch(self):
+        return self.session_state.scene_prompt_patch
+
+    @scene_prompt_patch.setter
+    def scene_prompt_patch(self, value):
+        self.session_state.scene_prompt_patch = value
+
+    @property
+    def dialogue_state_prompt_patch(self):
+        return self.session_state.dialogue_state_prompt_patch
+
+    @dialogue_state_prompt_patch.setter
+    def dialogue_state_prompt_patch(self, value):
+        self.session_state.dialogue_state_prompt_patch = value
+
+    @property
+    def response_plan_prompt_patch(self):
+        return self.session_state.response_plan_prompt_patch
+
+    @response_plan_prompt_patch.setter
+    def response_plan_prompt_patch(self, value):
+        self.session_state.response_plan_prompt_patch = value
+
+    @property
+    def last_response_plan(self):
+        return self.session_state.last_response_plan
+
+    @last_response_plan.setter
+    def last_response_plan(self, value):
+        self.session_state.last_response_plan = value
+
+    @property
+    def last_response_rewrite(self):
+        return self.session_state.last_response_rewrite
+
+    @last_response_rewrite.setter
+    def last_response_rewrite(self, value):
+        self.session_state.last_response_rewrite = value
 
     async def handle_connection(self, ws: websockets.ServerConnection):
         try:

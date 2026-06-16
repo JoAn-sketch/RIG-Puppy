@@ -3,6 +3,7 @@ import logging
 
 import websockets
 from config.logger import setup_logging
+from core.conversation_session_state import ConversationSessionStateRegistry
 
 
 class SuppressInvalidHandshakeFilter(logging.Filter):
@@ -44,6 +45,7 @@ class WebSocketServer:
         self.config = config
         self.logger = setup_logging()
         self.config_lock = asyncio.Lock()
+        self.session_state_registry = ConversationSessionStateRegistry()
         modules = initialize_modules(
             self.logger,
             self.config,
@@ -126,6 +128,9 @@ class WebSocketServer:
             self._memory,
             self._intent,
             self,  # 传入server实例
+            session_state=self.session_state_registry.get_or_create(
+                websocket.request.headers.get("device-id", "")
+            ),
         )
         try:
             await handler.handle_connection(websocket)

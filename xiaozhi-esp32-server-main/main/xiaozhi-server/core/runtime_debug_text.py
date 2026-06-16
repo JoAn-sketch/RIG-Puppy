@@ -9,6 +9,7 @@ import time
 from typing import Any, Dict, Optional
 
 from core.connection import ConnectionHandler
+from core.conversation_session_state import ConversationSessionStateRegistry
 from core.handle.textHandle import handleTextMessage
 from core.providers.tts.dto.dto import ContentType, SentenceType, TTSMessageDTO
 from config.logger import setup_logging
@@ -245,10 +246,11 @@ class DebugTextOnlyTTS:
 
 
 class RuntimeDebugTextSession:
-    def __init__(self, session_key: str, config: dict, server):
+    def __init__(self, session_key: str, config: dict, server, session_state_registry):
         self.session_key = session_key
         self.config = config
         self.server = server
+        self.session_state_registry = session_state_registry
         self.device_id = RUNTIME_DEBUG_DEVICE_ID
         self.client_id = f"kb-admin-client-{session_key[:12]}"
         self.transport = DebugRuntimeTransport()
@@ -276,6 +278,7 @@ class RuntimeDebugTextSession:
             self.server._memory,
             self.server._intent,
             self.server,
+            session_state=self.session_state_registry.get_or_create(self.device_id),
         )
         conn.loop = asyncio.get_running_loop()
         conn.headers = {
@@ -397,13 +400,25 @@ class RuntimeDebugTextSessionManager:
         self.server = server
         self.sessions: Dict[str, RuntimeDebugTextSession] = {}
         self.lock = asyncio.Lock()
+        if (
+            self.server is not None
+            and getattr(self.server, "session_state_registry", None) is not None
+        ):
+            self.session_state_registry = self.server.session_state_registry
+        else:
+            self.session_state_registry = ConversationSessionStateRegistry()
 
     async def get_session(self, session_key: str):
         async with self.lock:
             self._cleanup_stale_sessions_locked()
             session = self.sessions.get(session_key)
             if session is None:
-                session = RuntimeDebugTextSession(session_key, self.config, self.server)
+                session = RuntimeDebugTextSession(
+                    session_key,
+                    self.config,
+                    self.server,
+                    self.session_state_registry,
+                )
                 self.sessions[session_key] = session
             session.last_activity = time.time()
             return session
@@ -413,6 +428,7 @@ class RuntimeDebugTextSessionManager:
             session = self.sessions.pop(session_key, None)
         if session is not None:
             await session.close()
+        self.session_state_registry.reset(RUNTIME_DEBUG_DEVICE_ID)
 
     def _cleanup_stale_sessions_locked(self):
         now = time.time()
