@@ -2,17 +2,24 @@ import asyncio
 from aiohttp import web
 from config.logger import setup_logging
 from core.api.ota_handler import OTAHandler
+from core.api.runtime_debug_handler import RuntimeDebugHandler
 from core.api.vision_handler import VisionHandler
 
 TAG = __name__
 
 
 class SimpleHttpServer:
-    def __init__(self, config: dict):
+    def __init__(self, config: dict, runtime_server=None):
         self.config = config
         self.logger = setup_logging()
+        self.runtime_server = runtime_server
         self.ota_handler = OTAHandler(config)
         self.vision_handler = VisionHandler(config)
+        self.runtime_debug_handler = (
+            RuntimeDebugHandler(config, runtime_server)
+            if runtime_server is not None
+            else None
+        )
 
     def _get_websocket_url(self, local_ip: str, port: int) -> str:
         """获取websocket地址
@@ -74,6 +81,27 @@ class SimpleHttpServer:
                         ),
                     ]
                 )
+                if self.runtime_debug_handler is not None:
+                    app.add_routes(
+                        [
+                            web.post(
+                                "/debug/runtime/text/send",
+                                self.runtime_debug_handler.handle_send,
+                            ),
+                            web.post(
+                                "/debug/runtime/text/reset",
+                                self.runtime_debug_handler.handle_reset,
+                            ),
+                            web.options(
+                                "/debug/runtime/text/send",
+                                self.runtime_debug_handler.handle_options,
+                            ),
+                            web.options(
+                                "/debug/runtime/text/reset",
+                                self.runtime_debug_handler.handle_options,
+                            ),
+                        ]
+                    )
 
                 # 运行服务
                 runner = web.AppRunner(app)

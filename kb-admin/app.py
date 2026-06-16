@@ -4,10 +4,6 @@
 import os
 import json
 import time
-import asyncio
-import base64
-import hashlib
-import hmac
 import subprocess
 import shutil
 import sys
@@ -16,14 +12,9 @@ import threading
 import uuid
 from functools import wraps
 from datetime import datetime, timedelta
-from urllib.parse import quote
 from flask import Flask, request, jsonify, send_from_directory, send_file, Response
 import requests
 from app_messaging_patch import register_messaging_routes
-try:
-    import websockets
-except Exception:
-    websockets = None
 
 ZHIPU_API_KEY = os.environ.get("ZHIPU_API_KEY", "")
 ZHIPU_BASE = "https://open.bigmodel.cn/api/paas/v4"
@@ -45,6 +36,7 @@ DB_PASS = "123456"
 DINGYIGUO_AGENT_ID = "1822c2babf1b44cca6b25d0bdebc796f"
 XIAOZHI_DEBUG_WS_BASE = os.environ.get("XIAOZHI_DEBUG_WS_BASE", "ws://127.0.0.1:8000/xiaozhi/v1/")
 XIAOZHI_DEBUG_AUTH_SECRET = os.environ.get("XIAOZHI_DEBUG_AUTH_SECRET", "04219c19-8d5b-410c-84af-511faf293509")
+XIAOZHI_DEBUG_HTTP_BASE = os.environ.get("XIAOZHI_DEBUG_HTTP_BASE", "http://127.0.0.1:8003")
 XIAOZHI_DEBUG_DEVICE_ID = os.environ.get("XIAOZHI_DEBUG_DEVICE_ID", "E8:3D:C1:F5:49:B8")
 XIAOZHI_DEBUG_DEVICE_NAME = os.environ.get("XIAOZHI_DEBUG_DEVICE_NAME", "kb-admin-debug")
 ROBOT_DEBUG_SESSION_TTL_SECONDS = 1800
@@ -102,185 +94,41 @@ DIALOGUE_STATE_MANAGER = DialogueStateManager() if DialogueStateManager else Non
 
 class RobotRuntimeDebugSession:
     def __init__(self, session_key):
-        if websockets is None:
-            raise RuntimeError("websockets 依赖不可用，无法桥接机器人运行链路")
         self.session_key = session_key
-        self.device_id = XIAOZHI_DEBUG_DEVICE_ID
-        self.client_id = f"kb-admin-client-{session_key[:8]}"
-        self.device_name = XIAOZHI_DEBUG_DEVICE_NAME
-        self.ws_base = XIAOZHI_DEBUG_WS_BASE
+        self.http_base = XIAOZHI_DEBUG_HTTP_BASE.rstrip("/")
         self.last_activity = time.time()
         self.last_error = None
-        self.websocket = None
-        self.reader_task = None
-        self.hello_future = None
-        self.pending_response_future = None
-        self.pending_chunks = []
-        self.pending_llm_text = ""
-        self.latest_runtime_debug = {}
-        self.loop = asyncio.new_event_loop()
-        self.thread = threading.Thread(target=self._run_loop, daemon=True)
-        self.started = threading.Event()
         self.lock = threading.Lock()
-        self.thread.start()
-        if not self.started.wait(timeout=5):
-            raise RuntimeError("机器人调试会话启动超时")
-
-    def _run_loop(self):
-        asyncio.set_event_loop(self.loop)
-        self.started.set()
-        self.loop.run_forever()
-        pending = asyncio.all_tasks(self.loop)
-        for task in pending:
-            task.cancel()
-        if pending:
-            try:
-                self.loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
-            except Exception:
-                pass
-        self.loop.close()
-
-    def _ws_url(self):
-        token = self._generate_auth_token()
-        separator = "&" if "?" in self.ws_base else "?"
-        url = (
-            f"{self.ws_base}{separator}"
-            f"device-id={quote(self.device_id)}"
-            f"&client-id={quote(self.client_id)}"
-            f"&authorization={quote('Bearer ' + token)}"
-        )
-        if str(self.device_id).startswith("kb-admin-debug-"):
-            url += "&x-debug-bypass-bind=1"
-        return url
-
-    def _generate_auth_token(self):
-        ts = int(time.time())
-        content = f"{self.client_id}|{self.device_id}|{ts}"
-        sig = hmac.new(
-            XIAOZHI_DEBUG_AUTH_SECRET.encode("utf-8"),
-            content.encode("utf-8"),
-            hashlib.sha256,
-        ).digest()
-        signature = base64.urlsafe_b64encode(sig).decode("utf-8").rstrip("=")
-        return f"{signature}.{ts}"
-
-    async def _ensure_connected(self):
-        if self.websocket is not None and not getattr(self.websocket, "closed", False):
-            return
-        self.websocket = await websockets.connect(self._ws_url(), max_size=8_000_000)
-        self.hello_future = self.loop.create_future()
-        self.reader_task = asyncio.create_task(self._reader_loop())
-        await self.websocket.send(json.dumps({
-            "type": "hello",
-            "device_id": self.device_id,
-            "device_name": self.device_name,
-            "device_mac": self.device_id,
-            "token": "",
-            "features": {"mcp": False},
-        }))
-        await asyncio.wait_for(self.hello_future, timeout=5)
-
-    async def _reader_loop(self):
-        try:
-            async for raw_message in self.websocket:
-                if isinstance(raw_message, bytes):
-                    continue
-                try:
-                    message = json.loads(raw_message)
-                except json.JSONDecodeError:
-                    continue
-                message_type = message.get("type")
-                if message_type == "hello":
-                    if self.hello_future is not None and not self.hello_future.done():
-                        self.hello_future.set_result(message)
-                    continue
-                if message_type == "runtime_debug":
-                    self.latest_runtime_debug = {
-                        "stage": message.get("stage"),
-                        "scene": message.get("scene"),
-                        "dialogue_state": message.get("dialogue_state"),
-                        "response_plan": message.get("response_plan"),
-                        "response_rewrite": message.get("response_rewrite"),
-                    }
-                    continue
-                if message_type == "llm":
-                    llm_text = str(message.get("text") or "").strip()
-                    if llm_text:
-                        self.pending_llm_text = llm_text
-                    continue
-                if message_type != "tts":
-                    continue
-                state = message.get("state")
-                if state == "sentence_start":
-                    chunk_text = str(message.get("text") or "").strip()
-                    if chunk_text:
-                        self.pending_chunks.append(chunk_text)
-                elif state == "stop":
-                    if self.pending_response_future is not None and not self.pending_response_future.done():
-                        reply_text = "\n".join(part for part in self.pending_chunks if part).strip()
-                        if not reply_text:
-                            reply_text = self.pending_llm_text
-                        self.pending_response_future.set_result({
-                            "reply": reply_text.strip(),
-                            "runtime_debug": dict(self.latest_runtime_debug or {}),
-                        })
-        except Exception as e:
-            self.last_error = str(e)
-            if self.hello_future is not None and not self.hello_future.done():
-                self.hello_future.set_exception(RuntimeError(self.last_error))
-            if self.pending_response_future is not None and not self.pending_response_future.done():
-                self.pending_response_future.set_exception(RuntimeError(self.last_error))
-        finally:
-            self.websocket = None
-
-    async def _send_turn_async(self, text, timeout_seconds):
-        await self._ensure_connected()
-        if self.pending_response_future is not None and not self.pending_response_future.done():
-            raise RuntimeError("上一轮回复仍未完成，请稍后再试")
-        self.pending_chunks = []
-        self.pending_llm_text = ""
-        self.latest_runtime_debug = {}
-        self.pending_response_future = self.loop.create_future()
-        await self.websocket.send(json.dumps({
-            "type": "listen",
-            "state": "detect",
-            "mode": "auto",
-            "text": text,
-        }))
-        result = await asyncio.wait_for(self.pending_response_future, timeout=timeout_seconds)
-        self.pending_response_future = None
-        self.last_activity = time.time()
-        return result
 
     def send_turn(self, text, timeout_seconds=90):
         with self.lock:
-            future = asyncio.run_coroutine_threadsafe(
-                self._send_turn_async(text, timeout_seconds),
-                self.loop,
+            response = requests.post(
+                f"{self.http_base}/debug/runtime/text/send",
+                json={
+                    "session_key": self.session_key,
+                    "text": text,
+                    "timeout_seconds": timeout_seconds,
+                },
+                headers={"x-debug-token": XIAOZHI_DEBUG_AUTH_SECRET},
+                timeout=timeout_seconds + 5,
             )
-            return future.result(timeout=timeout_seconds + 5)
-
-    async def _close_async(self):
-        if self.reader_task is not None:
-            self.reader_task.cancel()
-            try:
-                await self.reader_task
-            except BaseException:
-                pass
-            self.reader_task = None
-        if self.websocket is not None and not getattr(self.websocket, "closed", False):
-            await self.websocket.close()
-        self.websocket = None
+            body = response.json()
+            if not response.ok or body.get("error"):
+                raise RuntimeError(body.get("error") or f"HTTP {response.status_code}")
+            self.last_activity = time.time()
+            return body
 
     def close(self):
         with self.lock:
             try:
-                future = asyncio.run_coroutine_threadsafe(self._close_async(), self.loop)
-                future.result(timeout=5)
+                requests.post(
+                    f"{self.http_base}/debug/runtime/text/reset",
+                    json={"session_key": self.session_key},
+                    headers={"x-debug-token": XIAOZHI_DEBUG_AUTH_SECRET},
+                    timeout=5,
+                )
             except Exception:
                 pass
-            self.loop.call_soon_threadsafe(self.loop.stop)
-        self.thread.join(timeout=5)
 
 
 def _cleanup_robot_debug_sessions():
@@ -2191,8 +2039,8 @@ def api_dingyi_chat_config():
             "has_api_key": bool((cfg.get("api_key") or "").strip()),
             "system_prompt": binding.get("system_prompt") or "",
             "summary_memory": binding.get("summary_memory") or "",
-            "runtime_mode": "xiaozhi_server_ws_bridge",
-            "runtime_ws_base": XIAOZHI_DEBUG_WS_BASE,
+            "runtime_mode": "xiaozhi_server_text_runtime",
+            "runtime_ws_base": XIAOZHI_DEBUG_HTTP_BASE,
             "runtime_device_id": XIAOZHI_DEBUG_DEVICE_ID,
         })
     except Exception as e:
@@ -2215,24 +2063,20 @@ def api_dingyi_chat_send():
 
     try:
         binding = _load_dingyiguo_llm_binding()
-        estimated_scene = _route_scene_for_text(user_text, history)
-        estimated_dialogue_state = _resolve_dialogue_state_for_text(user_text, history, estimated_scene)
         runtime_session = _get_robot_debug_session(session_key)
         result = runtime_session.send_turn(user_text)
         runtime_debug = result.get("runtime_debug") or {}
-        scene = runtime_debug.get("scene") or estimated_scene
-        dialogue_state = runtime_debug.get("dialogue_state") or estimated_dialogue_state
         return jsonify({
             "ok": True,
             "reply": result["reply"],
             "model": "xiaozhi_server_runtime",
             "usage": {},
             "agent_name": binding["agent_name"],
-            "scene": scene,
-            "dialogue_state": dialogue_state,
+            "scene": runtime_debug.get("scene"),
+            "dialogue_state": runtime_debug.get("dialogue_state"),
             "response_plan": runtime_debug.get("response_plan"),
             "response_rewrite": runtime_debug.get("response_rewrite"),
-            "debug_source": "runtime" if runtime_debug else "estimated",
+            "debug_source": "runtime",
             "runtime_session_key": session_key,
         })
     except Exception as e:
