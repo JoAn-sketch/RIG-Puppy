@@ -93,8 +93,9 @@ DIALOGUE_STATE_MANAGER = DialogueStateManager() if DialogueStateManager else Non
 
 
 class RobotRuntimeDebugSession:
-    def __init__(self, session_key):
+    def __init__(self, session_key, device_id=None):
         self.session_key = session_key
+        self.device_id = (device_id or XIAOZHI_DEBUG_DEVICE_ID).strip() or XIAOZHI_DEBUG_DEVICE_ID
         self.http_base = XIAOZHI_DEBUG_HTTP_BASE.rstrip("/")
         self.last_activity = time.time()
         self.last_error = None
@@ -106,6 +107,7 @@ class RobotRuntimeDebugSession:
                 f"{self.http_base}/debug/runtime/text/send",
                 json={
                     "session_key": self.session_key,
+                    "device_id": self.device_id,
                     "text": text,
                     "timeout_seconds": timeout_seconds,
                 },
@@ -123,7 +125,7 @@ class RobotRuntimeDebugSession:
             try:
                 requests.post(
                     f"{self.http_base}/debug/runtime/text/reset",
-                    json={"session_key": self.session_key},
+                    json={"session_key": self.session_key, "device_id": self.device_id},
                     headers={"x-debug-token": XIAOZHI_DEBUG_AUTH_SECRET},
                     timeout=5,
                 )
@@ -146,24 +148,30 @@ def _cleanup_robot_debug_sessions():
             pass
 
 
-def _get_robot_debug_session(session_key):
+def _get_robot_debug_session(session_key, device_id=None):
     if not session_key:
         raise RuntimeError("session_key required")
     _cleanup_robot_debug_sessions()
+    normalized_device_id = (device_id or XIAOZHI_DEBUG_DEVICE_ID).strip() or XIAOZHI_DEBUG_DEVICE_ID
+    registry_key = f"{normalized_device_id}::{session_key}"
     with ROBOT_DEBUG_SESSIONS_LOCK:
-        session = ROBOT_DEBUG_SESSIONS.get(session_key)
+        session = ROBOT_DEBUG_SESSIONS.get(registry_key)
         if session is None:
-            session = RobotRuntimeDebugSession(session_key)
-            ROBOT_DEBUG_SESSIONS[session_key] = session
+            session = RobotRuntimeDebugSession(session_key, normalized_device_id)
+            ROBOT_DEBUG_SESSIONS[registry_key] = session
+        else:
+            session.device_id = normalized_device_id
         session.last_activity = time.time()
         return session
 
 
-def _reset_robot_debug_session(session_key):
+def _reset_robot_debug_session(session_key, device_id=None):
     if not session_key:
         return
+    normalized_device_id = (device_id or XIAOZHI_DEBUG_DEVICE_ID).strip() or XIAOZHI_DEBUG_DEVICE_ID
+    registry_key = f"{normalized_device_id}::{session_key}"
     with ROBOT_DEBUG_SESSIONS_LOCK:
-        session = ROBOT_DEBUG_SESSIONS.pop(session_key, None)
+        session = ROBOT_DEBUG_SESSIONS.pop(registry_key, None)
     if session is not None:
         try:
             session.close()
@@ -1179,63 +1187,6 @@ def api_actions_test():
         seq = seq[:2]
     return jsonify({"message": f"将执行序列: {' -> '.join(seq)}", "sequence": seq, "group": group, "intensity": intensity})
 
-
-
-# ========== 备忘录 ==========
-
-@app.route("/memo")
-@requires_auth
-def memo_page():
-    return send_from_directory("static", "memo.html")
-
-
-@app.route("/api/memo")
-@requires_auth
-def api_memo_list():
-    agent_id = request.args.get("agent_id", "1822c2babf1b44cca6b25d0bdebc796f")
-    agent_id = agent_id.replace("'", "")
-    try:
-        rows = mysql_query(
-            f"SELECT id, title, content, created_at, updated_at FROM rl_memo "
-            f"WHERE agent_id='{agent_id}' ORDER BY created_at DESC"
-        )
-        return jsonify(rows)
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-
-@app.route("/api/memo", methods=["POST"])
-@requires_auth
-def api_memo_create():
-    data = request.get_json(force=True)
-    agent_id = data.get("agent_id", "1822c2babf1b44cca6b25d0bdebc796f").replace("'", "")
-    title = data.get("title", "").replace("'", "'")
-    content = data.get("content", "").replace("'", "'")
-    if not title:
-        return jsonify({"error": "title 必填"}), 400
-    try:
-        mysql_exec(
-            f"INSERT INTO rl_memo (agent_id, title, content) VALUES ('{agent_id}', '{title}', '{content}')"
-        )
-        rows = mysql_query("SELECT LAST_INSERT_ID() as id")
-        new_id = rows[0]["id"] if rows else "?"
-        return jsonify({"ok": True, "id": new_id})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-
-@app.route("/api/memo/<int:memo_id>", methods=["DELETE"])
-@requires_auth
-def api_memo_delete(memo_id):
-    agent_id = request.args.get("agent_id", "1822c2babf1b44cca6b25d0bdebc796f").replace("'", "")
-    try:
-        mysql_exec(f"DELETE FROM rl_memo WHERE id={memo_id} AND agent_id='{agent_id}'")
-        return jsonify({"ok": True})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-
-
 # ========== LLM 调用日志 ==========
 
 @app.route("/llm-logs")
@@ -2039,7 +1990,7 @@ def api_dingyi_chat_config():
             "has_api_key": bool((cfg.get("api_key") or "").strip()),
             "system_prompt": binding.get("system_prompt") or "",
             "summary_memory": binding.get("summary_memory") or "",
-            "runtime_mode": "xiaozhi_server_text_runtime",
+            "runtime_mode": "shared_live_or_text_fallback",
             "runtime_ws_base": XIAOZHI_DEBUG_HTTP_BASE,
             "runtime_device_id": XIAOZHI_DEBUG_DEVICE_ID,
         })
@@ -2054,6 +2005,7 @@ def api_dingyi_chat_send():
     user_text = (data.get("text") or "").strip()
     history = data.get("history") or []
     session_key = (data.get("session_key") or "").strip()
+    device_id = (data.get("device_id") or "").strip() or XIAOZHI_DEBUG_DEVICE_ID
     if not user_text:
         return jsonify({"error": "text required"}), 400
     if not isinstance(history, list):
@@ -2063,7 +2015,7 @@ def api_dingyi_chat_send():
 
     try:
         binding = _load_dingyiguo_llm_binding()
-        runtime_session = _get_robot_debug_session(session_key)
+        runtime_session = _get_robot_debug_session(session_key, device_id=device_id)
         result = runtime_session.send_turn(user_text)
         runtime_debug = result.get("runtime_debug") or {}
         return jsonify({
@@ -2077,7 +2029,9 @@ def api_dingyi_chat_send():
             "response_plan": runtime_debug.get("response_plan"),
             "response_rewrite": runtime_debug.get("response_rewrite"),
             "debug_source": "runtime",
+            "runtime_mode": result.get("mode") or "unknown",
             "runtime_session_key": session_key,
+            "runtime_device_id": result.get("device_id") or device_id,
         })
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -2088,9 +2042,10 @@ def api_dingyi_chat_send():
 def api_dingyi_chat_reset():
     data = request.get_json(silent=True) or {}
     session_key = (data.get("session_key") or "").strip()
+    device_id = (data.get("device_id") or "").strip() or XIAOZHI_DEBUG_DEVICE_ID
     if not session_key:
         return jsonify({"error": "session_key required"}), 400
-    _reset_robot_debug_session(session_key)
+    _reset_robot_debug_session(session_key, device_id=device_id)
     return jsonify({"ok": True})
 
 

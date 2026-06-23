@@ -25,6 +25,7 @@ from core.utils.modules_initialize import (
     initialize_tts,
     initialize_asr,
 )
+from core.utils import llm as llm_utils, intent as intent_utils, memory as memory_utils
 from core.handle.reportHandle import report, enqueue_tool_report
 from core.providers.tts.default import DefaultTTS
 from concurrent.futures import ThreadPoolExecutor
@@ -204,6 +205,8 @@ class ConnectionHandler:
 
         # 初始化提示词管理器
         self.prompt_manager = PromptManager(self.config, self.logger)
+        self.turn_lock = asyncio.Lock()
+        self._runtime_result_hook = None
 
     @property
     def dialogue(self):
@@ -323,6 +326,8 @@ class ConnectionHandler:
 
             # 认证通过,继续处理
             self.websocket = ws
+            if self.server is not None and getattr(self.server, "live_connection_registry", None) is not None:
+                self.server.live_connection_registry.register(self)
 
             # 检查是否来自MQTT连接
             request_path = ws.request.path
@@ -442,38 +447,38 @@ class ConnectionHandler:
 
     async def _route_message(self, message):
         """消息路由"""
-        # 检查是否已经获取到真实的绑定状态
-        if not self.bind_completed_event.is_set():
-            # 还没有获取到真实状态，等待直到获取到真实状态或超时
-            try:
-                await asyncio.wait_for(self.bind_completed_event.wait(), timeout=1)
-            except asyncio.TimeoutError:
-                # 超时仍未获取到真实状态，丢弃消息
+        async with self.turn_lock:
+            # 检查是否已经获取到真实的绑定状态
+            if not self.bind_completed_event.is_set():
+                # 还没有获取到真实状态，等待直到获取到真实状态或超时
+                try:
+                    await asyncio.wait_for(self.bind_completed_event.wait(), timeout=1)
+                except asyncio.TimeoutError:
+                    # 超时仍未获取到真实状态，丢弃消息
+                    await self._discard_message_with_bind_prompt()
+                    return
+
+            # 已经获取到真实状态，检查是否需要绑定
+            if self.need_bind:
+                # 需要绑定，丢弃消息
                 await self._discard_message_with_bind_prompt()
                 return
 
-        # 已经获取到真实状态，检查是否需要绑定
-        if self.need_bind:
-            # 需要绑定，丢弃消息
-            await self._discard_message_with_bind_prompt()
-            return
-
-        # 不需要绑定，继续处理消息
-
-        if isinstance(message, str):
-            await handleTextMessage(self, message)
-        elif isinstance(message, bytes):
-            if self.vad is None or self.asr is None:
-                return
-
-            # 处理来自MQTT网关的音频包
-            if self.conn_from_mqtt_gateway and len(message) >= 16:
-                handled = await self._process_mqtt_audio_message(message)
-                if handled:
+            # 不需要绑定，继续处理消息
+            if isinstance(message, str):
+                await handleTextMessage(self, message)
+            elif isinstance(message, bytes):
+                if self.vad is None or self.asr is None:
                     return
 
-            # 不需要头部处理或没有头部时，直接处理原始消息
-            self.asr_audio_queue.put(message)
+                # 处理来自MQTT网关的音频包
+                if self.conn_from_mqtt_gateway and len(message) >= 16:
+                    handled = await self._process_mqtt_audio_message(message)
+                    if handled:
+                        return
+
+                # 不需要头部处理或没有头部时，直接处理原始消息
+                self.asr_audio_queue.put(message)
 
     async def _process_mqtt_audio_message(self, message):
         """
@@ -626,6 +631,7 @@ class ConnectionHandler:
                 self.asr.open_audio_channels(self), self.loop
             )
 
+            self._ensure_runtime_backends()
             """加载记忆"""
             self._initialize_memory()
             """加载意图识别"""
@@ -823,6 +829,45 @@ class ConnectionHandler:
             asr = initialize_asr(self.config)
 
         return asr
+
+    def _ensure_runtime_backends(self):
+        if self.llm is None:
+            select_llm_module = self.config["selected_module"]["LLM"]
+            llm_type = self.config["LLM"][select_llm_module].get(
+                "type", select_llm_module
+            )
+            self.llm = llm_utils.create_instance(
+                llm_type,
+                self.config["LLM"][select_llm_module],
+            )
+            self.logger.bind(tag=TAG).info(f"连接期懒加载LLM: {select_llm_module}")
+
+        if self.memory is None:
+            select_memory_module = self.config["selected_module"]["Memory"]
+            memory_type = self.config["Memory"][select_memory_module].get(
+                "type", select_memory_module
+            )
+            self.memory = memory_utils.create_instance(
+                memory_type,
+                self.config["Memory"][select_memory_module],
+                self.config.get("summaryMemory", None),
+            )
+            self.logger.bind(tag=TAG).info(
+                f"连接期懒加载Memory: {select_memory_module}"
+            )
+
+        if self.intent is None:
+            select_intent_module = self.config["selected_module"]["Intent"]
+            intent_type = self.config["Intent"][select_intent_module].get(
+                "type", select_intent_module
+            )
+            self.intent = intent_utils.create_instance(
+                intent_type,
+                self.config["Intent"][select_intent_module],
+            )
+            self.logger.bind(tag=TAG).info(
+                f"连接期懒加载Intent: {select_intent_module}"
+            )
 
     def _initialize_voiceprint(self):
         """为当前连接初始化声纹识别"""
@@ -1122,7 +1167,49 @@ class ConnectionHandler:
         )
         if self.last_dialogue_state_result is not None:
             self.last_dialogue_state_result.state = self.dialogue_state_runtime
+        if self._runtime_result_hook is not None:
+            try:
+                self._runtime_result_hook(
+                    str(reply_text or "").strip(),
+                    self._build_runtime_debug_payload(),
+                    self.loop,
+                )
+            except Exception as e:
+                self.logger.bind(tag=TAG).warning(f"runtime result hook failed: {e}")
         self._publish_runtime_debug("post_reply")
+
+    async def run_text_turn(self, text: str):
+        payload = json.dumps(
+            {
+                "type": "listen",
+                "state": "detect",
+                "mode": "auto",
+                "text": text,
+            },
+            ensure_ascii=False,
+        )
+        await handleTextMessage(self, payload)
+
+    def reset_runtime_session(self):
+        self.reset_audio_states()
+        self.clear_queues()
+        self.client_abort = False
+        self.client_is_speaking = False
+        self.client_have_voice = False
+        self.client_voice_stop = False
+        self.sentence_id = None
+        self.last_scene_output = None
+        self.last_dialogue_state_result = None
+        self.dialogue_state_runtime = None
+        self.scene_prompt_patch = ""
+        self.dialogue_state_prompt_patch = ""
+        self.response_plan_prompt_patch = ""
+        self.last_response_plan = None
+        self.last_response_rewrite = None
+        self.dialogue = Dialogue()
+        if self.base_prompt:
+            self._refresh_runtime_prompt()
+        self.last_activity_time = time.time() * 1000
 
     def _refresh_response_plan(self):
         if self.last_scene_output is None or self.last_dialogue_state_result is None:
@@ -1814,6 +1901,8 @@ class ConnectionHandler:
     async def close(self, ws=None):
         """资源清理方法"""
         try:
+            if self.server is not None and getattr(self.server, "live_connection_registry", None) is not None:
+                self.server.live_connection_registry.unregister(self)
             # 清理 VAD 连接资源
             if (
                     hasattr(self, "vad")

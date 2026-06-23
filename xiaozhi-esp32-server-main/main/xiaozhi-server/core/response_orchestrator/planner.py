@@ -33,12 +33,15 @@ class ResponsePlan:
 def build_response_plan(scene_output, dialogue_state_result) -> ResponsePlan:
     control = getattr(dialogue_state_result, "control", None)
     state = getattr(dialogue_state_result, "state", {}) or {}
+    child_profile = state.get("child_profile", {}) or {}
+    age_group = child_profile.get("age_group", "6-8")
+    concept_budget = int(child_profile.get("concept_budget") or 1)
     if control is None:
         return ResponsePlan(
             primary_action="answer_only",
             content_blocks=["core_answer"],
             sentence_budget=2,
-            concept_budget=1,
+            concept_budget=concept_budget,
             ask_followup=False,
             allow_summary=False,
             stop_after_answer=True,
@@ -62,7 +65,7 @@ def build_response_plan(scene_output, dialogue_state_result) -> ResponsePlan:
         current_phase,
         proactive_followup=proactive_followup,
     )
-    sentence_budget = max(1, min(int(getattr(control, "max_reply_sentences", 2) or 2), 2))
+    sentence_budget = max(1, int(getattr(control, "max_reply_sentences", 2) or 2))
     if current_scene == "safety_risk":
         sentence_budget = min(sentence_budget, 2)
     elif current_scene in {"system_repair", "relationship_building"}:
@@ -75,6 +78,11 @@ def build_response_plan(scene_output, dialogue_state_result) -> ResponsePlan:
     } and bool(
         getattr(control, "should_ask_followup", False) or proactive_followup
     )
+    if age_group == "3-5":
+        ask_followup = False
+        sentence_budget = 1
+    elif age_group == "9-11":
+        sentence_budget = max(sentence_budget, 3)
 
     if interaction_protocol == "child_explore_v1":
         return _build_child_explore_plan(
@@ -83,21 +91,24 @@ def build_response_plan(scene_output, dialogue_state_result) -> ResponsePlan:
             protocol_mode=protocol_mode,
             protocol_stage=protocol_stage,
             state=state,
+            sentence_budget=sentence_budget,
+            concept_budget=concept_budget,
+            age_group=age_group,
         )
 
     return ResponsePlan(
         primary_action=primary_action,
         content_blocks=_resolve_content_blocks(primary_action),
         sentence_budget=sentence_budget,
-        concept_budget=1,
+        concept_budget=concept_budget,
         ask_followup=ask_followup,
-        allow_summary=_allow_summary(primary_action, current_scene),
+        allow_summary=_allow_summary(primary_action, current_scene, age_group),
         stop_after_answer=primary_action not in {
             "ask_one_clarify",
             "offer_choice",
             "answer_then_invite",
         },
-        style_tags=_resolve_style_tags(current_scene, primary_action),
+        style_tags=_resolve_style_tags(current_scene, primary_action, age_group),
         forbidden_patterns=_default_forbidden_patterns(primary_action),
         interaction_protocol=interaction_protocol,
         protocol_mode=protocol_mode,
@@ -136,6 +147,9 @@ def _build_child_explore_plan(
     protocol_mode: str,
     protocol_stage: str,
     state,
+    sentence_budget: int,
+    concept_budget: int,
+    age_group: str,
 ) -> ResponsePlan:
     scene_state = (state or {}).get("scene_state", {})
     scene_turn_count = int(scene_state.get("scene_turn_count") or 0)
@@ -146,8 +160,8 @@ def _build_child_explore_plan(
     optional_blocks: List[str] = []
     allow_question = False
     ask_followup = False
-    sentence_budget = 2
-    style_tags = ["child_friendly", "spoken", "brief", "explore_protocol"]
+    sentence_budget = max(1, sentence_budget)
+    style_tags = ["child_friendly", "spoken", "brief", "explore_protocol", f"age_{age_group}"]
     forbidden_patterns = _default_forbidden_patterns()
 
     if protocol_stage == "ack_then_micro_answer":
@@ -165,14 +179,14 @@ def _build_child_explore_plan(
         required_blocks = ["micro_answer"]
         optional_blocks = ["pause"]
 
-    if current_scene == "learning_support":
-        style_tags.append("coach_like")
-        if current_phase in {"child_try", "next_step_or_close"}:
-            primary_action = "micro_answer_then_invite"
-            required_blocks = ["ack", "micro_answer"]
-            optional_blocks = ["pause", "invite_optional"]
-            allow_question = True
-            ask_followup = True
+        if current_scene == "learning_support":
+            style_tags.append("coach_like")
+            if current_phase in {"child_try", "next_step_or_close"}:
+                primary_action = "micro_answer_then_invite"
+                required_blocks = ["ack", "micro_answer"]
+                optional_blocks = ["pause", "invite_optional"]
+                allow_question = True
+                ask_followup = True
     elif current_scene == "emotion_support":
         style_tags.append("gentle")
         allow_question = False if first_scene_turn else allow_question
@@ -180,11 +194,18 @@ def _build_child_explore_plan(
         style_tags.append("playful")
         sentence_budget = 2
 
+    if age_group == "3-5":
+        sentence_budget = 1
+        allow_question = False
+        ask_followup = False
+    elif age_group == "9-11":
+        sentence_budget = max(sentence_budget, 3)
+
     return ResponsePlan(
         primary_action=primary_action,
         content_blocks=_resolve_content_blocks(primary_action),
         sentence_budget=sentence_budget,
-        concept_budget=1,
+        concept_budget=concept_budget,
         ask_followup=ask_followup,
         allow_summary=False,
         stop_after_answer=not allow_question,
@@ -269,12 +290,15 @@ def _resolve_content_blocks(primary_action: str) -> List[str]:
     }.get(primary_action, ["core_answer"])
 
 
-def _allow_summary(primary_action: str, current_scene: str) -> bool:
-    return primary_action == "safe_direct" and current_scene == "safety_risk"
+def _allow_summary(primary_action: str, current_scene: str, age_group: str) -> bool:
+    if primary_action == "safe_direct" and current_scene == "safety_risk":
+        return True
+    return age_group == "9-11" and current_scene in {"curiosity", "learning_support"}
 
 
-def _resolve_style_tags(current_scene: str, primary_action: str) -> List[str]:
+def _resolve_style_tags(current_scene: str, primary_action: str, age_group: str) -> List[str]:
     tags = ["child_friendly", "spoken", "brief"]
+    tags.append(f"age_{age_group}")
     if current_scene == "emotion_support":
         tags.append("gentle")
     if current_scene == "play_interaction":

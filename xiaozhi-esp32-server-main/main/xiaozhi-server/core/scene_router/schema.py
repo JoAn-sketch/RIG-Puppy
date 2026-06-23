@@ -4,6 +4,9 @@ from typing import List, Optional
 
 @dataclass
 class ChildProfile:
+    nickname: str = ""
+    age: Optional[int] = None
+    age_group: str = "6-8"
     age_band: str = "6-8"
 
 

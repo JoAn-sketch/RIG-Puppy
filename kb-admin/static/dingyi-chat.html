@@ -75,7 +75,6 @@ button:disabled { opacity:.5; cursor:not-allowed; }
     <a href="/portrait">🧑 画像</a>
     <a href="/mood">😊 情绪</a>
     <a href="/actions">🐕 动作</a>
-    <a href="/memo">📝 备忘录</a>
     <a href="/llm-logs" style="color:#60a5fa">🔍 LLM日志</a>
     <a href="/debug">🔧 调试</a>
     <a href="/settings">⚙️ 设置</a>
@@ -120,6 +119,8 @@ button:disabled { opacity:.5; cursor:not-allowed; }
 let history = [];
 let sending = false;
 let sessionKey = createSessionKey();
+let runtimeDeviceId = '';
+let currentRuntimeMode = '';
 
 function createSessionKey() {
   if (window.crypto && typeof window.crypto.randomUUID === 'function') {
@@ -141,6 +142,7 @@ function toast(msg, isError) {
 }
 
 function renderMeta(data) {
+  runtimeDeviceId = String(data.runtime_device_id || '').trim();
   const meta = document.getElementById("meta");
   meta.innerHTML = `
     <div class="meta-item"><div class="label">Agent</div><div class="value">${esc(data.agent_name)}<br><span class="muted">${esc(data.agent_id)}</span></div></div>
@@ -149,6 +151,7 @@ function renderMeta(data) {
     <div class="meta-item"><div class="label">Base URL</div><div class="value">${esc(data.base_url || "-")}</div></div>
     <div class="meta-item"><div class="label">API Key</div><div class="value">${data.has_api_key ? "已配置" : "未配置"}</div></div>
     <div class="meta-item"><div class="label">运行链路</div><div class="value">${esc(data.runtime_mode || "-")}<br><span class="muted">${esc(data.runtime_ws_base || "-")}</span></div></div>
+    <div class="meta-item"><div class="label">目标设备</div><div class="value">${esc(runtimeDeviceId || "-")}</div></div>
     <div class="meta-item"><div class="label">System Prompt</div><div class="value">${esc((data.system_prompt || "").slice(0, 400) || "-")}${(data.system_prompt || "").length > 400 ? "\\n..." : ""}</div></div>
   `;
 }
@@ -267,7 +270,7 @@ async function clearChat() {
     await fetch('/api/dingyi-chat/reset', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ session_key: oldSessionKey })
+      body: JSON.stringify({ session_key: oldSessionKey, device_id: runtimeDeviceId })
     });
   } catch (e) {
     console.warn('reset session failed', e);
@@ -290,7 +293,7 @@ async function sendMessage() {
     const res = await fetch('/api/dingyi-chat/send', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text, history: history.slice(0, -1), session_key: sessionKey })
+      body: JSON.stringify({ text, history: history.slice(0, -1), session_key: sessionKey, device_id: runtimeDeviceId })
     });
     const data = await res.json();
     if (!res.ok || data.error) throw new Error(data.error || ('HTTP ' + res.status));
@@ -298,14 +301,21 @@ async function sendMessage() {
     history[history.length - 1].dialogue_state = data.dialogue_state || null;
     history[history.length - 1].response_plan = data.response_plan || null;
     history[history.length - 1].debug_source = data.debug_source || null;
+    currentRuntimeMode = String(data.runtime_mode || '').trim();
     history.push({
       role: 'assistant',
       content: data.reply || '(空回复)',
       response_rewrite: data.response_rewrite || null
     });
     document.getElementById('usageText').textContent =
-      `链路: ${data.model || '-'} · debug: ${data.debug_source || '-'}${data.usage && data.usage.total_tokens ? ' · total_tokens: ' + data.usage.total_tokens : ''}`;
+      `链路: ${data.model || '-'} · mode: ${currentRuntimeMode || '-'} · debug: ${data.debug_source || '-'}${data.usage && data.usage.total_tokens ? ' · total_tokens: ' + data.usage.total_tokens : ''}`;
     renderChat();
+    toast(
+      currentRuntimeMode === 'live'
+        ? '当前使用机器人在线 live runtime'
+        : '机器人离线，已降级到 text-only runtime',
+      false
+    );
   } catch (e) {
     history.push({ role: 'assistant', content: '请求失败：' + String(e) });
     renderChat();

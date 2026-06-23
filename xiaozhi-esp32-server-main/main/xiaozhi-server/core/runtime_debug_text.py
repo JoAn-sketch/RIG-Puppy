@@ -1,6 +1,5 @@
 import asyncio
 import copy
-import concurrent.futures
 import json
 import os
 import queue
@@ -8,11 +7,13 @@ import threading
 import time
 from typing import Any, Dict, Optional
 
+from config.logger import setup_logging
+from config.config_loader import get_private_config_from_api
 from core.connection import ConnectionHandler
 from core.conversation_session_state import ConversationSessionStateRegistry
-from core.handle.textHandle import handleTextMessage
 from core.providers.tts.dto.dto import ContentType, SentenceType, TTSMessageDTO
-from config.logger import setup_logging
+from core.utils.modules_initialize import initialize_modules
+from core.utils.util import check_asr_update, check_vad_update
 
 TAG = __name__
 logger = setup_logging()
@@ -25,6 +26,10 @@ RUNTIME_DEBUG_DEVICE_ID = os.environ.get(
     "XIAOZHI_DEBUG_DEVICE_ID",
     "E8:3D:C1:F5:49:B8",
 )
+
+
+class NoLiveRuntimeConnectionError(RuntimeError):
+    pass
 
 
 class DebugRuntimeTransport:
@@ -59,9 +64,7 @@ class DebugRuntimeTransport:
         return result
 
     async def send(self, payload):
-        if self.closed:
-            return
-        if isinstance(payload, bytes):
+        if self.closed or isinstance(payload, bytes):
             return
         try:
             message = json.loads(payload)
@@ -246,37 +249,101 @@ class DebugTextOnlyTTS:
 
 
 class RuntimeDebugTextSession:
-    def __init__(self, session_key: str, config: dict, server, session_state_registry):
+    def __init__(
+        self,
+        session_key: str,
+        config: dict,
+        server,
+        session_state_registry,
+        device_id: Optional[str] = None,
+    ):
         self.session_key = session_key
         self.config = config
         self.server = server
         self.session_state_registry = session_state_registry
-        self.device_id = RUNTIME_DEBUG_DEVICE_ID
+        self.device_id = self._normalize_device_id(device_id or RUNTIME_DEBUG_DEVICE_ID)
         self.client_id = f"kb-admin-client-{session_key[:12]}"
         self.transport = DebugRuntimeTransport()
-        self.conn: Optional[ConnectionHandler] = None
         self.lock = asyncio.Lock()
         self.last_activity = time.time()
-        self.initialized = False
+        self.text_only_conn: Optional[ConnectionHandler] = None
 
-    async def _initialize(self):
-        if (
-            self.initialized
-            and self.conn is not None
-            and not self.transport.closed
-            and not self.conn.stop_event.is_set()
-            and self.conn.executor is not None
-        ):
-            return
-        self.transport = DebugRuntimeTransport()
+    def _normalize_device_id(self, device_id: Optional[str]) -> str:
+        normalized = str(device_id or "").strip().lower()
+        return normalized or str(RUNTIME_DEBUG_DEVICE_ID).strip().lower()
 
+    def _resolve_live_connection(self):
+        registry = getattr(self.server, "live_connection_registry", None) if self.server is not None else None
+        if registry is None:
+            return None
+        return registry.get_by_device_id(self.device_id)
+
+    async def _ensure_text_only_connection(self) -> ConnectionHandler:
+        if self.text_only_conn is not None:
+            return self.text_only_conn
+
+        conn_config = copy.deepcopy(self.config)
+        private_config = {}
+        try:
+            private_config = await get_private_config_from_api(
+                conn_config,
+                self.device_id,
+                self.client_id,
+            ) or {}
+        except Exception as e:
+            logger.bind(tag=TAG).warning(f"text-only fallback private config unavailable: {e}")
+
+        init_llm = init_tts = init_memory = init_intent = False
+        init_vad = check_vad_update(conn_config, private_config)
+        init_asr = check_asr_update(conn_config, private_config)
+        if init_vad:
+            conn_config["VAD"] = private_config["VAD"]
+            conn_config["selected_module"]["VAD"] = private_config["selected_module"]["VAD"]
+        if init_asr:
+            conn_config["ASR"] = private_config["ASR"]
+            conn_config["selected_module"]["ASR"] = private_config["selected_module"]["ASR"]
+        if private_config.get("TTS") is not None:
+            init_tts = True
+            conn_config["TTS"] = private_config["TTS"]
+            conn_config["selected_module"]["TTS"] = private_config["selected_module"]["TTS"]
+        if private_config.get("LLM") is not None:
+            init_llm = True
+            conn_config["LLM"] = private_config["LLM"]
+            conn_config["selected_module"]["LLM"] = private_config["selected_module"]["LLM"]
+        if private_config.get("Memory") is not None:
+            init_memory = True
+            conn_config["Memory"] = private_config["Memory"]
+            conn_config["selected_module"]["Memory"] = private_config["selected_module"]["Memory"]
+        if private_config.get("Intent") is not None:
+            init_intent = True
+            conn_config["Intent"] = private_config["Intent"]
+            conn_config["selected_module"]["Intent"] = private_config["selected_module"]["Intent"]
+        if private_config.get("prompt") is not None:
+            conn_config["prompt"] = private_config["prompt"]
+        if private_config.get("summaryMemory") is not None:
+            conn_config["summaryMemory"] = private_config["summaryMemory"]
+        if private_config.get("device_max_output_size") is not None:
+            conn_config["device_max_output_size"] = private_config["device_max_output_size"]
+        if private_config.get("chat_history_conf") is not None:
+            conn_config["chat_history_conf"] = private_config["chat_history_conf"]
+
+        modules = initialize_modules(
+            logger,
+            conn_config,
+            init_vad,
+            init_asr,
+            init_llm,
+            init_tts,
+            init_memory,
+            init_intent,
+        )
         conn = ConnectionHandler(
-            copy.deepcopy(self.config),
-            self.server._vad,
-            self.server._asr,
-            self.server._llm,
-            self.server._memory,
-            self.server._intent,
+            conn_config,
+            modules.get("vad"),
+            modules.get("asr"),
+            modules.get("llm"),
+            modules.get("memory"),
+            modules.get("intent"),
             self.server,
             session_state=self.session_state_registry.get_or_create(self.device_id),
         )
@@ -284,83 +351,24 @@ class RuntimeDebugTextSession:
         conn.headers = {
             "device-id": self.device_id,
             "client-id": self.client_id,
+            "x-debug-bypass-bind": "1",
         }
-        conn.client_ip = "127.0.0.1"
         conn.device_id = self.device_id
-        conn.debug_bypass_bind = False
-        conn.websocket = self.transport
-        conn.conn_from_mqtt_gateway = False
-        conn.first_activity_time = time.time() * 1000
-        conn.last_activity_time = time.time() * 1000
-        conn.timeout_task = asyncio.create_task(conn._check_timeout())
-        conn.welcome_msg = copy.deepcopy(conn.config["xiaozhi"])
-        conn.welcome_msg["session_id"] = conn.session_id
-        conn.sample_rate = conn.welcome_msg["audio_params"]["sample_rate"]
-        await conn._initialize_private_config_async()
-        conn.tts = DebugTextOnlyTTS(conn.config)
-        conn._initialize_components()
-        original_record_assistant_reply = conn._record_assistant_reply
+        conn.client_ip = "127.0.0.1"
+        conn.debug_bypass_bind = True
+        conn.need_bind = False
+        conn.bind_completed_event.set()
+        conn._initialize_memory()
+        conn._initialize_intent()
+        conn.tts = modules.get("tts") or DebugTextOnlyTTS(conn.config)
+        if not isinstance(conn.tts, DebugTextOnlyTTS):
+            conn.tts = DebugTextOnlyTTS(conn.config)
+        await conn.tts.open_audio_channels(conn)
+        self.text_only_conn = conn
+        return conn
 
-        def _record_assistant_reply_debug(reply_text, next_action=None):
-            original_record_assistant_reply(reply_text, next_action=next_action)
-            try:
-                self.transport.capture_reply(
-                    reply_text,
-                    conn._build_runtime_debug_payload(),
-                    conn.loop,
-                )
-            except Exception:
-                pass
-
-        conn._record_assistant_reply = _record_assistant_reply_debug
-        self.conn = conn
-        self.initialized = True
-
-    async def send_turn(self, text: str, timeout_seconds: float = 90):
-        async with self.lock:
-            await self._initialize()
-            await self.transport.begin_turn()
-            dialogue_len_before = len(getattr(self.conn.dialogue, "dialogue", []) or [])
-            submitted_calls = []
-            original_submit = self.conn.executor.submit
-
-            def _submit_with_capture(fn, *args, **kwargs):
-                future = original_submit(fn, *args, **kwargs)
-                submitted_calls.append((fn, future))
-                return future
-
-            self.conn.executor.submit = _submit_with_capture
-            payload = json.dumps(
-                {
-                    "type": "listen",
-                    "state": "detect",
-                    "mode": "auto",
-                    "text": text,
-                },
-                ensure_ascii=False,
-            )
-            try:
-                await handleTextMessage(self.conn, payload)
-            finally:
-                self.conn.executor.submit = original_submit
-
-            chat_future = None
-            for fn, future in submitted_calls:
-                fn_name = getattr(fn, "__name__", "")
-                if fn_name == "chat":
-                    chat_future = future
-                    break
-
-            if chat_future is not None:
-                await asyncio.wrap_future(chat_future, loop=self.conn.loop)
-                result = self._build_result_from_conn(dialogue_len_before)
-            else:
-                result = await self.transport.wait_result(timeout_seconds)
-            self.last_activity = time.time()
-            return result
-
-    def _build_result_from_conn(self, dialogue_len_before: int):
-        messages = getattr(self.conn.dialogue, "dialogue", []) or []
+    def _build_result_from_conn(self, conn: ConnectionHandler, dialogue_len_before: int):
+        messages = getattr(conn.dialogue, "dialogue", []) or []
         new_messages = messages[dialogue_len_before:]
         assistant_texts = [
             str(message.content or "").strip()
@@ -374,7 +382,7 @@ class RuntimeDebugTextSession:
                 if getattr(message, "role", None) == "assistant" and str(message.content or "").strip()
             ][:1]
         reply_text = "\n".join(text for text in assistant_texts if text).strip()
-        runtime_debug = self.conn._build_runtime_debug_payload()
+        runtime_debug = conn._build_runtime_debug_payload()
         if not reply_text:
             rewrite = (runtime_debug or {}).get("response_rewrite") or {}
             reply_text = str(rewrite.get("rewritten_reply") or "").strip()
@@ -385,13 +393,78 @@ class RuntimeDebugTextSession:
             "runtime_debug": runtime_debug,
         }
 
+    async def _run_turn_on_conn(self, conn: ConnectionHandler, text: str, timeout_seconds: float):
+        await self.transport.begin_turn()
+        dialogue_len_before = len(getattr(conn.dialogue, "dialogue", []) or [])
+        previous_hook = getattr(conn, "_runtime_result_hook", None)
+        previous_websocket = conn.websocket
+        previous_tts = conn.tts
+        conn._runtime_result_hook = self.transport.capture_reply
+        conn.websocket = self.transport
+        if previous_tts is not None and not isinstance(previous_tts, DebugTextOnlyTTS):
+            debug_tts = DebugTextOnlyTTS(conn.config)
+            await debug_tts.open_audio_channels(conn)
+            conn.tts = debug_tts
+        submitted_calls = []
+        original_submit = conn.executor.submit
+
+        def _submit_with_capture(fn, *args, **kwargs):
+            future = original_submit(fn, *args, **kwargs)
+            submitted_calls.append((fn, future))
+            return future
+
+        conn.executor.submit = _submit_with_capture
+        try:
+            await conn.run_text_turn(text)
+
+            chat_future = None
+            for fn, future in submitted_calls:
+                if getattr(fn, "__name__", "") == "chat":
+                    chat_future = future
+                    break
+
+            if chat_future is not None:
+                await asyncio.wait_for(asyncio.wrap_future(chat_future, loop=conn.loop), timeout=timeout_seconds)
+                return self._build_result_from_conn(conn, dialogue_len_before)
+            return await self.transport.wait_result(timeout_seconds)
+        finally:
+            conn.executor.submit = original_submit
+            conn._runtime_result_hook = previous_hook
+            conn.websocket = previous_websocket
+            if conn.tts is not previous_tts:
+                try:
+                    await conn.tts.close()
+                except Exception:
+                    pass
+                conn.tts = previous_tts
+
+    async def send_turn(self, text: str, timeout_seconds: float = 90):
+        async with self.lock:
+            live_conn = self._resolve_live_connection()
+            mode = "live"
+            if live_conn is None:
+                mode = "text_only_fallback"
+                conn = await self._ensure_text_only_connection()
+            else:
+                conn = live_conn
+            async with conn.turn_lock:
+                result = await self._run_turn_on_conn(conn, text, timeout_seconds)
+            self.last_activity = time.time()
+            result["mode"] = mode
+            result["device_id"] = self.device_id
+            return result
+
     async def close(self):
         async with self.lock:
-            if self.conn is not None:
-                await self.conn.close()
-                self.conn = None
             await self.transport.close()
-            self.initialized = False
+            if self.text_only_conn is not None:
+                try:
+                    await self.text_only_conn.tts.close()
+                except Exception:
+                    pass
+                self.text_only_conn.executor.shutdown(wait=False)
+                self.text_only_conn.stop_event.set()
+                self.text_only_conn = None
 
 
 class RuntimeDebugTextSessionManager:
@@ -408,27 +481,47 @@ class RuntimeDebugTextSessionManager:
         else:
             self.session_state_registry = ConversationSessionStateRegistry()
 
-    async def get_session(self, session_key: str):
+    def _session_registry_key(self, session_key: str, device_id: str) -> str:
+        normalized_device_id = str(device_id or RUNTIME_DEBUG_DEVICE_ID).strip().lower() or str(RUNTIME_DEBUG_DEVICE_ID).strip().lower()
+        return f"{normalized_device_id}::{session_key}"
+
+    async def get_session(self, session_key: str, device_id: Optional[str] = None):
+        registry_key = self._session_registry_key(session_key, device_id or RUNTIME_DEBUG_DEVICE_ID)
+        normalized_device_id = str(device_id or RUNTIME_DEBUG_DEVICE_ID).strip().lower() or str(RUNTIME_DEBUG_DEVICE_ID).strip().lower()
         async with self.lock:
             self._cleanup_stale_sessions_locked()
-            session = self.sessions.get(session_key)
+            session = self.sessions.get(registry_key)
             if session is None:
                 session = RuntimeDebugTextSession(
                     session_key,
                     self.config,
                     self.server,
                     self.session_state_registry,
+                    device_id=normalized_device_id,
                 )
-                self.sessions[session_key] = session
+                self.sessions[registry_key] = session
+            else:
+                session.device_id = normalized_device_id
             session.last_activity = time.time()
             return session
 
-    async def reset_session(self, session_key: str):
+    async def reset_session(self, session_key: str, device_id: Optional[str] = None):
+        normalized_device_id = str(device_id or RUNTIME_DEBUG_DEVICE_ID).strip().lower() or str(RUNTIME_DEBUG_DEVICE_ID).strip().lower()
+        registry_key = self._session_registry_key(session_key, normalized_device_id)
         async with self.lock:
-            session = self.sessions.pop(session_key, None)
+            session = self.sessions.pop(registry_key, None)
         if session is not None:
             await session.close()
-        self.session_state_registry.reset(RUNTIME_DEBUG_DEVICE_ID)
+
+        live_registry = getattr(self.server, "live_connection_registry", None) if self.server is not None else None
+        live_conn = live_registry.get_by_device_id(normalized_device_id) if live_registry is not None else None
+        if live_conn is not None:
+            async with live_conn.turn_lock:
+                live_conn.reset_runtime_session()
+        else:
+            cleared = self.session_state_registry.clear_in_place(normalized_device_id)
+            if not cleared:
+                self.session_state_registry.reset(normalized_device_id)
 
     def _cleanup_stale_sessions_locked(self):
         now = time.time()

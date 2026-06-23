@@ -26,6 +26,19 @@ class ConversationSessionState:
         self.last_response_plan = None
         self.last_response_rewrite = None
 
+    def reset(self):
+        self.dialogue = Dialogue()
+        self.sentence_id = None
+        self.last_scene_output = None
+        self.last_dialogue_state_result = None
+        self.dialogue_state_runtime = None
+        self.base_prompt = None
+        self.scene_prompt_patch = ""
+        self.dialogue_state_prompt_patch = ""
+        self.response_plan_prompt_patch = ""
+        self.last_response_plan = None
+        self.last_response_rewrite = None
+
 
 class ConversationSessionStateRegistry:
     """Thread-safe registry for shared conversation state objects."""
@@ -48,6 +61,16 @@ class ConversationSessionStateRegistry:
         normalized_key = str(key or "").strip() or "default"
         with self._lock:
             self._states.pop(normalized_key, None)
+
+    def clear_in_place(self, key: str) -> bool:
+        normalized_key = str(key or "").strip() or "default"
+        with self._lock:
+            state, last_seen = self._states.get(normalized_key, (None, 0.0))
+            if state is None:
+                return False
+            state.reset()
+            self._states[normalized_key] = (state, last_seen or time.time())
+            return True
 
     def cleanup_stale(self, ttl_seconds: int = 1800) -> None:
         cutoff = time.time() - ttl_seconds

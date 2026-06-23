@@ -4,6 +4,7 @@ import logging
 import websockets
 from config.logger import setup_logging
 from core.conversation_session_state import ConversationSessionStateRegistry
+from core.live_connection_registry import LiveConnectionRegistry
 
 
 class SuppressInvalidHandshakeFilter(logging.Filter):
@@ -46,21 +47,22 @@ class WebSocketServer:
         self.logger = setup_logging()
         self.config_lock = asyncio.Lock()
         self.session_state_registry = ConversationSessionStateRegistry()
+        self.live_connection_registry = LiveConnectionRegistry()
         modules = initialize_modules(
             self.logger,
             self.config,
             "VAD" in self.config["selected_module"],
-            "ASR" in self.config["selected_module"],
-            "LLM" in self.config["selected_module"],
             False,
-            "Memory" in self.config["selected_module"],
-            "Intent" in self.config["selected_module"],
+            False,
+            False,
+            False,
+            False,
         )
         self._vad = modules["vad"] if "vad" in modules else None
-        self._asr = modules["asr"] if "asr" in modules else None
-        self._llm = modules["llm"] if "llm" in modules else None
-        self._intent = modules["intent"] if "intent" in modules else None
-        self._memory = modules["memory"] if "memory" in modules else None
+        self._asr = None
+        self._llm = None
+        self._intent = None
+        self._memory = None
 
         auth_config = self.config["server"].get("auth", {})
         self.auth_enable = auth_config.get("enabled", False)
@@ -188,24 +190,21 @@ class WebSocketServer:
                     self.logger,
                     new_config,
                     update_vad,
-                    update_asr,
-                    "LLM" in new_config["selected_module"],
                     False,
-                    "Memory" in new_config["selected_module"],
-                    "Intent" in new_config["selected_module"],
+                    False,
+                    False,
+                    False,
+                    False,
                 )
 
                 # 更新组件实例
                 if "vad" in modules:
                     self._vad = modules["vad"]
-                if "asr" in modules:
-                    self._asr = modules["asr"]
-                if "llm" in modules:
-                    self._llm = modules["llm"]
-                if "intent" in modules:
-                    self._intent = modules["intent"]
-                if "memory" in modules:
-                    self._memory = modules["memory"]
+                if update_asr:
+                    self._asr = None
+                self._llm = None
+                self._intent = None
+                self._memory = None
                 self.logger.bind(tag=TAG).info(f"更新配置任务执行完毕")
                 return True
         except Exception as e:

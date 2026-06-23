@@ -10,7 +10,6 @@
     { href: "/portrait", label: "🧑 画像" },
     { href: "/mood", label: "😊 情绪" },
     { href: "/actions", label: "🐕 动作" },
-    { href: "/memo", label: "📝 备忘录" },
     { href: "/llm-logs", label: "🔍 LLM日志" },
     { href: "/debug", label: "🔧 调试" },
     { href: "/settings", label: "⚙️ 设置" },

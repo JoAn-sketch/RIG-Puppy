@@ -19,6 +19,9 @@ class RuntimeSignals:
 
 @dataclass
 class ChildProfileSnapshot:
+    nickname: str = ""
+    age: Optional[int] = None
+    age_group: str = "6-8"
     age_band: str = "6-8"
     language_level: str = "child_basic"
     interests: List[str] = field(default_factory=list)

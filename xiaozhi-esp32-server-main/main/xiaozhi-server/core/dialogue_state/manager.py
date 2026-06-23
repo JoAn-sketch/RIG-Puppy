@@ -39,9 +39,32 @@ from core.response_orchestrator.planner import build_response_plan
 RUNTIME_SECTION_TAGS = (
     "scene_router",
     "scene_policy",
+    "child_profile",
     "dialogue_state",
     "phase_policy",
 )
+
+
+AGE_CONTRACTS = {
+    "3-5": {
+        "reply_style": "playful_gentle",
+        "max_reply_sentences": 1,
+        "should_ask_followup": False,
+        "concept_budget": 1,
+    },
+    "6-8": {
+        "reply_style": "warm_guided",
+        "max_reply_sentences": 2,
+        "should_ask_followup": True,
+        "concept_budget": 1,
+    },
+    "9-11": {
+        "reply_style": "natural_supportive",
+        "max_reply_sentences": 3,
+        "should_ask_followup": True,
+        "concept_budget": 2,
+    },
+}
 
 
 def strip_runtime_prompt_sections(prompt: str) -> str:
@@ -63,12 +86,19 @@ def build_dialogue_state_prompt_patch(result: DialogueStateManagerResult) -> str
     control = result.control
     social_state = state.get("social_state", {})
     protocol_state = state.get("protocol_state", {})
+    child_profile = state.get("child_profile", {})
     turn_contract = control.turn_contract or {}
     phase_hints = PHASE_POLICY_HINTS.get(
         (control.current_scene, control.current_phase),
         ["一轮只推进一件事，尽量短句、具体、儿童可懂。"],
     )
     dialogue_state_lines = [
+        "<child_profile>",
+        f"nickname={child_profile.get('nickname') or ''}",
+        f"age={child_profile.get('age') if child_profile.get('age') is not None else 'unknown'}",
+        f"age_group={child_profile.get('age_group') or '6-8'}",
+        "address_rule=如果有 nickname，优先自然地用这个称呼孩子，不要每句都重复",
+        "</child_profile>",
         "<dialogue_state>",
         f"scene={control.current_scene}",
         f"subscene={control.current_subscene}",
@@ -158,6 +188,17 @@ class DialogueStateManager:
 
         state["user_state"]["emotion_state"] = scene_output.emotion_state
         state["user_state"]["frustration_level"] = manager_input.signals.frustration_signal
+        age_group = getattr(manager_input.child_profile, "age_group", None) or getattr(
+            manager_input.child_profile, "age_band", "6-8"
+        )
+        age_contract = AGE_CONTRACTS.get(age_group, AGE_CONTRACTS["6-8"])
+        state["child_profile"] = {
+            "nickname": getattr(manager_input.child_profile, "nickname", "") or "",
+            "age": getattr(manager_input.child_profile, "age", None),
+            "age_group": age_group,
+            "age_band": getattr(manager_input.child_profile, "age_band", age_group),
+            "concept_budget": age_contract["concept_budget"],
+        }
         state["meta"]["updated_at_ms"] = timestamp_ms
         self._update_greeting_context(state, manager_input.text, timestamp_ms)
 
@@ -206,9 +247,9 @@ class DialogueStateManager:
                 scene_changed=scene_changed,
                 text=manager_input.text,
             ),
-            reply_style=REPLY_STYLE_BY_SCENE.get(current_scene, "warm_brief"),
-            max_reply_sentences=MAX_SENTENCES_BY_SCENE.get(current_scene, 3),
-            should_ask_followup=current_phase in {
+            reply_style=age_contract["reply_style"] or REPLY_STYLE_BY_SCENE.get(current_scene, "warm_brief"),
+            max_reply_sentences=age_contract["max_reply_sentences"] or MAX_SENTENCES_BY_SCENE.get(current_scene, 3),
+            should_ask_followup=age_contract["should_ask_followup"] and current_phase in {
                 "check_understanding",
                 "child_try",
                 "offer_choice",

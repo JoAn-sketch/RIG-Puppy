@@ -217,7 +217,7 @@ async def handle_mcp_message(
 
                     # 刷新工具缓存，确保MCP工具被包含在函数列表中
                     if hasattr(conn, "func_handler") and conn.func_handler:
-                    mcp_client.enable_camera = conn.config.get("enable_camera", False)
+                        mcp_client.enable_camera = conn.config.get("enable_camera", False)
                         conn.func_handler.tool_manager.refresh_tools()
                         conn.func_handler.current_support_functions()
             return

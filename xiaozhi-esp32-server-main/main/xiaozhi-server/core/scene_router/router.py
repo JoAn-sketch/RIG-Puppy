@@ -17,6 +17,11 @@ class SceneRouter:
             scene_rule = SCENE_RULES[scene_name]
             matched_subscene, reason_codes = self._match_subscene(text, scene_rule["subscene_rules"])
             if matched_subscene:
+                policy_profile = self._resolve_policy_profile(
+                    scene_name=scene_name,
+                    age_band=age_band,
+                    base_policy=scene_rule["policy_profile"],
+                )
                 return SceneRouterOutput(
                     primary_scene=scene_name,
                     secondary_scene=None,
@@ -24,16 +29,16 @@ class SceneRouter:
                     risk_level=scene_rule["risk_level"],
                     emotion_state=emotion_state,
                     age_band=age_band,
-                    policy_profile=scene_rule["policy_profile"],
+                    policy_profile=policy_profile,
                     should_use_rag=bool(scene_rule["should_use_rag"]),
                     should_use_memory=bool(scene_rule["should_use_memory"]),
                     should_use_vlm=bool(scene_rule["should_use_vlm"]),
                     should_escalate_parent=bool(scene_rule["should_escalate_parent"]),
                     should_force_safe_template=bool(scene_rule["should_force_safe_template"]),
                     interaction_protocol=self._resolve_interaction_protocol(scene_name),
-                    protocol_mode=self._resolve_protocol_mode(scene_name),
-                    confidence=0.92 if scene_name == "safety_risk" else 0.82,
-                    reason_codes=reason_codes,
+                    protocol_mode=self._resolve_protocol_mode(scene_name, age_band),
+                    confidence=self._resolve_confidence(scene_name, age_band),
+                    reason_codes=reason_codes + [f"age_band:{age_band}"],
                 )
 
         context_followup_output = self._match_context_followup(
@@ -117,16 +122,20 @@ class SceneRouter:
             risk_level=scene_rule["risk_level"],
             emotion_state=emotion_state,
             age_band=age_band,
-            policy_profile=scene_rule["policy_profile"],
+            policy_profile=self._resolve_policy_profile(
+                scene_name=scene_name,
+                age_band=age_band,
+                base_policy=scene_rule["policy_profile"],
+            ),
             should_use_rag=bool(scene_rule["should_use_rag"]),
             should_use_memory=bool(scene_rule["should_use_memory"]),
             should_use_vlm=bool(scene_rule["should_use_vlm"]),
             should_escalate_parent=bool(scene_rule["should_escalate_parent"]),
             should_force_safe_template=bool(scene_rule["should_force_safe_template"]),
             interaction_protocol=self._resolve_interaction_protocol(scene_name),
-            protocol_mode=self._resolve_protocol_mode(scene_name),
-            confidence=0.78,
-            reason_codes=reason_codes,
+            protocol_mode=self._resolve_protocol_mode(scene_name, age_band),
+            confidence=self._resolve_confidence(scene_name, age_band, context_followup=True),
+            reason_codes=reason_codes + [f"age_band:{age_band}"],
         )
 
     def _resolve_interaction_protocol(self, scene_name):
@@ -138,7 +147,14 @@ class SceneRouter:
             return "repair_reset_v1"
         return "warm_companion_v1"
 
-    def _resolve_protocol_mode(self, scene_name):
+    def _resolve_protocol_mode(self, scene_name, age_band="6-8"):
+        if scene_name == "curiosity":
+            if age_band == "3-5":
+                return "explain_brief"
+            if age_band == "9-11":
+                return "explain_then_check"
+        if scene_name == "learning_support" and age_band == "3-5":
+            return "coach_micro_step"
         return {
             "curiosity": "explain_first",
             "learning_support": "coach_step",
@@ -148,6 +164,29 @@ class SceneRouter:
             "system_repair": "repair_reset",
             "relationship_building": "warm_connect",
         }.get(scene_name, "warm_connect")
+
+    def _resolve_policy_profile(self, scene_name, age_band, base_policy):
+        if age_band == "3-5":
+            if scene_name == "curiosity":
+                return "brief_answer_with_example"
+            if scene_name == "learning_support":
+                return "coach_one_step_gentle"
+        if age_band == "9-11":
+            if scene_name == "curiosity":
+                return "guided_step_check_understanding"
+            if scene_name == "learning_support":
+                return "coach_step_then_check"
+        return base_policy
+
+    def _resolve_confidence(self, scene_name, age_band, context_followup=False):
+        confidence = 0.92 if scene_name == "safety_risk" else 0.82
+        if context_followup:
+            confidence = 0.78
+        if age_band == "3-5" and scene_name in {"curiosity", "learning_support"}:
+            confidence -= 0.04
+        if age_band == "9-11" and scene_name in {"curiosity", "learning_support"}:
+            confidence += 0.03
+        return confidence
 
     def _is_context_followup_question(self, text):
         if not text or len(text) > 16:

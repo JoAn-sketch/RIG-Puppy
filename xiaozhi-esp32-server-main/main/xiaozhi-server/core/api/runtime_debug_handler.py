@@ -36,6 +36,7 @@ class RuntimeDebugHandler(BaseHandler):
             return self._json_response({"error": "invalid json"}, status=400)
 
         session_key = str(payload.get("session_key") or "").strip()
+        device_id = str(payload.get("device_id") or "").strip()
         text = str(payload.get("text") or "").strip()
         timeout_seconds = float(payload.get("timeout_seconds") or 90)
         if not session_key:
@@ -44,7 +45,7 @@ class RuntimeDebugHandler(BaseHandler):
             return self._json_response({"error": "text required"}, status=400)
 
         try:
-            session = await self.session_manager.get_session(session_key)
+            session = await self.session_manager.get_session(session_key, device_id=device_id)
             result = await session.send_turn(text, timeout_seconds=timeout_seconds)
             return self._json_response({"ok": True, **result})
         except Exception as e:
@@ -60,11 +61,12 @@ class RuntimeDebugHandler(BaseHandler):
             payload = {}
 
         session_key = str(payload.get("session_key") or "").strip()
+        device_id = str(payload.get("device_id") or "").strip()
         if not session_key:
             return self._json_response({"error": "session_key required"}, status=400)
 
         try:
-            await self.session_manager.reset_session(session_key)
+            await self.session_manager.reset_session(session_key, device_id=device_id)
             return self._json_response({"ok": True})
         except Exception as e:
             return self._json_response({"error": str(e)}, status=500)

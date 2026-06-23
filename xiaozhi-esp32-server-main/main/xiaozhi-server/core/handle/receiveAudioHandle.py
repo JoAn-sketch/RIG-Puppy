@@ -11,6 +11,7 @@ from core.dialogue_state import (
     RuntimeSignals,
     build_dialogue_state_prompt_patch,
 )
+from core.profile_resolver import resolve_child_profile_for_device
 from core.utils.util import audio_to_data
 from core.handle.abortHandle import handleAbortMessage
 from core.handle.intentHandler import handle_user_intent
@@ -88,13 +89,16 @@ async def startToChat(conn: "ConnectionHandler", text):
         await handleAbortMessage(conn)
 
     try:
-        age_band = "6-8"
-        if getattr(conn, "prompt", None) and "3-5" in conn.prompt and "6-8" in conn.prompt and "9-12" in conn.prompt:
-            if "kid_age_band" in conn.prompt:
-                age_band = "6-8"
+        runtime_child_profile = await resolve_child_profile_for_device(conn.headers.get("device-id"))
+        age_band = runtime_child_profile.age_band
         router_input = SceneRouterInput(
             text=actual_text,
-            child_profile=ChildProfile(age_band=age_band),
+            child_profile=ChildProfile(
+                nickname=runtime_child_profile.nickname,
+                age=runtime_child_profile.age,
+                age_group=runtime_child_profile.age_group,
+                age_band=age_band,
+            ),
             dialog_state=DialogState(
                 current_scene=getattr(getattr(conn, "last_scene_output", None), "primary_scene", None),
                 current_subscene=getattr(getattr(conn, "last_scene_output", None), "subscene", None),
@@ -124,7 +128,12 @@ async def startToChat(conn: "ConnectionHandler", text):
                 topic_switch_signal=False,
                 frustration_signal=0,
             ),
-            child_profile=ChildProfileSnapshot(age_band=age_band),
+            child_profile=ChildProfileSnapshot(
+                nickname=runtime_child_profile.nickname,
+                age=runtime_child_profile.age,
+                age_group=runtime_child_profile.age_group,
+                age_band=age_band,
+            ),
         )
         conn.last_dialogue_state_result = conn.dialogue_state_manager.update(manager_input)
         conn.dialogue_state_runtime = conn.last_dialogue_state_result.state
