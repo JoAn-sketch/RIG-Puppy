@@ -15,7 +15,6 @@
     { href: "/settings", label: "⚙️ 设置" },
     { href: "/iot", label: "🏠 家居" },
     { href: "/health", label: "🏥 健康" },
-    { href: "/voiceprint", label: "🎤 声纹" },
     { href: "/kid", label: "🧒 儿童" },
     { href: "/scene-router", label: "🧭 Scene Router" },
     { href: "/dingyi-models", label: "🤖 模型切换" },
