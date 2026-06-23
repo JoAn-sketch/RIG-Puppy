@@ -35,6 +35,10 @@ TARGETS = (
         exclude_globs=(
             ".git",
             "__pycache__",
+            "node_modules",
+            "node_modules/*",
+            "target",
+            "target/*",
             "*.pyc",
             "*.log",
             "*.tar.gz",
