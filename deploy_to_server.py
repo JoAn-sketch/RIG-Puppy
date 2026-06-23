@@ -110,7 +110,7 @@ def should_exclude(relative_path: str, patterns: tuple[str, ...]) -> bool:
         return False
     parts = normalized.split("/")
     for part in parts:
-        if part in {".git", "__pycache__"}:
+        if part in {".git", "__pycache__", "node_modules", "target"}:
             return True
     for pattern in patterns:
         if fnmatch.fnmatch(normalized, pattern):
