@@ -11,6 +11,7 @@ from core.dialogue_state import (
     RuntimeSignals,
     build_dialogue_state_prompt_patch,
 )
+from core.long_term_memory_resolver import resolve_long_term_memory_for_device
 from core.profile_resolver import resolve_child_profile_for_device
 from core.utils.util import audio_to_data
 from core.handle.abortHandle import handleAbortMessage
@@ -90,6 +91,11 @@ async def startToChat(conn: "ConnectionHandler", text):
 
     try:
         runtime_child_profile = await resolve_child_profile_for_device(conn.headers.get("device-id"))
+        runtime_long_term_memory = await resolve_long_term_memory_for_device(
+            conn.headers.get("device-id")
+        )
+        conn.update_long_term_memory(runtime_long_term_memory)
+        conn.refresh_short_term_memory_prompt(user_text=actual_text)
         age_band = runtime_child_profile.age_band
         router_input = SceneRouterInput(
             text=actual_text,

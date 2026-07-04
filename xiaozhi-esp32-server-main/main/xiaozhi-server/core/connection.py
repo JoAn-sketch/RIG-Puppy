@@ -38,6 +38,8 @@ from core.dialogue_state import (
     DialogueStateManager,
     strip_runtime_prompt_sections,
 )
+from core.long_term_memory_resolver import RuntimeLongTermMemory
+from core.short_term_memory import ShortTermMemoryManager
 from core.response_orchestrator import (
     build_response_plan,
     build_response_plan_prompt_patch,
@@ -273,6 +275,42 @@ class ConnectionHandler:
         self.session_state.dialogue_state_prompt_patch = value
 
     @property
+    def long_term_memory_prompt_patch(self):
+        return getattr(self.session_state, "long_term_memory_prompt_patch", "")
+
+    @long_term_memory_prompt_patch.setter
+    def long_term_memory_prompt_patch(self, value):
+        self.session_state.long_term_memory_prompt_patch = value
+
+    @property
+    def long_term_memory(self):
+        return getattr(self.session_state, "long_term_memory", None)
+
+    @long_term_memory.setter
+    def long_term_memory(self, value):
+        self.session_state.long_term_memory = value
+
+    @property
+    def short_term_memory_prompt_patch(self):
+        return getattr(self.session_state, "short_term_memory_prompt_patch", "")
+
+    @short_term_memory_prompt_patch.setter
+    def short_term_memory_prompt_patch(self, value):
+        self.session_state.short_term_memory_prompt_patch = value
+
+    @property
+    def short_term_memory(self):
+        memory = getattr(self.session_state, "short_term_memory", None)
+        if memory is None:
+            memory = ShortTermMemoryManager()
+            self.session_state.short_term_memory = memory
+        return memory
+
+    @short_term_memory.setter
+    def short_term_memory(self, value):
+        self.session_state.short_term_memory = value
+
+    @property
     def response_plan_prompt_patch(self):
         return self.session_state.response_plan_prompt_patch
 
@@ -295,6 +333,14 @@ class ConnectionHandler:
     @last_response_rewrite.setter
     def last_response_rewrite(self, value):
         self.session_state.last_response_rewrite = value
+
+    @property
+    def last_user_text(self):
+        return getattr(self.session_state, "last_user_text", "")
+
+    @last_user_text.setter
+    def last_user_text(self, value):
+        self.session_state.last_user_text = str(value or "")
 
     async def handle_connection(self, ws: websockets.ServerConnection):
         try:
@@ -1142,12 +1188,69 @@ class ConnectionHandler:
             prompt_parts.append(self.base_prompt.strip())
         if self.scene_prompt_patch:
             prompt_parts.append(self.scene_prompt_patch.strip())
+        if self.long_term_memory_prompt_patch:
+            prompt_parts.append(self.long_term_memory_prompt_patch.strip())
+        if self.short_term_memory_prompt_patch:
+            prompt_parts.append(self.short_term_memory_prompt_patch.strip())
         if self.dialogue_state_prompt_patch:
             prompt_parts.append(self.dialogue_state_prompt_patch.strip())
         if self.response_plan_prompt_patch:
             prompt_parts.append(self.response_plan_prompt_patch.strip())
         self.prompt = "\n\n".join(part for part in prompt_parts if part)
         self.dialogue.update_system_message(self.prompt)
+
+    def update_long_term_memory(self, long_term_memory: RuntimeLongTermMemory | None):
+        self.long_term_memory = long_term_memory or RuntimeLongTermMemory()
+        self.long_term_memory_prompt_patch = self._build_long_term_memory_prompt_patch(
+            self.long_term_memory
+        )
+        self._refresh_runtime_prompt()
+
+    def refresh_short_term_memory_prompt(self, user_text: str | None = None):
+        self.short_term_memory_prompt_patch = self.short_term_memory.build_prompt_patch(
+            user_text=user_text
+        )
+        self._refresh_runtime_prompt()
+
+    def _build_long_term_memory_prompt_patch(
+            self, long_term_memory: RuntimeLongTermMemory | None
+    ) -> str:
+        memory = long_term_memory or RuntimeLongTermMemory()
+        lines = [
+            "<long_term_memory>",
+            f"nickname_preference={memory.nickname_preference or ''}",
+            f"age={memory.age if memory.age is not None else 'unknown'}",
+            f"age_group={memory.age_group or '6-8'}",
+        ]
+        if memory.robot_name_preference:
+            lines.append(
+                f"robot_name_preference={memory.robot_name_preference}"
+            )
+            lines.append(
+                "robot_name_rule=如果孩子明确给机器人取了名字，优先自然使用这个名字，不要每句都重复"
+            )
+        if memory.interests:
+            lines.append(f"interests={','.join(memory.interests)}")
+        if memory.favorite_dog_types:
+            lines.append(f"favorite_dog_types={','.join(memory.favorite_dog_types)}")
+        if memory.desired_activities:
+            lines.append(f"desired_activities={','.join(memory.desired_activities)}")
+        if memory.parent_goals:
+            lines.append(f"parent_goals={','.join(memory.parent_goals)}")
+        extra_attributes = getattr(memory, "extra_attributes", {}) or {}
+        if extra_attributes:
+            for key, value in extra_attributes.items():
+                normalized_key = re.sub(r"[^a-zA-Z0-9_]+", "_", str(key or "").strip()).strip("_")
+                if not normalized_key:
+                    continue
+                text_value = str(value or "").strip()
+                if text_value:
+                    lines.append(f"extra_{normalized_key}={text_value}")
+        lines.append(
+            "memory_rule=这些是稳定画像信息，优先用于称呼、语气和偏好适配；不要生硬逐条复述给孩子"
+        )
+        lines.append("</long_term_memory>")
+        return "\n".join(lines)
 
     def _get_dialogue_next_action(self):
         if self.last_dialogue_state_result is None:
@@ -1160,6 +1263,7 @@ class ConnectionHandler:
     def _record_assistant_reply(self, reply_text, next_action=None):
         if not reply_text:
             return
+        self.update_short_term_memory_from_turn(self.last_user_text, reply_text)
         self.dialogue_state_runtime = self.dialogue_state_manager.post_reply_update(
             self.dialogue_state_runtime,
             reply_text,
@@ -1177,6 +1281,24 @@ class ConnectionHandler:
             except Exception as e:
                 self.logger.bind(tag=TAG).warning(f"runtime result hook failed: {e}")
         self._publish_runtime_debug("post_reply")
+
+    def update_short_term_memory_from_turn(self, user_text: str | None, reply_text: str | None):
+        normalized_user_text = str(user_text or "").strip()
+        normalized_reply_text = str(reply_text or "").strip()
+        if not normalized_user_text or not normalized_reply_text:
+            return
+        scene_output = self.last_scene_output
+        scene_name = getattr(scene_output, "primary_scene", "") if scene_output is not None else ""
+        subscene = getattr(scene_output, "subscene", "") if scene_output is not None else ""
+        emotion = getattr(scene_output, "emotion_state", "neutral") if scene_output is not None else "neutral"
+        self.short_term_memory.update_from_turn(
+            user_text=normalized_user_text,
+            assistant_text=normalized_reply_text,
+            scene=scene_name,
+            subscene=subscene,
+            emotion=emotion,
+        )
+        self.refresh_short_term_memory_prompt(user_text=normalized_user_text)
 
     async def run_text_turn(self, text: str):
         payload = json.dumps(
@@ -1202,10 +1324,15 @@ class ConnectionHandler:
         self.last_dialogue_state_result = None
         self.dialogue_state_runtime = None
         self.scene_prompt_patch = ""
+        self.long_term_memory_prompt_patch = ""
+        self.short_term_memory_prompt_patch = ""
         self.dialogue_state_prompt_patch = ""
         self.response_plan_prompt_patch = ""
         self.last_response_plan = None
         self.last_response_rewrite = None
+        self.long_term_memory = None
+        self.short_term_memory = ShortTermMemoryManager()
+        self.last_user_text = ""
         self.dialogue = Dialogue()
         if self.base_prompt:
             self._refresh_runtime_prompt()
@@ -1257,6 +1384,9 @@ class ConnectionHandler:
 
         current_scene = getattr(scene_output, "primary_scene", None)
         if self._has_memory_trigger(query):
+            return True
+
+        if self.short_term_memory.should_query(query, current_scene):
             return True
 
         scene_turn_count = 0
@@ -1334,8 +1464,27 @@ class ConnectionHandler:
         response_rewrite = None
         if self.last_response_rewrite is not None:
             response_rewrite = self.last_response_rewrite.to_dict()
+        long_term_memory = None
+        if self.long_term_memory is not None:
+            long_term_memory = {
+                "nickname_preference": getattr(self.long_term_memory, "nickname_preference", ""),
+                "age": getattr(self.long_term_memory, "age", None),
+                "age_group": getattr(self.long_term_memory, "age_group", None),
+                "robot_name_preference": getattr(self.long_term_memory, "robot_name_preference", ""),
+                "interests": list(getattr(self.long_term_memory, "interests", []) or []),
+                "favorite_dog_types": list(getattr(self.long_term_memory, "favorite_dog_types", []) or []),
+                "desired_activities": list(getattr(self.long_term_memory, "desired_activities", []) or []),
+                "parent_goals": list(getattr(self.long_term_memory, "parent_goals", []) or []),
+                "extra_attributes": dict(getattr(self.long_term_memory, "extra_attributes", {}) or {}),
+                "profile_version": getattr(self.long_term_memory, "profile_version", None),
+            }
+        short_term_memory = None
+        if self.short_term_memory is not None:
+            short_term_memory = self.short_term_memory.to_dict()
         return {
             "scene": scene,
+            "long_term_memory": long_term_memory,
+            "short_term_memory": short_term_memory,
             "dialogue_state": dialogue_state,
             "response_plan": response_plan,
             "response_rewrite": response_rewrite,
@@ -1372,6 +1521,7 @@ class ConnectionHandler:
 
         if query is not None:
             self.logger.bind(tag=TAG).info(f"大模型收到用户消息: {query}")
+            self.last_user_text = str(query or "").strip()
 
         if depth == 0 and current_sentence_id is None:
             current_sentence_id = str(uuid.uuid4().hex)

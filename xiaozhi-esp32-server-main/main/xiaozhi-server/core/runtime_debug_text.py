@@ -76,6 +76,8 @@ class DebugRuntimeTransport:
             self._latest_runtime_debug = {
                 "stage": message.get("stage"),
                 "scene": message.get("scene"),
+                "long_term_memory": message.get("long_term_memory"),
+                "short_term_memory": message.get("short_term_memory"),
                 "dialogue_state": message.get("dialogue_state"),
                 "response_plan": message.get("response_plan"),
                 "response_rewrite": message.get("response_rewrite"),

@@ -21,10 +21,15 @@ class ConversationSessionState:
         self.dialogue_state_runtime = None
         self.base_prompt = None
         self.scene_prompt_patch = ""
+        self.long_term_memory_prompt_patch = ""
+        self.short_term_memory_prompt_patch = ""
         self.dialogue_state_prompt_patch = ""
         self.response_plan_prompt_patch = ""
         self.last_response_plan = None
         self.last_response_rewrite = None
+        self.long_term_memory = None
+        self.short_term_memory = None
+        self.last_user_text = ""
 
     def reset(self):
         self.dialogue = Dialogue()
@@ -34,10 +39,15 @@ class ConversationSessionState:
         self.dialogue_state_runtime = None
         self.base_prompt = None
         self.scene_prompt_patch = ""
+        self.long_term_memory_prompt_patch = ""
+        self.short_term_memory_prompt_patch = ""
         self.dialogue_state_prompt_patch = ""
         self.response_plan_prompt_patch = ""
         self.last_response_plan = None
         self.last_response_rewrite = None
+        self.long_term_memory = None
+        self.short_term_memory = None
+        self.last_user_text = ""
 
 
 class ConversationSessionStateRegistry:

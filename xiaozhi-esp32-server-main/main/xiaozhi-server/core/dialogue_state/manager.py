@@ -40,6 +40,8 @@ RUNTIME_SECTION_TAGS = (
     "scene_router",
     "scene_policy",
     "child_profile",
+    "long_term_memory",
+    "short_term_memory",
     "dialogue_state",
     "phase_policy",
 )
