@@ -116,9 +116,6 @@ void WifiBoard::OnNetworkEvent(NetworkEvent event, const std::string& data) {
         case NetworkEvent::Connected:
             // Stop timeout timer
             esp_timer_stop(connect_timer_);
-#ifdef CONFIG_USE_ESP_BLUFI_WIFI_PROVISIONING
-            // Puppy BLE provisioning sends the bind-ready status before releasing BLE.
-#endif
             in_config_mode_ = false;
             ESP_LOGI(TAG, "Connected to WiFi: %s", data.c_str());
             break;
