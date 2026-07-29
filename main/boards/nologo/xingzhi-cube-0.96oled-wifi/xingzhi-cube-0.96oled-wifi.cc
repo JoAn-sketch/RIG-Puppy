@@ -19,6 +19,7 @@
 #include <esp_lcd_panel_vendor.h>
 
 #define TAG "XINGZHI_CUBE_0_96OLED_WIFI"
+#define AUDIO_CODEC_FIXED_OUTPUT_VOLUME 20
 
 class XINGZHI_CUBE_0_96OLED_WIFI : public WifiBoard {
 private:
@@ -34,12 +35,10 @@ private:
 
     void InitializePowerManager() {
         power_manager_ = new PowerManager(GPIO_NUM_38);
-        power_manager_->OnChargingStatusChanged([this](bool is_charging) {
-            if (is_charging) {
-                power_save_timer_->SetEnabled(false);
-            } else {
-                power_save_timer_->SetEnabled(true);
-            }
+        power_manager_->OnChargingStatusChanged([this](bool) {
+            // This hardware variant can report unstable battery/charging state
+            // when powered by USB without a battery. Keep power save disabled.
+            power_save_timer_->SetEnabled(false);
         });
     }
 
@@ -63,7 +62,7 @@ private:
             esp_lcd_panel_disp_on_off(panel_, false); //关闭显示
             esp_deep_sleep_start();
         });
-        power_save_timer_->SetEnabled(true);
+        power_save_timer_->SetEnabled(false);
     }
 
     void InitializeDisplayI2c() {
@@ -84,20 +83,17 @@ private:
 
     void InitializeSsd1306Display() {
         // SSD1306 config
-        esp_lcd_panel_io_i2c_config_t io_config = {
-            .dev_addr = 0x3C,
-            .scl_speed_hz = 400 * 1000,
-            .control_phase_bytes = 1,
-            .dc_bit_offset = 6,
-            .lcd_cmd_bits = 8,
-            .lcd_param_bits = 8,
-            .on_color_trans_done = nullptr,
-            .user_ctx = nullptr,
-            .flags = {
-                .dc_low_on_data = 0,
-                .disable_control_phase = 0,
-            },
-        };
+        esp_lcd_panel_io_i2c_config_t io_config = {};
+        io_config.dev_addr = 0x3C;
+        io_config.scl_speed_hz = 400 * 1000;
+        io_config.control_phase_bytes = 1;
+        io_config.dc_bit_offset = 6;
+        io_config.lcd_cmd_bits = 8;
+        io_config.lcd_param_bits = 8;
+        io_config.on_color_trans_done = nullptr;
+        io_config.user_ctx = nullptr;
+        io_config.flags.dc_low_on_data = 0;
+        io_config.flags.disable_control_phase = 0;
 
         ESP_ERROR_CHECK(esp_lcd_new_panel_io_i2c(display_i2c_bus_, &io_config, &panel_io_));
 
@@ -142,36 +138,26 @@ private:
 
         volume_up_button_.OnClick([this]() {
             power_save_timer_->WakeUp();
-            auto codec = GetAudioCodec();
-            auto volume = codec->output_volume() + 10;
-            if (volume > 100) {
-                volume = 100;
-            }
-            codec->SetOutputVolume(volume);
-            GetDisplay()->ShowNotification(Lang::Strings::VOLUME + std::to_string(volume));
+            GetAudioCodec()->SetOutputVolume(AUDIO_CODEC_FIXED_OUTPUT_VOLUME);
+            GetDisplay()->ShowNotification(Lang::Strings::VOLUME + std::to_string(AUDIO_CODEC_FIXED_OUTPUT_VOLUME));
         });
 
         volume_up_button_.OnLongPress([this]() {
             power_save_timer_->WakeUp();
-            GetAudioCodec()->SetOutputVolume(100);
-            GetDisplay()->ShowNotification(Lang::Strings::MAX_VOLUME);
+            GetAudioCodec()->SetOutputVolume(AUDIO_CODEC_FIXED_OUTPUT_VOLUME);
+            GetDisplay()->ShowNotification(Lang::Strings::VOLUME + std::to_string(AUDIO_CODEC_FIXED_OUTPUT_VOLUME));
         });
 
         volume_down_button_.OnClick([this]() {
             power_save_timer_->WakeUp();
-            auto codec = GetAudioCodec();
-            auto volume = codec->output_volume() - 10;
-            if (volume < 0) {
-                volume = 0;
-            }
-            codec->SetOutputVolume(volume);
-            GetDisplay()->ShowNotification(Lang::Strings::VOLUME + std::to_string(volume));
+            GetAudioCodec()->SetOutputVolume(AUDIO_CODEC_FIXED_OUTPUT_VOLUME);
+            GetDisplay()->ShowNotification(Lang::Strings::VOLUME + std::to_string(AUDIO_CODEC_FIXED_OUTPUT_VOLUME));
         });
 
         volume_down_button_.OnLongPress([this]() {
             power_save_timer_->WakeUp();
-            GetAudioCodec()->SetOutputVolume(0);
-            GetDisplay()->ShowNotification(Lang::Strings::MUTED);
+            GetAudioCodec()->SetOutputVolume(AUDIO_CODEC_FIXED_OUTPUT_VOLUME);
+            GetDisplay()->ShowNotification(Lang::Strings::VOLUME + std::to_string(AUDIO_CODEC_FIXED_OUTPUT_VOLUME));
         });
     }
 
@@ -194,7 +180,8 @@ public:
 
     virtual AudioCodec* GetAudioCodec() override {
         static NoAudioCodecSimplex audio_codec(AUDIO_INPUT_SAMPLE_RATE, AUDIO_OUTPUT_SAMPLE_RATE,
-            AUDIO_I2S_SPK_GPIO_BCLK, AUDIO_I2S_SPK_GPIO_LRCK, AUDIO_I2S_SPK_GPIO_DOUT, AUDIO_I2S_MIC_GPIO_SCK, AUDIO_I2S_MIC_GPIO_WS, AUDIO_I2S_MIC_GPIO_DIN);
+            AUDIO_I2S_SPK_GPIO_BCLK, AUDIO_I2S_SPK_GPIO_LRCK, AUDIO_I2S_SPK_GPIO_DOUT, I2S_STD_SLOT_BOTH,
+            AUDIO_I2S_MIC_GPIO_SCK, AUDIO_I2S_MIC_GPIO_WS, AUDIO_I2S_MIC_GPIO_DIN, I2S_STD_SLOT_LEFT);
         return &audio_codec;
     }
 
@@ -203,15 +190,12 @@ public:
     }
 
     virtual bool GetBatteryLevel(int& level, bool& charging, bool& discharging) override {
-        static bool last_discharging = false;
-        charging = power_manager_->IsCharging();
-        discharging = power_manager_->IsDischarging();
-        if (discharging != last_discharging) {
-            power_save_timer_->SetEnabled(discharging);
-            last_discharging = discharging;
-        }
-        level = power_manager_->GetBatteryLevel();
-        return true;
+        // Hide unstable battery readings when powered by USB without a battery.
+        level = 100;
+        charging = false;
+        discharging = false;
+        power_save_timer_->SetEnabled(false);
+        return false;
     }
 
     virtual void SetPowerSaveLevel(PowerSaveLevel level) override {

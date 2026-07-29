@@ -186,6 +186,9 @@ void WifiBoard::StartWifiConfigMode() {
     auto &blufi = Blufi::GetInstance();
     // initialize esp-blufi protocol
     blufi.init();
+    Application::GetInstance().Schedule([]() {
+        Application::GetInstance().Alert("BLE 配网", "请在小程序中连接 Xiaozhi-Blufi", "gear", Lang::Sounds::OGG_WIFICONFIG);
+    });
 #endif
 }
 

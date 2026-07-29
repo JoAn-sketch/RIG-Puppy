@@ -11,6 +11,8 @@
 #include "assets/lang_config.h"
 
 #define TAG "WS"
+#define DEFAULT_WEBSOCKET_URL "ws://122.51.155.114:8000/xiaozhi/v1/"
+#define DEFAULT_WEBSOCKET_TOKEN "kPQSzgxDr_pqB3zb6H8R8EoNP_zAznExcnhAkk1K8u8.1784445309"
 
 WebsocketProtocol::WebsocketProtocol() { event_group_handle_ = xEventGroupCreate(); }
 
@@ -79,7 +81,13 @@ void WebsocketProtocol::CloseAudioChannel(bool send_goodbye) {
 bool WebsocketProtocol::OpenAudioChannel() {
     Settings settings("websocket", false);
     std::string url = settings.GetString("url");
+    if (url.empty()) {
+        url = DEFAULT_WEBSOCKET_URL;
+    }
     std::string token = settings.GetString("token");
+    if (token.empty()) {
+        token = DEFAULT_WEBSOCKET_TOKEN;
+    }
     int version = settings.GetInt("version");
     if (version != 0) {
         version_ = version;

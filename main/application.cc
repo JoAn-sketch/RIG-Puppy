@@ -174,7 +174,7 @@ void Application::Run() {
         MAIN_EVENT_VAD_CHANGE | MAIN_EVENT_CLOCK_TICK | MAIN_EVENT_ERROR |
         MAIN_EVENT_NETWORK_CONNECTED | MAIN_EVENT_NETWORK_DISCONNECTED | MAIN_EVENT_TOGGLE_CHAT |
         MAIN_EVENT_START_LISTENING | MAIN_EVENT_STOP_LISTENING | MAIN_EVENT_ACTIVATION_DONE |
-        MAIN_EVENT_STATE_CHANGED | MAIN_EVENT_PLAYBACK_DRAINED;
+        MAIN_EVENT_STATE_CHANGED | MAIN_EVENT_PLAYBACK_DRAINED | MAIN_EVENT_BOOT_GREETING;
 
     while (true) {
         auto bits = xEventGroupWaitBits(event_group_, ALL_EVENTS, pdTRUE, pdFALSE, portMAX_DELAY);
@@ -195,6 +195,10 @@ void Application::Run() {
 
         if (bits & MAIN_EVENT_ACTIVATION_DONE) {
             HandleActivationDoneEvent();
+        }
+
+        if (bits & MAIN_EVENT_BOOT_GREETING) {
+            HandleBootGreetingEvent();
         }
 
         if (bits & MAIN_EVENT_STATE_CHANGED) {
@@ -243,6 +247,8 @@ void Application::Run() {
 
         if (bits & MAIN_EVENT_VAD_CHANGE) {
             if (GetDeviceState() == kDeviceStateListening) {
+                auto display = Board::GetInstance().GetDisplay();
+                display->SetStatus(IsVoiceDetected() ? Lang::Strings::LISTENING : Lang::Strings::STANDBY);
                 auto led = Board::GetInstance().GetLed();
                 led->OnStateChanged();
             }
@@ -335,6 +341,16 @@ void Application::HandleActivationDoneEvent() {
         // Play the success sound to indicate the device is ready
         audio_service_.PlaySound(Lang::Sounds::OGG_SUCCESS);
     });
+
+    xTaskCreate(
+        [](void* arg) {
+            auto app = static_cast<Application*>(arg);
+            // Let the local ready sound finish before opening the server channel.
+            vTaskDelay(pdMS_TO_TICKS(1500));
+            xEventGroupSetBits(app->event_group_, MAIN_EVENT_BOOT_GREETING);
+            vTaskDelete(nullptr);
+        },
+        "boot_greeting", 4096, this, 5, nullptr);
 }
 
 void Application::ActivationTask() {
@@ -415,6 +431,10 @@ void Application::CheckAssetsVersion() {
 }
 
 void Application::CheckNewVersion() {
+    ESP_LOGW(TAG, "OTA version check disabled for local firmware bring-up");
+    ota_->MarkCurrentVersionValid();
+    return;
+
     const int MAX_RETRY = 10;
     int retry_count = 0;
     int retry_delay = 10;  // Initial retry delay in seconds
@@ -504,8 +524,8 @@ void Application::InitializeProtocol() {
     } else if (ota_->HasWebsocketConfig()) {
         protocol_ = std::make_unique<WebsocketProtocol>();
     } else {
-        ESP_LOGW(TAG, "No protocol specified in the OTA config, using MQTT");
-        protocol_ = std::make_unique<MqttProtocol>();
+        ESP_LOGW(TAG, "No protocol specified in the OTA config, using WebSocket");
+        protocol_ = std::make_unique<WebsocketProtocol>();
     }
 
     protocol_->OnConnected([this]() { DismissAlert(); });
@@ -534,6 +554,7 @@ void Application::InitializeProtocol() {
     protocol_->OnAudioChannelClosed([this, &board]() {
         board.SetPowerSaveLevel(PowerSaveLevel::LOW_POWER);
         Schedule([this]() {
+            boot_greeting_channel_opened_ = false;
             auto display = Board::GetInstance().GetDisplay();
             display->SetChatMessage("system", "");
             SetDeviceState(kDeviceStateIdle);
@@ -560,6 +581,15 @@ void Application::InitializeProtocol() {
             } else if (strcmp(state->valuestring, "stop") == 0) {
                 Schedule([this]() {
                     if (GetDeviceState() == kDeviceStateSpeaking) {
+                        if (boot_greeting_channel_opened_) {
+                            boot_greeting_channel_opened_ = false;
+                            if (protocol_ && protocol_->IsAudioChannelOpened()) {
+                                SetListeningMode(GetDefaultListeningMode());
+                            } else {
+                                SetDeviceState(kDeviceStateIdle);
+                            }
+                            return;
+                        }
                         if (listening_mode_ == kListeningModeManualStop) {
                             SetDeviceState(kDeviceStateIdle);
                         } else {
@@ -732,6 +762,7 @@ void Application::HandleToggleChatEvent() {
             Schedule([this, mode]() { ContinueOpenAudioChannel(mode); });
             return;
         }
+        boot_greeting_channel_opened_ = false;
         SetListeningMode(mode);
     } else if (state == kDeviceStateSpeaking) {
         AbortSpeaking(kAbortReasonNone);
@@ -760,6 +791,52 @@ void Application::ContinueOpenAudioChannel(ListeningMode mode) {
     }
 
     SetListeningMode(mode);
+}
+
+void Application::HandleBootGreetingEvent() {
+    if (boot_greeting_requested_) {
+        return;
+    }
+    boot_greeting_requested_ = true;
+
+    if (!protocol_) {
+        ESP_LOGE(TAG, "Protocol not initialized, skip boot greeting");
+        return;
+    }
+
+    if (GetDeviceState() != kDeviceStateIdle) {
+        ESP_LOGW(TAG, "Device is not idle, skip boot greeting");
+        return;
+    }
+
+    if (protocol_->IsAudioChannelOpened()) {
+        ESP_LOGW(TAG, "Audio channel already opened, skip boot greeting");
+        return;
+    }
+
+    ESP_LOGI(TAG, "Opening audio channel for boot greeting");
+    SetDeviceState(kDeviceStateConnecting);
+    Schedule([this]() { ContinueBootGreetingOpenAudioChannel(); });
+}
+
+void Application::ContinueBootGreetingOpenAudioChannel() {
+    if (GetDeviceState() != kDeviceStateConnecting || !protocol_) {
+        return;
+    }
+
+    auto& board = Board::GetInstance();
+    board.SetPowerSaveLevel(PowerSaveLevel::PERFORMANCE);
+
+    if (!protocol_->OpenAudioChannel()) {
+        boot_greeting_channel_opened_ = false;
+        SetDeviceState(kDeviceStateIdle);
+        return;
+    }
+
+    boot_greeting_channel_opened_ = true;
+    if (GetDeviceState() == kDeviceStateConnecting) {
+        SetDeviceState(kDeviceStateIdle);
+    }
 }
 
 void Application::HandleStartListeningEvent() {
@@ -930,7 +1007,9 @@ void Application::HandleStateChangedEvent() {
             display->SetChatMessage("system", "");
             break;
         case kDeviceStateListening:
-            display->SetStatus(Lang::Strings::LISTENING);
+            // Keep the microphone active, but only show "listening" while VAD
+            // detects child speech. This avoids looking stuck after boot greeting.
+            display->SetStatus(IsVoiceDetected() ? Lang::Strings::LISTENING : Lang::Strings::STANDBY);
             display->SetEmotion("neutral");
 
             // Make sure the audio processor is running
