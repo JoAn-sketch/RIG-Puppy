@@ -1,0 +1,107 @@
+<view class="page">
+  <view class="hero-card">
+    <view class="eyebrow">BLE SETUP</view>
+    <view class="title">添加一只 Puppy</view>
+    <view class="subtitle">先让 Puppy 进入配网模式，再用蓝牙把家里的 Wi‑Fi 发给它。</view>
+  </view>
+
+  <view class="card">
+    <view class="section-title">1. 选择 Puppy</view>
+    <view class="helper">请长按设备配网键，直到听到提示音或看到指示灯闪烁。</view>
+
+    <button
+      class="primary-btn"
+      loading="{{scanning}}"
+      disabled="{{connecting || provisioning}}"
+      bindtap="onScanTap"
+    >
+      {{scanning ? "正在扫描..." : "扫描附近 Puppy"}}
+    </button>
+
+    <view wx:if="{{devices.length}}" class="device-list">
+      <view
+        wx:for="{{devices}}"
+        wx:key="deviceId"
+        class="device-card {{selectedDeviceId === item.deviceId ? 'device-card-active' : ''}}"
+        data-device-id="{{item.deviceId}}"
+        bindtap="onSelectDevice"
+      >
+        <view>
+          <view class="device-name">{{item.name}}</view>
+          <view class="device-meta">信号 {{item.RSSI || "-"}} · {{item.deviceKey || "等待设备回传ID"}}</view>
+        </view>
+        <view class="select-dot"></view>
+      </view>
+    </view>
+
+    <view wx:else class="empty-hint">
+      还没有发现 Puppy。请确认设备已开机并进入配网模式。
+    </view>
+  </view>
+
+  <view class="card">
+    <view class="section-title">2. 填写 Wi‑Fi</view>
+    <view class="helper">小程序不能读取 Wi‑Fi 密码，需要你手动填写。Puppy 只支持 2.4GHz Wi‑Fi，不支持 5GHz。</view>
+
+    <button
+      class="secondary-btn"
+      loading="{{gettingWifiList}}"
+      disabled="{{gettingWifiList || provisioning}}"
+      bindtap="onGetWifiListTap"
+    >
+      {{gettingWifiList ? "正在获取..." : "获取附近 Wi‑Fi"}}
+    </button>
+    <view class="wifi-hint">{{wifiListHint}}</view>
+
+    <view wx:if="{{wifiList.length}}" class="wifi-list">
+      <view
+        wx:for="{{wifiList}}"
+        wx:key="SSID"
+        class="wifi-chip {{ssid === item.SSID ? 'wifi-chip-active' : ''}}"
+        data-ssid="{{item.SSID}}"
+        bindtap="onSelectWifi"
+      >
+        {{item.SSID}}
+      </view>
+    </view>
+
+    <view class="field-label">Wi‑Fi 名称</view>
+    <input
+      class="text-input"
+      placeholder="请输入家里的 Wi‑Fi 名称"
+      value="{{ssid}}"
+      bindinput="onSsidInput"
+    />
+    <view class="ssid-warning" wx:if="{{ssidWarning}}">{{ssidWarning}}</view>
+
+    <view class="field-label">Wi‑Fi 密码</view>
+    <input
+      class="text-input"
+      placeholder="请输入 Wi‑Fi 密码"
+      password
+      value="{{password}}"
+      bindinput="onPasswordInput"
+    />
+  </view>
+
+  <view class="card">
+    <view class="section-title">3. 开始配网</view>
+    <view class="status-line">{{statusText}}</view>
+    <view class="mini-helper">{{provisionHint}}</view>
+
+    <button
+      class="submit-btn"
+      loading="{{provisioning}}"
+      disabled="{{provisioning || connecting}}"
+      bindtap="onProvisionTap"
+    >
+      {{provisioning ? "正在配网..." : "发送 Wi‑Fi 给 Puppy"}}
+    </button>
+
+    <view wx:if="{{provisionLogs.length}}" class="provision-log">
+      <view wx:for="{{provisionLogs}}" wx:key="*this" class="provision-log-line">{{item}}</view>
+    </view>
+
+    <view class="error-text" wx:if="{{errorText}}">{{errorText}}</view>
+  </view>
+</view>

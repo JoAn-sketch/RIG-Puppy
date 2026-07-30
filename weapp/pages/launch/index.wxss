@@ -1,0 +1,248 @@
+.page {
+  position: relative;
+  min-height: 100vh;
+  padding: 42rpx 30rpx;
+  overflow: hidden;
+  background: #f8b421;
+  box-sizing: border-box;
+}
+
+.orb {
+  position: absolute;
+  border-radius: 999rpx;
+  opacity: 0.36;
+}
+
+.orb-one {
+  top: -120rpx;
+  right: -100rpx;
+  width: 340rpx;
+  height: 340rpx;
+  background: #fff1b8;
+}
+
+.orb-two {
+  left: -130rpx;
+  bottom: 160rpx;
+  width: 300rpx;
+  height: 300rpx;
+  background: #d77d32;
+}
+
+.hero-card {
+  position: relative;
+  z-index: 1;
+  min-height: calc(100vh - 84rpx);
+  padding: 34rpx 30rpx 42rpx;
+  border-radius: 38rpx;
+  background: #fff9ef;
+  box-shadow: 0 24rpx 54rpx rgba(122, 77, 10, 0.14);
+  box-sizing: border-box;
+}
+
+.brand-row {
+  display: flex;
+  align-items: center;
+  gap: 18rpx;
+}
+
+.brand-mark {
+  width: 68rpx;
+  height: 68rpx;
+  border-radius: 22rpx;
+  background: #5a281c;
+  color: #ffd254;
+  font-size: 36rpx;
+  line-height: 68rpx;
+  text-align: center;
+  font-weight: 800;
+}
+
+.brand-title {
+  color: #2f241f;
+  font-size: 34rpx;
+  font-weight: 800;
+  line-height: 1.2;
+}
+
+.brand-subtitle {
+  margin-top: 4rpx;
+  color: #936f4a;
+  font-size: 22rpx;
+}
+
+.visual-wrap {
+  margin: 68rpx auto 42rpx;
+  width: 500rpx;
+  height: 390rpx;
+  border-radius: 40rpx;
+  background: linear-gradient(180deg, #ffe6a3 0%, #fff8dd 100%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: inset 0 -14rpx 30rpx rgba(152, 91, 8, 0.08);
+}
+
+.hero-visual {
+  width: 440rpx;
+  height: 340rpx;
+}
+
+.title {
+  color: #2f241f;
+  font-size: 50rpx;
+  line-height: 1.25;
+  font-weight: 800;
+  text-align: center;
+}
+
+.subtitle {
+  margin: 18rpx auto 0;
+  max-width: 560rpx;
+  color: #6b5540;
+  font-size: 27rpx;
+  line-height: 1.58;
+  text-align: center;
+}
+
+.login-btn {
+  margin-top: 58rpx;
+  height: 96rpx;
+  line-height: 96rpx;
+  border-radius: 999rpx;
+  background: #5a281c;
+  color: #ffd254;
+  font-size: 32rpx;
+  font-weight: 800;
+  box-shadow: 0 16rpx 30rpx rgba(90, 40, 28, 0.2);
+}
+
+.error-text {
+  margin-top: 22rpx;
+  color: #b53d2e;
+  font-size: 24rpx;
+  line-height: 1.55;
+  text-align: center;
+}
+
+.sheet-mask {
+  position: fixed;
+  z-index: 50;
+  left: 0;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  background: rgba(47, 36, 31, 0.38);
+  display: flex;
+  align-items: flex-end;
+}
+
+.avatar-sheet {
+  width: 100%;
+  padding: 20rpx 36rpx 44rpx;
+  border-radius: 36rpx 36rpx 0 0;
+  background: #fff9ef;
+  box-shadow: 0 -18rpx 44rpx rgba(47, 36, 31, 0.18);
+  box-sizing: border-box;
+  text-align: center;
+}
+
+.sheet-handle {
+  margin: 0 auto 26rpx;
+  width: 88rpx;
+  height: 10rpx;
+  border-radius: 999rpx;
+  background: #dfc59b;
+}
+
+.sheet-title {
+  color: #2f241f;
+  font-size: 38rpx;
+  font-weight: 800;
+  line-height: 1.3;
+}
+
+.sheet-subtitle {
+  margin: 14rpx auto 28rpx;
+  max-width: 560rpx;
+  color: #7b5b40;
+  font-size: 25rpx;
+  line-height: 1.55;
+}
+
+.sheet-option-list {
+  overflow: hidden;
+  border-radius: 28rpx;
+  background: #ffffff;
+  border: 2rpx solid rgba(90, 40, 28, 0.08);
+  box-shadow: 0 10rpx 26rpx rgba(90, 40, 28, 0.06);
+}
+
+.sheet-option {
+  margin: 0;
+  padding: 0 28rpx;
+  height: 148rpx;
+  background: #ffffff;
+  border: 0;
+  border-radius: 0;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 22rpx;
+}
+
+.sheet-option::after,
+.sheet-cancel-btn::after {
+  border: 0;
+}
+
+.sheet-option + .sheet-option {
+  border-top: 2rpx solid rgba(90, 40, 28, 0.06);
+}
+
+.sheet-option-primary {
+  height: 170rpx;
+}
+
+.sheet-option-avatar,
+.sheet-option-icon {
+  flex: none;
+  width: 82rpx;
+  height: 82rpx;
+  border-radius: 24rpx;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  background: #fff3cf;
+  color: #5a281c;
+  font-size: 24rpx;
+  font-weight: 800;
+}
+
+.sheet-option-avatar-placeholder {
+  background: linear-gradient(180deg, #fff5d6 0%, #ffe8a1 100%);
+}
+
+.sheet-option-avatar {
+  border: 2rpx solid rgba(90, 40, 28, 0.16);
+}
+
+.sheet-option-text {
+  color: #2f241f;
+  font-size: 32rpx;
+  line-height: 1.3;
+  font-weight: 700;
+  text-align: left;
+}
+
+.sheet-cancel-btn {
+  margin-top: 28rpx;
+  height: 76rpx;
+  line-height: 76rpx;
+  border-radius: 999rpx;
+  background: #fff3cf;
+  color: #7b5b40;
+  font-size: 26rpx;
+  font-weight: 700;
+}

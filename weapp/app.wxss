@@ -1,0 +1,11 @@
+page {
+  background: #f8f4ec;
+  color: #2f241f;
+  font-family: sans-serif;
+}
+
+.container {
+  min-height: 100vh;
+  padding: 32rpx;
+  box-sizing: border-box;
+}

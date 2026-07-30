@@ -1,0 +1,67 @@
+<view class="page">
+  <view class="card">
+    <view class="title">先告诉 Puppy 怎么称呼你</view>
+    <view class="subtitle">提交后，机器人会优先用这个称呼和你说话。</view>
+
+    <view class="field-label">喜欢的称呼</view>
+    <input
+      class="text-input"
+      placeholder="例如：乐乐 / 泡泡"
+      value="{{nickname}}"
+      maxlength="12"
+      bindinput="onNicknameInput"
+    />
+
+    <view class="field-label">你怎么称呼这个机器人</view>
+    <input
+      class="text-input"
+      placeholder="例如：Puppy / 小狗 / 汪汪"
+      value="{{robotName}}"
+      maxlength="12"
+      bindinput="onRobotNameInput"
+    />
+
+    <view class="field-label">年龄</view>
+    <picker
+      mode="selector"
+      range="{{ageOptions}}"
+      value="{{ageIndex}}"
+      bindchange="onAgeChange"
+    >
+      <view class="picker-field {{ageIndex >= 0 ? 'picker-filled' : ''}}">
+        {{ ageIndex >= 0 ? ageOptions[ageIndex] + " 岁" : "请选择年龄（3-11 岁）" }}
+      </view>
+    </picker>
+
+    <view class="field-label">我想更了解你一点～你最喜欢哪些东西呀？</view>
+    <view class="field-hint">最多同时选 3 个</view>
+    <view class="choice-grid">
+      <view
+        wx:for="{{favoriteThingOptions}}"
+        wx:key="value"
+        class="choice-chip {{item.selected ? 'choice-chip-active' : ''}}"
+        data-value="{{item.value}}"
+        bindtap="onFavoriteThingTap"
+      >
+        {{item.value}}
+      </view>
+    </view>
+
+    <view class="error-text" wx:if="{{errorText}}">
+      {{errorText}}
+    </view>
+
+    <view class="hint-text" wx:if="{{submitStepText}}">
+      {{submitStepText}}
+    </view>
+
+    <button
+      class="submit-btn"
+      loading="{{submitting}}"
+      disabled="{{submitting}}"
+      bindtap="onSubmit"
+    >
+      {{submitting ? "提交中..." : "提交"}}
+    </button>
+  </view>
+</view>

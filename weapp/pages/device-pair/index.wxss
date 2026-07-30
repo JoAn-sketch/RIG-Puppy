@@ -1,0 +1,217 @@
+.page {
+  min-height: 100vh;
+  padding: 36rpx 28rpx 48rpx;
+  background: #f8b421;
+  box-sizing: border-box;
+}
+
+.hero-card,
+.card {
+  background: #fff9ef;
+  border-radius: 32rpx;
+  box-shadow: 0 20rpx 48rpx rgba(137, 86, 10, 0.12);
+}
+
+.hero-card {
+  padding: 34rpx 30rpx;
+}
+
+.card {
+  margin-top: 24rpx;
+  padding: 30rpx 28rpx;
+}
+
+.eyebrow {
+  font-size: 22rpx;
+  letter-spacing: 4rpx;
+  color: #8f6a42;
+  font-weight: 700;
+}
+
+.title {
+  margin-top: 10rpx;
+  font-size: 44rpx;
+  line-height: 1.25;
+  font-weight: 800;
+  color: #2f241f;
+}
+
+.subtitle,
+.helper {
+  margin-top: 14rpx;
+  font-size: 25rpx;
+  line-height: 1.6;
+  color: #6b5540;
+}
+
+.section-title {
+  font-size: 30rpx;
+  font-weight: 800;
+  color: #2f241f;
+}
+
+.primary-btn,
+.submit-btn {
+  margin-top: 24rpx;
+  height: 88rpx;
+  line-height: 88rpx;
+  border-radius: 999rpx;
+  background: #5a281c;
+  color: #ffd254;
+  font-size: 28rpx;
+  font-weight: 700;
+}
+
+.secondary-btn {
+  margin-top: 22rpx;
+  height: 76rpx;
+  line-height: 76rpx;
+  border-radius: 999rpx;
+  border: 2rpx solid #dfc59b;
+  background: #fff;
+  color: #5a281c;
+  font-size: 26rpx;
+  font-weight: 700;
+}
+
+.submit-btn[disabled],
+.primary-btn[disabled],
+.secondary-btn[disabled] {
+  opacity: 0.55;
+}
+
+.device-list {
+  margin-top: 24rpx;
+  display: flex;
+  flex-direction: column;
+  gap: 18rpx;
+}
+
+.device-card {
+  padding: 24rpx;
+  border-radius: 24rpx;
+  border: 2rpx solid #dfc59b;
+  background: #fff;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.device-card-active {
+  border-color: #5a281c;
+  background: #fff3d8;
+}
+
+.device-name {
+  font-size: 28rpx;
+  color: #2f241f;
+  font-weight: 700;
+}
+
+.device-meta {
+  margin-top: 8rpx;
+  font-size: 22rpx;
+  color: #8f6a42;
+}
+
+.select-dot {
+  width: 26rpx;
+  height: 26rpx;
+  border-radius: 50%;
+  border: 4rpx solid #dfc59b;
+}
+
+.device-card-active .select-dot {
+  border-color: #5a281c;
+  background: #5a281c;
+}
+
+.empty-hint,
+.status-line {
+  margin-top: 20rpx;
+  font-size: 24rpx;
+  line-height: 1.6;
+  color: #8f6a42;
+}
+
+.wifi-list {
+  margin-top: 18rpx;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14rpx;
+}
+
+.wifi-hint {
+  margin-top: 14rpx;
+  font-size: 22rpx;
+  line-height: 1.5;
+  color: #8f6a42;
+}
+
+.wifi-chip {
+  max-width: 100%;
+  padding: 14rpx 20rpx;
+  border-radius: 999rpx;
+  border: 2rpx solid #dfc59b;
+  background: #fff;
+  color: #5d4633;
+  font-size: 24rpx;
+}
+
+.wifi-chip-active {
+  border-color: #5a281c;
+  background: #5a281c;
+  color: #ffd254;
+}
+
+.field-label {
+  margin-top: 26rpx;
+  margin-bottom: 12rpx;
+  font-size: 24rpx;
+  color: #8f6a42;
+}
+
+.mini-helper {
+  margin-top: 10rpx;
+  font-size: 22rpx;
+  line-height: 1.5;
+  color: #8f6a42;
+}
+
+.text-input {
+  min-height: 96rpx;
+  padding: 0 24rpx;
+  border-radius: 22rpx;
+  border: 2rpx solid #dfc59b;
+  background: #fff;
+  font-size: 28rpx;
+  color: #2f241f;
+  box-sizing: border-box;
+}
+
+.ssid-warning {
+  margin-top: 12rpx;
+  font-size: 22rpx;
+  line-height: 1.5;
+  color: #b53d2e;
+}
+
+.error-text {
+  margin-top: 20rpx;
+  font-size: 24rpx;
+  line-height: 1.6;
+  color: #b53d2e;
+}
+
+.provision-log {
+  margin-top: 18rpx;
+  padding: 18rpx 20rpx;
+  border-radius: 20rpx;
+  background: rgba(90, 40, 28, 0.08);
+}
+
+.provision-log-line {
+  font-size: 21rpx;
+  line-height: 1.6;
+  color: #6b5540;
+}

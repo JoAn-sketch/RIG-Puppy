@@ -1,0 +1,43 @@
+{
+  "pages": [
+    "pages/launch/index",
+    "pages/my-profile/index",
+    "pages/today-companion/index",
+    "pages/device-pair/index",
+    "pages/profile/index"
+  ],
+  "window": {
+    "navigationBarTitleText": "Puppy",
+    "navigationBarBackgroundColor": "#F8B421",
+    "navigationBarTextStyle": "black",
+    "backgroundColor": "#F8B421",
+    "backgroundTextStyle": "light"
+  },
+  "permission": {
+    "scope.userLocation": {
+      "desc": "用于获取附近 Wi‑Fi 列表，方便给 Puppy 配网"
+    }
+  },
+  "tabBar": {
+    "color": "#8e7564",
+    "selectedColor": "#2f241f",
+    "backgroundColor": "#fffdf9",
+    "borderStyle": "white",
+    "list": [
+      {
+        "pagePath": "pages/my-profile/index",
+        "text": "我的档案"
+      },
+      {
+        "pagePath": "pages/today-companion/index",
+        "text": "今日陪伴"
+      },
+      {
+        "pagePath": "pages/device-pair/index",
+        "text": "添加设备"
+      }
+    ]
+  },
+  "style": "v2",
+  "sitemapLocation": "sitemap.json"
+}

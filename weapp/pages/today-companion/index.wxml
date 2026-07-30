@@ -1,0 +1,36 @@
+<view class="container">
+  <view wx:if="{{loading}}" class="loading-text">正在更新陪伴记录...</view>
+
+  <view
+    class="dashboard-card {{item.cardClass}}"
+    wx:for="{{summaryCards}}"
+    wx:key="date"
+  >
+    <view class="card-header">
+      <view class="eyebrow">{{item.dateLabel}} · {{item.dateText}}</view>
+    </view>
+
+    <view class="info-block">
+      <view class="block-title">⏰ 陪伴时光</view>
+      <view class="duration">{{item.durationText}}</view>
+      <view class="caption">进行了 {{item.sessionCount}} 次互动</view>
+    </view>
+
+    <view wx:if="{{item.showActivitySections}}">
+      <view class="info-block">
+        <view class="block-title">🎈 一起玩了什么</view>
+        <view wx:if="{{item.activityItems.length}}" class="activity-list">
+          <view class="activity-item" wx:for="{{item.activityItems}}" wx:for-item="activity" wx:key="key">
+            {{activity.label}}
+          </view>
+        </view>
+        <view wx:else class="empty-text">{{item.emptyText}}</view>
+      </view>
+
+      <view class="info-block highlight-block">
+        <view class="block-title">{{item.highlightTitle}}</view>
+        <view class="highlight-text">{{item.highlightText}}</view>
+      </view>
+    </view>
+  </view>
+</view>

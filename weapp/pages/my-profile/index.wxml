@@ -1,0 +1,40 @@
+<view class="container">
+  <view class="card">
+    <view class="hero">
+      <view class="eyebrow">MY PROFILE</view>
+      <view class="title-row">
+        <view class="title">我的档案</view>
+        <image
+          wx:if="{{avatarUrl}}"
+          class="profile-avatar"
+          src="{{avatarUrl}}"
+          mode="aspectFill"
+        />
+      </view>
+      <view class="subtitle">这里会显示已经提交给 Puppy 的资料。</view>
+    </view>
+
+    <view wx:if="{{hasProfile}}" class="profile-list">
+      <view class="error-text" wx:if="{{errorText}}">
+        {{errorText}}
+      </view>
+
+      <view class="profile-item" wx:for="{{profileItems}}" wx:key="label">
+        <view class="label">{{item.label}}</view>
+        <view class="value {{item.className || ''}}">{{item.value}}</view>
+      </view>
+    </view>
+
+    <view wx:else class="empty-state">
+      还没有填写儿童画像，先去提交称呼和年龄。
+    </view>
+
+    <navigator class="back-link" url="/pages/profile/index">
+      返回填写
+    </navigator>
+
+    <navigator class="device-link" url="/pages/device-pair/index" open-type="switchTab">
+      添加 / 重新配网 Puppy
+    </navigator>
+  </view>
+</view>
