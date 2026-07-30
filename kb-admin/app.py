@@ -1375,6 +1375,60 @@ def _load_child_memory_summaries(device_ids):
     return {}
 
 
+def _device_binding_lookup_keys(value):
+    raw = str(value or "").strip().lower()
+    if not raw:
+        return []
+    compact = raw.replace(":", "").replace("-", "")
+    keys = [raw]
+    if compact and compact != raw:
+        keys.append(compact)
+    if len(compact) >= 6:
+        keys.append(compact[-6:])
+    result = []
+    seen = set()
+    for key in keys:
+        if key and key not in seen:
+            seen.add(key)
+            result.append(key)
+    return result
+
+
+def _load_active_openids_by_device(device_ids):
+    normalized = []
+    seen = set()
+    for value in device_ids or []:
+        for lowered in _device_binding_lookup_keys(value):
+            if lowered not in seen:
+                seen.add(lowered)
+                normalized.append(_sql_safe(lowered))
+    if not normalized:
+        return {}
+
+    quoted = ",".join(f"'{item}'" for item in normalized)
+    rows = mysql_query(
+        "SELECT device_id, openid "
+        "FROM device_child_binding "
+        f"WHERE is_active=1 AND LOWER(device_id) IN ({quoted})"
+    )
+    result = {}
+    for row in rows:
+        device_id = str(row.get("device_id") or "").strip().lower()
+        openid = str(row.get("openid") or "").strip()
+        if device_id and openid:
+            result[device_id] = openid
+    return result
+
+
+def _resolve_active_openid_for_device(openids_by_device, *device_ids):
+    for value in device_ids:
+        for key in _device_binding_lookup_keys(value):
+            openid = openids_by_device.get(key)
+            if openid:
+                return openid
+    return ""
+
+
 def _resolve_effective_robot_identity_name(device_id=None):
     normalized_device_id = str(device_id or XIAOZHI_DEBUG_DEVICE_ID).strip() or XIAOZHI_DEBUG_DEVICE_ID
     try:
@@ -2925,6 +2979,13 @@ def api_devices_live():
                 for device_key in (row.get("id"), row.get("mac_address"))
             ]
         )
+        openids_by_device = _load_active_openids_by_device(
+            [
+                device_key
+                for row in rows
+                for device_key in (row.get("id"), row.get("mac_address"))
+            ]
+        )
         for row in rows:
             device_id = str(row.get("id") or "").strip()
             device_mac = str(row.get("mac_address") or "").strip()
@@ -2943,6 +3004,7 @@ def api_devices_live():
                     "agent_id": str(row.get("agent_id") or "").strip(),
                     "agent_name": str(row.get("agent_name") or "").strip(),
                     "robot_name": robot_name,
+                    "wechat_openid": _resolve_active_openid_for_device(openids_by_device, device_id, device_mac),
                     "child_memory": child_memory,
                     "alias": str(row.get("alias") or "").strip(),
                     "board": str(row.get("board") or "").strip(),
@@ -3013,6 +3075,20 @@ def api_devices_live():
                         "agent_name": agent_name,
                     }
 
+        openids_by_device = _load_active_openids_by_device(
+            [
+                device_key
+                for meta in device_meta.values()
+                for device_key in (meta.get("device_id"), meta.get("mac_address"))
+            ]
+        )
+        for meta in device_meta.values():
+            meta["wechat_openid"] = _resolve_active_openid_for_device(
+                openids_by_device,
+                meta.get("device_id"),
+                meta.get("mac_address"),
+            )
+
         child_memory_by_device = _load_child_memory_summaries(
             [
                 device_key
@@ -3042,6 +3118,7 @@ def api_devices_live():
                     "agent_id": meta.get("agent_id") or "",
                     "agent_name": meta.get("agent_name") or "",
                     "robot_name": robot_name,
+                    "wechat_openid": meta.get("wechat_openid") or "",
                     "child_memory": child_memory,
                     "alias": meta.get("alias") or "",
                     "board": meta.get("board") or "",

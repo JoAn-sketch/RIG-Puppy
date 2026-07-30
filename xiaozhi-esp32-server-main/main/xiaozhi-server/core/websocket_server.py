@@ -34,6 +34,7 @@ _setup_websockets_logger()
 
 from core.connection import ConnectionHandler
 from config.config_loader import get_config_from_api_async
+from config.manage_api_client import introspect_device_token
 from core.auth import AuthManager, AuthenticationError
 from core.utils.modules_initialize import initialize_modules
 from core.utils.util import check_vad_update, check_asr_update
@@ -239,3 +240,20 @@ class WebSocketServer:
                         f"认证失败: device-id={device_id}, client-id={client_id}, token_ts={token_ts}"
                     )
                     raise AuthenticationError("Invalid token")
+
+                if self.config.get("manager-api", {}).get("url"):
+                    try:
+                        introspection = await introspect_device_token(
+                            device_id, client_id, token
+                        )
+                    except Exception as e:
+                        self.logger.bind(tag=TAG).warning(
+                            f"Auth Service token校验失败: device-id={device_id}, client-id={client_id}, error={str(e)}"
+                        )
+                        raise AuthenticationError("Token introspection failed")
+                    if not introspection or not introspection.get("valid"):
+                        reason = (introspection or {}).get("reason", "unknown")
+                        self.logger.bind(tag=TAG).warning(
+                            f"token已被Auth Service拒绝: device-id={device_id}, client-id={client_id}, reason={reason}"
+                        )
+                        raise AuthenticationError("Invalid token")

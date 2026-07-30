@@ -65,6 +65,7 @@ code { font-size:11px; background:#f3f4f6; padding:2px 5px; border-radius:4px; }
         <tr>
           <th>设备</th>
           <th>机器人称呼</th>
+          <th>绑定微信 OpenID</th>
           <th>Agent</th>
           <th>连接来源</th>
           <th>客户端</th>
@@ -74,7 +75,7 @@ code { font-size:11px; background:#f3f4f6; padding:2px 5px; border-radius:4px; }
         </tr>
       </thead>
       <tbody id="deviceRows">
-        <tr><td colspan="8" class="empty">加载中…</td></tr>
+        <tr><td colspan="9" class="empty">加载中…</td></tr>
       </tbody>
     </table>
   </div>
@@ -134,7 +135,7 @@ async function loadDevices() {
 
     const tbody = document.getElementById("deviceRows");
     if (!devices.length) {
-      tbody.innerHTML = '<tr><td colspan="8" class="empty">当前没有设备连入</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="9" class="empty">当前没有设备连入</td></tr>';
     } else {
       tbody.innerHTML = devices.map((item) => `
         <tr>
@@ -144,6 +145,7 @@ async function loadDevices() {
             <div class="muted">${item.alias ? `别名: ${item.alias}` : ""}${item.board ? ` ${item.board}` : ""}${item.app_version ? ` · ${item.app_version}` : ""}</div>
           </td>
           <td>${item.robot_name || '<span class="muted">未配置</span>'}</td>
+          <td>${item.wechat_openid ? `<code>${item.wechat_openid}</code>` : '<span class="muted">未绑定</span>'}</td>
           <td>
             <div>${item.agent_name || '<span class="muted">未绑定</span>'}</div>
             <div class="muted">${item.agent_id ? `<code>${item.agent_id}</code>` : ''}</div>
@@ -173,7 +175,7 @@ async function loadDevices() {
 
     status.textContent = `更新于 ${new Date().toLocaleTimeString("zh-CN", { hour12: false })}`;
   } catch (error) {
-    document.getElementById("deviceRows").innerHTML = `<tr><td colspan="8" class="empty">加载失败: ${error.message}</td></tr>`;
+    document.getElementById("deviceRows").innerHTML = `<tr><td colspan="9" class="empty">加载失败: ${error.message}</td></tr>`;
     status.textContent = `加载失败: ${error.message}`;
   }
 }

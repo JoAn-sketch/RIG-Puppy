@@ -195,6 +195,23 @@ async def get_correct_words(mac_address: str) -> Optional[Dict]:
         return None
 
 
+async def introspect_device_token(
+    mac_address: str, client_id: str, token: str
+) -> Optional[Dict]:
+    """向 Auth Service 校验设备 token 状态。握手路径不做长重试，避免连接卡住。"""
+    if not token or not ManageApiClient._instance:
+        return None
+    return await ManageApiClient._instance._async_request(
+        "POST",
+        "/auth/introspect",
+        json={
+            "deviceId": mac_address,
+            "clientId": client_id,
+            "token": token,
+        },
+    )
+
+
 async def generate_and_save_chat_summary(session_id: str) -> Optional[Dict]:
     """生成并保存聊天记录总结"""
     try:

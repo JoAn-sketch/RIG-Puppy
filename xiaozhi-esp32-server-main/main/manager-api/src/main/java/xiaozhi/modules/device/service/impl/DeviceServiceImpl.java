@@ -1,8 +1,6 @@
 package xiaozhi.modules.device.service.impl;
 
 import java.nio.charset.StandardCharsets;
-import java.security.InvalidKeyException;
-import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Base64;
@@ -220,60 +218,6 @@ public class DeviceServiceImpl extends BaseServiceImpl<DeviceDao, DeviceEntity> 
             }
         }
 
-        // 添加WebSocket配置
-        DeviceReportRespDTO.Websocket websocket = new DeviceReportRespDTO.Websocket();
-        // 从系统参数获取WebSocket URL，如果未配置则使用默认值
-        String wsUrl = sysParamsService.getValue(Constant.SERVER_WEBSOCKET, true);
-
-        // 检查是否启用认证并生成token
-        String authEnabled = sysParamsService.getValue(Constant.SERVER_AUTH_ENABLED, true);
-        if ("true".equalsIgnoreCase(authEnabled)) {
-            try {
-                // 生成token
-                String token = generateWebSocketToken(clientId, macAddress);
-                websocket.setToken(token);
-            } catch (Exception e) {
-                log.error("生成WebSocket token失败: {}", e.getMessage());
-                websocket.setToken("");
-            }
-        } else {
-            websocket.setToken("");
-        }
-
-        if (StringUtils.isBlank(wsUrl) || wsUrl.equals("null")) {
-            log.error("WebSocket地址未配置，请登录智控台，在参数管理找到【server.websocket】配置");
-            wsUrl = "ws://xiaozhi.server.com:8000/xiaozhi/v1/";
-            websocket.setUrl(wsUrl);
-        } else {
-            String[] wsUrls = wsUrl.split("\\;");
-            if (wsUrls.length > 0) {
-                // 随机选择一个WebSocket URL
-                websocket.setUrl(wsUrls[RandomUtil.randomInt(0, wsUrls.length)]);
-            } else {
-                log.error("WebSocket地址未配置，请登录智控台，在参数管理找到【server.websocket】配置");
-                websocket.setUrl("ws://xiaozhi.server.com:8000/xiaozhi/v1/");
-            }
-        }
-
-        response.setWebsocket(websocket);
-
-        // 添加MQTT UDP配置
-        // 从系统参数获取MQTT Gateway地址，仅在配置有效时使用
-        String mqttUdpConfig = sysParamsService.getValue(Constant.SERVER_MQTT_GATEWAY, true);
-        if (mqttUdpConfig != null && !mqttUdpConfig.equals("null") && !mqttUdpConfig.isEmpty()) {
-            try {
-                String groupId = deviceById != null && deviceById.getBoard() != null ? deviceById.getBoard()
-                        : "GID_default";
-                DeviceReportRespDTO.MQTT mqtt = buildMqttConfig(macAddress, groupId);
-                if (mqtt != null) {
-                    mqtt.setEndpoint(mqttUdpConfig);
-                    response.setMqtt(mqtt);
-                }
-            } catch (Exception e) {
-                log.error("生成MQTT配置失败: {}", e.getMessage());
-            }
-        }
-
         if (deviceById != null) {
             // 如果设备存在，则异步更新上次连接时间和版本信息
             String appVersion = deviceReport.getApplication() != null ? deviceReport.getApplication().getVersion()
@@ -281,10 +225,6 @@ public class DeviceServiceImpl extends BaseServiceImpl<DeviceDao, DeviceEntity> 
             // 通过Spring代理调用异步方法
             ((DeviceServiceImpl) AopContext.currentProxy()).updateDeviceConnectionInfo(deviceById.getAgentId(),
                     deviceById.getId(), appVersion);
-        } else {
-            // 如果设备不存在，则生成激活码
-            DeviceReportRespDTO.Activation code = buildActivation(macAddress, deviceReport);
-            response.setActivation(code);
         }
 
         return response;
@@ -569,40 +509,6 @@ public class DeviceServiceImpl extends BaseServiceImpl<DeviceDao, DeviceEntity> 
         hmac.init(keySpec);
         byte[] signature = hmac.doFinal(content.getBytes(StandardCharsets.UTF_8));
         return Base64.getEncoder().encodeToString(signature);
-    }
-
-    /**
-     * 生成WebSocket认证token 遵循Python端AuthManager的实现逻辑：token = signature.timestamp
-     * 
-     * @param clientId 客户端ID
-     * @param username 用户名 (通常为deviceId/macAddress)
-     * @return 认证token字符串
-     */
-    public String generateWebSocketToken(String clientId, String username)
-            throws NoSuchAlgorithmException, InvalidKeyException {
-        // 从系统参数获取密钥
-        String secretKey = sysParamsService.getValue(Constant.SERVER_SECRET, false);
-        if (StringUtils.isBlank(secretKey)) {
-            throw new IllegalStateException("WebSocket认证密钥未配置(server.secret)");
-        }
-
-        // 获取当前时间戳(秒)
-        long timestamp = System.currentTimeMillis() / 1000;
-
-        // 构建签名内容: clientId|username|timestamp
-        String content = String.format("%s|%s|%d", clientId, username, timestamp);
-
-        // 生成HMAC-SHA256签名
-        Mac hmac = Mac.getInstance("HmacSHA256");
-        SecretKeySpec keySpec = new SecretKeySpec(secretKey.getBytes(StandardCharsets.UTF_8), "HmacSHA256");
-        hmac.init(keySpec);
-        byte[] signature = hmac.doFinal(content.getBytes(StandardCharsets.UTF_8));
-
-        // Base64 URL-safe编码签名(去除填充符=)
-        String signatureBase64 = Base64.getUrlEncoder().withoutPadding().encodeToString(signature);
-
-        // 返回格式: signature.timestamp
-        return String.format("%s.%d", signatureBase64, timestamp);
     }
 
     /**

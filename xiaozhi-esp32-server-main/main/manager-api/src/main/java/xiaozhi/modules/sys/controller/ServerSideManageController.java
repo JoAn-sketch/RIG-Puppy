@@ -31,7 +31,7 @@ import xiaozhi.modules.sys.dto.ServerActionResponseDTO;
 import xiaozhi.modules.sys.enums.ServerActionEnum;
 import xiaozhi.modules.sys.service.SysParamsService;
 import xiaozhi.modules.sys.utils.WebSocketClientManager;
-import xiaozhi.modules.device.service.DeviceService;
+import xiaozhi.modules.auth.service.DeviceAuthService;
 import xiaozhi.common.redis.RedisUtils;
 
 /**
@@ -43,7 +43,7 @@ import xiaozhi.common.redis.RedisUtils;
 @AllArgsConstructor
 public class ServerSideManageController {
     private final SysParamsService sysParamsService;
-    private final DeviceService deviceService;
+    private final DeviceAuthService deviceAuthService;
     private final RedisUtils redisUtils;
     private static final ObjectMapper objectMapper;
     static {
@@ -100,7 +100,7 @@ public class ServerSideManageController {
         headers.add("device-id", deviceId);
         headers.add("client-id", clientId);
         try {
-            String token = deviceService.generateWebSocketToken(clientId, deviceId);
+            String token = deviceAuthService.generateWebSocketToken(clientId, deviceId);
             headers.add("authorization", "Bearer " + token);
         } catch (Exception e) {
             throw new RenException(ErrorCode.WEB_SOCKET_CONNECT_FAILED);
