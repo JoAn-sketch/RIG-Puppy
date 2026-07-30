@@ -431,10 +431,6 @@ void Application::CheckAssetsVersion() {
 }
 
 void Application::CheckNewVersion() {
-    ESP_LOGW(TAG, "OTA version check disabled for local firmware bring-up");
-    ota_->MarkCurrentVersionValid();
-    return;
-
     const int MAX_RETRY = 10;
     int retry_count = 0;
     int retry_delay = 10;  // Initial retry delay in seconds
@@ -475,10 +471,8 @@ void Application::CheckNewVersion() {
         retry_delay = 10;  // Reset retry delay
 
         if (ota_->HasNewVersion()) {
-            if (UpgradeFirmware(ota_->GetFirmwareUrl(), ota_->GetFirmwareVersion())) {
-                return;  // This line will never be reached after reboot
-            }
-            // If upgrade failed, continue to normal operation
+            ESP_LOGI(TAG, "New firmware %s is available, but auto upgrade is disabled",
+                     ota_->GetFirmwareVersion().c_str());
         }
 
         // No new version, mark the current version as valid
