@@ -7,7 +7,9 @@
 #include <driver/i2s_common.h>
 
 #define TAG "AudioCodec"
-#define AUDIO_CODEC_FIXED_OUTPUT_VOLUME 20
+#ifndef AUDIO_DEFAULT_OUTPUT_VOLUME
+#define AUDIO_DEFAULT_OUTPUT_VOLUME 70
+#endif
 
 AudioCodec::AudioCodec() {
 }
@@ -28,14 +30,14 @@ bool AudioCodec::InputData(std::vector<int16_t>& data) {
 }
 
 void AudioCodec::Start() {
-    output_volume_ = AUDIO_CODEC_FIXED_OUTPUT_VOLUME;
+    output_volume_ = AUDIO_DEFAULT_OUTPUT_VOLUME;
 
     ESP_LOGI(TAG, "Audio codec started");
 }
 
 void AudioCodec::SetOutputVolume(int volume) {
     (void)volume;
-    output_volume_ = AUDIO_CODEC_FIXED_OUTPUT_VOLUME;
+    output_volume_ = AUDIO_DEFAULT_OUTPUT_VOLUME;
     ESP_LOGI(TAG, "Set output volume to %d", output_volume_);
     
     Settings settings("audio", true);
