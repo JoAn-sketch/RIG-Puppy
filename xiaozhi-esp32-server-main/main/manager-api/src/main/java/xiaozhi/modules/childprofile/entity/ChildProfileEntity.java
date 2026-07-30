@@ -27,6 +27,8 @@ public class ChildProfileEntity {
 
     private String ageGroup;
 
+    private String interestsJson;
+
     @TableField(fill = FieldFill.INSERT)
     private Date createdAt;
 

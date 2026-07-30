@@ -1,0 +1,314 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Interests - kb-admin</title>
+<style>
+* { box-sizing: border-box; }
+body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; margin: 0; background: #f5f7fb; color: #1f2937; }
+header { background: #111827; color: #fff; padding: 14px 24px; display: flex; justify-content: space-between; align-items: center; }
+header h1 { margin: 0; font-size: 18px; font-weight: 600; }
+header a { color: #9ca3af; text-decoration: none; font-size: 13px; margin-left: 16px; }
+header a:hover { color: #fff; }
+main { max-width: 1260px; margin: 24px auto; padding: 0 16px 40px; }
+.hero, .card { background: #fff; border-radius: 14px; box-shadow: 0 4px 18px rgba(15, 23, 42, .06); border: 1px solid #e5e7eb; }
+.hero { padding: 22px 24px; margin-bottom: 18px; background: linear-gradient(135deg, #fff7ed 0%, #fffbeb 48%, #fefce8 100%); border-color: #fed7aa; }
+.hero h2 { margin: 0 0 8px; font-size: 20px; }
+.hero p { margin: 0; color: #4b5563; line-height: 1.7; font-size: 13px; }
+.stack { display: grid; gap: 18px; }
+.top-layout { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+.card { padding: 20px; }
+.card h2 { margin: 0 0 6px; font-size: 16px; color: #111827; }
+.card p { margin: 0 0 16px; font-size: 12px; color: #6b7280; line-height: 1.7; }
+.topic-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.topic-chip { border: 1px solid #fcd34d; background: #fffbeb; border-radius: 14px; padding: 14px 16px; font-size: 14px; font-weight: 600; color: #92400e; }
+.field { margin-bottom: 14px; }
+.field label { display: block; margin-bottom: 6px; font-size: 12px; color: #4b5563; font-weight: 600; }
+.field select,
+.field textarea { width: 100%; padding: 9px 10px; border: 1px solid #d1d5db; border-radius: 8px; font-size: 13px; background: #fff; color: #111827; }
+.field textarea { min-height: 74px; resize: vertical; line-height: 1.55; }
+.field select:focus,
+.field textarea:focus { outline: none; border-color: #f59e0b; box-shadow: 0 0 0 3px rgba(245, 158, 11, .15); }
+.adapter-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.adapter-card { border: 1px solid #f3e8ff; background: linear-gradient(180deg, #fff 0%, #faf5ff 100%); border-radius: 14px; padding: 16px; }
+.adapter-card h3 { margin: 0 0 6px; font-size: 15px; color: #581c87; }
+.adapter-card .sub { margin: 0 0 14px; font-size: 12px; color: #7c3aed; }
+.actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 18px; }
+button { background: #f59e0b; color: #fff; border: 0; padding: 9px 16px; border-radius: 8px; cursor: pointer; font-size: 13px; font-weight: 600; }
+button:hover { background: #d97706; }
+button:disabled { background: #fcd34d; cursor: not-allowed; }
+.hint { font-size: 12px; color: #9ca3af; }
+.desc-list { margin: 0; padding-left: 18px; color: #374151; }
+.desc-list li { margin-bottom: 8px; font-size: 13px; line-height: 1.7; }
+#toast { position: fixed; bottom: 28px; right: 28px; background: #10b981; color: #fff; padding: 10px 18px; border-radius: 8px; font-size: 13px; box-shadow: 0 6px 18px rgba(0,0,0,.16); opacity: 0; transform: translateY(10px); transition: opacity .25s, transform .25s; pointer-events: none; z-index: 9999; }
+#toast.show { opacity: 1; transform: translateY(0); }
+#toast.error { background: #ef4444; }
+@media (max-width: 980px) {
+  .top-layout { grid-template-columns: 1fr; }
+  .adapter-grid { grid-template-columns: 1fr; }
+  .topic-grid { grid-template-columns: 1fr; }
+}
+</style>
+</head>
+<body>
+<header>
+  <h1>✨ Interests</h1>
+  <div>
+    <a href="/">📚 后端</a>
+    <a href="/scene-router">🧭 Scene Router</a>
+    <a href="/age-profile">🧒 Age Profile</a>
+    <a href="/interests">✨ Interests</a>
+  </div>
+</header>
+
+<main>
+  <section class="hero">
+    <h2>Interest Influence + Interest Adapter</h2>
+    <p>这一页现在包含两层：一层控制兴趣什么时候影响生成，另一层把兴趣映射成可复用的内容上下文。Interest Adapter 只提供主题资源，不直接生成回复，也不决定影响强度。</p>
+  </section>
+
+  <section class="stack">
+    <div class="top-layout">
+      <article class="card">
+        <h2>Favorite Topics</h2>
+        <p>这里展示当前产品内的全部兴趣选项，和微信小程序保持一致。</p>
+        <div id="topic-grid" class="topic-grid">
+          <div class="topic-chip">加载中...</div>
+        </div>
+      </article>
+
+      <article class="card">
+        <h2>Interest Influence Policy</h2>
+        <p>这层控制兴趣在哪些生成任务里被优先使用，而不是把兴趣硬塞进每条回复。</p>
+
+        <div class="field">
+          <label for="example_bias">example_bias</label>
+          <select id="example_bias">
+            <option value="off">off</option>
+            <option value="low">low</option>
+            <option value="medium">medium</option>
+            <option value="high">high</option>
+          </select>
+        </div>
+
+        <div class="field">
+          <label for="story_bias">story_bias</label>
+          <select id="story_bias">
+            <option value="off">off</option>
+            <option value="medium">medium</option>
+            <option value="high">high</option>
+          </select>
+        </div>
+
+        <div class="field">
+          <label for="conversation_bias">conversation_bias</label>
+          <select id="conversation_bias">
+            <option value="off">off</option>
+            <option value="low">low</option>
+            <option value="medium">medium</option>
+          </select>
+        </div>
+
+        <div class="field">
+          <label for="game_bias">game_bias</label>
+          <select id="game_bias">
+            <option value="off">off</option>
+            <option value="medium">medium</option>
+            <option value="high">high</option>
+          </select>
+        </div>
+
+        <div class="field">
+          <label for="memory_reference">memory_reference</label>
+          <select id="memory_reference">
+            <option value="never">never</option>
+            <option value="occasionally">occasionally</option>
+            <option value="often">often</option>
+          </select>
+        </div>
+      </article>
+    </div>
+
+    <article class="card">
+      <h2>Interest Adapter</h2>
+      <p>每个兴趣都映射到同一套结构：`domains`、`example_context`、`story_context`、`conversation_context`、`game_context`。domains 用于主动开场的话题扩展，其他 context 用于具体生成模块。填写时用英文主题词，多个值用英文逗号分隔。</p>
+      <div id="adapter-grid" class="adapter-grid">
+        <div class="adapter-card">加载中...</div>
+      </div>
+      <div class="actions">
+        <span class="hint">保存到 kb-admin 本地配置文件，并同步到 runtime data。</span>
+        <button type="button" id="save-btn" onclick="saveConfig()">保存</button>
+      </div>
+    </article>
+
+    <article class="card">
+      <h2>Design Notes</h2>
+      <ul class="desc-list">
+        <li>Interest Adapter 提供的是主题上下文，不是固定答案。</li>
+        <li>尽量写可复用主题，例如 `wildlife`、`exploration`，而不是具体实体清单。</li>
+        <li>Interest Influence Policy 决定什么时候调用这些上下文，Interest Adapter 不负责影响强度。</li>
+        <li>新增兴趣主题时，只需补一组 adapter 映射，不应强迫修改 scene 逻辑或 prompt 模板。</li>
+      </ul>
+    </article>
+  </section>
+</main>
+
+<div id="toast"></div>
+
+<script>
+var toastTimer = null;
+var topicMeta = [];
+var adapterMap = {};
+
+function showToast(msg, isError) {
+  var t = document.getElementById("toast");
+  t.textContent = (isError ? "✗ " : "✓ ") + msg;
+  t.className = "show" + (isError ? " error" : "");
+  if (toastTimer) clearTimeout(toastTimer);
+  toastTimer = setTimeout(function () { t.className = ""; }, 2500);
+}
+
+function escapeHtml(str) {
+  return String(str == null ? "" : str)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/\"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function renderTopics(topics) {
+  topicMeta = topics || [];
+  var grid = document.getElementById("topic-grid");
+  grid.innerHTML = topicMeta.map(function (item) {
+    return '<div class="topic-chip">' + escapeHtml(item.label) + '</div>';
+  }).join("");
+}
+
+function renderAdapter(adapter) {
+  adapterMap = adapter || {};
+  var grid = document.getElementById("adapter-grid");
+  grid.innerHTML = topicMeta.map(function (topic) {
+    var data = adapterMap[topic.key] || {};
+    return '' +
+      '<div class="adapter-card">' +
+        '<h3>' + escapeHtml(topic.label) + '</h3>' +
+        '<div class="sub">' + escapeHtml(topic.key) + '</div>' +
+        buildAdapterField(topic.key, 'domains', data.domains || []) +
+        buildAdapterField(topic.key, 'example_context', data.example_context || []) +
+        buildAdapterField(topic.key, 'story_context', data.story_context || []) +
+        buildAdapterField(topic.key, 'conversation_context', data.conversation_context || []) +
+        buildAdapterField(topic.key, 'game_context', data.game_context || []) +
+      '</div>';
+  }).join("");
+}
+
+function buildAdapterField(topicKey, fieldKey, values) {
+  return '' +
+    '<div class="field">' +
+      '<label for="' + topicKey + '-' + fieldKey + '">' + fieldKey + '</label>' +
+      '<textarea id="' + topicKey + '-' + fieldKey + '">' + escapeHtml((values || []).join(', ')) + '</textarea>' +
+    '</div>';
+}
+
+function applyPolicy(policy) {
+  document.getElementById("example_bias").value = policy.example_bias || "high";
+  document.getElementById("story_bias").value = policy.story_bias || "high";
+  document.getElementById("conversation_bias").value = policy.conversation_bias || "medium";
+  document.getElementById("game_bias").value = policy.game_bias || "medium";
+  document.getElementById("memory_reference").value = policy.memory_reference || "occasionally";
+}
+
+function collectPolicy() {
+  return {
+    example_bias: document.getElementById("example_bias").value,
+    story_bias: document.getElementById("story_bias").value,
+    conversation_bias: document.getElementById("conversation_bias").value,
+    game_bias: document.getElementById("game_bias").value,
+    memory_reference: document.getElementById("memory_reference").value
+  };
+}
+
+function collectAdapter() {
+  var payload = {};
+  topicMeta.forEach(function (topic) {
+    payload[topic.key] = {
+      domains: collectAdapterField(topic.key, "domains"),
+      example_context: collectAdapterField(topic.key, "example_context"),
+      story_context: collectAdapterField(topic.key, "story_context"),
+      conversation_context: collectAdapterField(topic.key, "conversation_context"),
+      game_context: collectAdapterField(topic.key, "game_context")
+    };
+  });
+  return payload;
+}
+
+function collectAdapterField(topicKey, fieldKey) {
+  var el = document.getElementById(topicKey + "-" + fieldKey);
+  if (!el) return [];
+  return String(el.value || "")
+    .split(",")
+    .map(function (item) { return item.trim(); })
+    .filter(function (item) { return item; });
+}
+
+function loadConfig() {
+  fetch("/api/interests/config")
+    .then(function (res) {
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      return res.json();
+    })
+    .then(function (data) {
+      renderTopics(data.favorite_topics || []);
+      applyPolicy(data.interest_influence || {});
+      renderAdapter(data.interest_adapter || {});
+    })
+    .catch(function (err) {
+      showToast("加载失败: " + err.message, true);
+    });
+}
+
+function saveConfig() {
+  var button = document.getElementById("save-btn");
+  button.disabled = true;
+  button.textContent = "保存中...";
+
+  fetch("/api/interests/config", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      example_bias: document.getElementById("example_bias").value,
+      story_bias: document.getElementById("story_bias").value,
+      conversation_bias: document.getElementById("conversation_bias").value,
+      game_bias: document.getElementById("game_bias").value,
+      memory_reference: document.getElementById("memory_reference").value,
+      interest_adapter: collectAdapter()
+    })
+  })
+    .then(function (res) {
+      return res.json().then(function (body) {
+        if (!res.ok || body.error) throw new Error(body.error || ("HTTP " + res.status));
+        return body;
+      });
+    })
+    .then(function (body) {
+      renderTopics(body.favorite_topics || []);
+      applyPolicy(body.interest_influence || {});
+      renderAdapter(body.interest_adapter || {});
+      showToast("Interest Adapter 和 Influence Policy 已保存");
+    })
+    .catch(function (err) {
+      showToast("保存失败: " + err.message, true);
+    })
+    .finally(function () {
+      button.disabled = false;
+      button.textContent = "保存";
+    });
+}
+
+loadConfig();
+</script>
+<script src="/shared-nav.js"></script>
+</body>
+</html>

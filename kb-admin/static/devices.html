@@ -1,0 +1,194 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>设备连入 · 噜噜后端</title>
+<style>
+* { box-sizing: border-box; }
+body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; margin: 0; background: #f5f6f8; color: #222; }
+header { background: #1f2937; color: #fff; padding: 14px 24px; display:flex; justify-content:space-between; align-items:center; }
+header h1 { margin: 0; font-size: 18px; font-weight: 500; }
+header a { color: #9ca3af; text-decoration: none; font-size: 13px; margin-left: 16px; }
+header a:hover { color: #fff; }
+main { max-width: 1440px; margin: 24px auto; padding: 0 16px; }
+.card { background: #fff; border-radius: 10px; box-shadow: 0 1px 3px rgba(0,0,0,.08); padding: 20px; margin-bottom: 20px; }
+.toolbar { display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom: 16px; }
+button { background: #2563eb; color: #fff; border: 0; padding: 8px 14px; border-radius: 6px; cursor: pointer; font-size: 13px; }
+button:hover { background: #1d4ed8; }
+.ghost { background:#fff; color:#374151; border:1px solid #d1d5db; }
+.muted { color:#6b7280; font-size:12px; }
+.grid { display:grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; margin-bottom: 18px; }
+.metric { background:#f8fafc; border:1px solid #e5e7eb; border-radius:10px; padding:16px; }
+.metric .label { color:#6b7280; font-size:12px; margin-bottom:6px; }
+.metric .value { font-size:28px; font-weight:700; color:#111827; }
+table { width:100%; border-collapse: collapse; font-size:13px; }
+th, td { text-align:left; padding:10px 12px; border-bottom:1px solid #e5e7eb; vertical-align: top; }
+th { background:#f9fafb; color:#6b7280; font-weight:600; }
+.tag { display:inline-block; padding:2px 8px; border-radius:999px; font-size:11px; }
+.tag.ok { background:#dcfce7; color:#166534; }
+.tag.warn { background:#fef3c7; color:#92400e; }
+.tag.gray { background:#e5e7eb; color:#4b5563; }
+code { font-size:11px; background:#f3f4f6; padding:2px 5px; border-radius:4px; }
+.empty { padding: 28px; text-align:center; color:#9ca3af; }
+</style>
+</head>
+<body>
+<header>
+  <h1>🐾 噜噜管理后台</h1>
+  <div></div>
+</header>
+<main>
+  <div class="card">
+    <div class="toolbar">
+      <button onclick="loadDevices()">刷新</button>
+      <label class="muted"><input type="checkbox" id="autoRefresh" checked> 每 15s 自动刷新</label>
+      <span class="muted" id="statusText">等待加载…</span>
+    </div>
+
+    <div class="grid">
+      <div class="metric">
+        <div class="label" id="metricLabel1">当前在线设备</div>
+        <div class="value" id="onlineCount">0</div>
+      </div>
+      <div class="metric">
+        <div class="label" id="metricLabel2">来自 MQTT 网关</div>
+        <div class="value" id="mqttCount">0</div>
+      </div>
+      <div class="metric">
+        <div class="label" id="metricLabel3">直连 WebSocket</div>
+        <div class="value" id="wsCount">0</div>
+      </div>
+    </div>
+
+    <table>
+      <thead>
+        <tr>
+          <th>设备</th>
+          <th>机器人称呼</th>
+          <th>Agent</th>
+          <th>连接来源</th>
+          <th>客户端</th>
+          <th>连接时间</th>
+          <th>最近活跃</th>
+          <th>会话</th>
+        </tr>
+      </thead>
+      <tbody id="deviceRows">
+        <tr><td colspan="8" class="empty">加载中…</td></tr>
+      </tbody>
+    </table>
+  </div>
+</main>
+
+<script src="/shared-nav.js"></script>
+<script>
+let timer = null;
+
+function formatTs(ts) {
+  if (!ts) return "-";
+  const d = new Date(ts * 1000);
+  if (Number.isNaN(d.getTime())) return "-";
+  return d.toLocaleString("zh-CN", { hour12: false });
+}
+
+function formatIdle(seconds) {
+  if (seconds === null || seconds === undefined || Number.isNaN(seconds)) return "-";
+  if (seconds < 60) return `${seconds}s`;
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  return `${hours}h ${minutes}m`;
+}
+
+async function loadDevices() {
+  const status = document.getElementById("statusText");
+  try {
+    status.textContent = "加载中…";
+    const response = await fetch("/api/devices/live");
+    const data = await response.json();
+    if (!response.ok || data.error) {
+      throw new Error(data.error || `HTTP ${response.status}`);
+    }
+
+    const devices = data.devices || [];
+    const usingRuntime = data.source === "runtime";
+    if (usingRuntime) {
+      const mqttCount = devices.filter((item) => item.conn_from_mqtt_gateway).length;
+      document.getElementById("metricLabel1").textContent = "当前在线设备";
+      document.getElementById("metricLabel2").textContent = "来自 MQTT 网关";
+      document.getElementById("metricLabel3").textContent = "直连 WebSocket";
+      document.getElementById("onlineCount").textContent = String(devices.length);
+      document.getElementById("mqttCount").textContent = String(mqttCount);
+      document.getElementById("wsCount").textContent = String(devices.length - mqttCount);
+    } else {
+      const nowSeconds = Math.floor(Date.now() / 1000);
+      const recent24h = devices.filter((item) => item.last_activity_at && nowSeconds - item.last_activity_at <= 86400).length;
+      const aliasCount = devices.filter((item) => item.alias).length;
+      document.getElementById("metricLabel1").textContent = "设备记录数";
+      document.getElementById("metricLabel2").textContent = "最近24h连接";
+      document.getElementById("metricLabel3").textContent = "已配置别名";
+      document.getElementById("onlineCount").textContent = String(devices.length);
+      document.getElementById("mqttCount").textContent = String(recent24h);
+      document.getElementById("wsCount").textContent = String(aliasCount);
+    }
+
+    const tbody = document.getElementById("deviceRows");
+    if (!devices.length) {
+      tbody.innerHTML = '<tr><td colspan="8" class="empty">当前没有设备连入</td></tr>';
+    } else {
+      tbody.innerHTML = devices.map((item) => `
+        <tr>
+          <td>
+            <div><strong>${item.device_id || "-"}</strong></div>
+            <div class="muted">MAC: <code>${item.device_mac || "-"}</code></div>
+            <div class="muted">${item.alias ? `别名: ${item.alias}` : ""}${item.board ? ` ${item.board}` : ""}${item.app_version ? ` · ${item.app_version}` : ""}</div>
+          </td>
+          <td>${item.robot_name || '<span class="muted">未配置</span>'}</td>
+          <td>
+            <div>${item.agent_name || '<span class="muted">未绑定</span>'}</div>
+            <div class="muted">${item.agent_id ? `<code>${item.agent_id}</code>` : ''}</div>
+          </td>
+          <td>${
+            item.source === "database_fallback"
+              ? '<span class="tag gray">数据库记录</span>'
+              : (item.conn_from_mqtt_gateway ? '<span class="tag warn">MQTT 网关</span>' : '<span class="tag ok">WebSocket</span>')
+          }</td>
+          <td>
+            <div>${item.client_ip || "-"}</div>
+            <div class="muted">${item.client_id ? `<code>${item.client_id}</code>` : (item.source === "database_fallback" ? '线上未暴露实时 client 信息' : '无 client-id')}</div>
+          </td>
+          <td>${formatTs(item.connected_at)}</td>
+          <td>
+            <div>${formatTs(item.last_activity_at || item.last_seen_at)}</div>
+            <div class="muted">${
+              item.source === "database_fallback"
+                ? '来自数据库最后连接时间'
+                : `空闲 ${formatIdle(item.idle_seconds)}`
+            }</div>
+          </td>
+          <td><code>${item.session_id || "-"}</code></td>
+        </tr>
+      `).join("");
+    }
+
+    status.textContent = `更新于 ${new Date().toLocaleTimeString("zh-CN", { hour12: false })}`;
+  } catch (error) {
+    document.getElementById("deviceRows").innerHTML = `<tr><td colspan="8" class="empty">加载失败: ${error.message}</td></tr>`;
+    status.textContent = `加载失败: ${error.message}`;
+  }
+}
+
+function startAutoRefresh() {
+  if (timer) clearInterval(timer);
+  timer = setInterval(() => {
+    if (document.getElementById("autoRefresh").checked) {
+      loadDevices();
+    }
+  }, 15000);
+}
+
+loadDevices();
+startAutoRefresh();
+</script>
+</body>
+</html>

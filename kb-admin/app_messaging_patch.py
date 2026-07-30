@@ -64,21 +64,6 @@ def _agents_with_names():
 def register_messaging_routes(app, requires_auth):
     # === 页面入口 ===
 
-    @app.route("/contacts")
-    @requires_auth
-    def contacts_page():
-        return send_from_directory("static", "contacts.html")
-
-    @app.route("/templates")
-    @requires_auth
-    def templates_page():
-        return send_from_directory("static", "templates.html")
-
-    @app.route("/message-log")
-    @requires_auth
-    def message_log_page():
-        return send_from_directory("static", "message_log.html")
-
     @app.route("/reminders")
     @requires_auth
     def reminders_page():
@@ -90,83 +75,6 @@ def register_messaging_routes(app, requires_auth):
     @requires_auth
     def msg_list_agents():
         return jsonify({"list": _agents_with_names()})
-
-    # === 联系人 ===
-
-    @app.route("/api/msg/contacts")
-    @requires_auth
-    def list_contacts():
-        agent_id = request.args.get("agent_id", "")
-        with _conn() as c, c.cursor() as cur:
-            if agent_id:
-                cur.execute(
-                    "SELECT * FROM rl_contacts WHERE agent_id=%s ORDER BY id DESC",
-                    (agent_id,),
-                )
-            else:
-                cur.execute("SELECT * FROM rl_contacts ORDER BY id DESC")
-            rows = list(cur.fetchall())
-        for r in rows:
-            for k, v in r.items():
-                if hasattr(v, "isoformat"):
-                    r[k] = v.isoformat(sep=" ", timespec="seconds")
-        return jsonify({"list": rows})
-
-    @app.route("/api/msg/contacts", methods=["POST"])
-    @requires_auth
-    def create_contact():
-        b = request.get_json(force=True)
-        required = {"agent_id": b.get("agent_id"), "nickname": b.get("nickname")}
-        for k, v in required.items():
-            if not v:
-                return jsonify({"error": f"{k} 必填"}), 400
-        with _conn() as c, c.cursor() as cur:
-            cur.execute(
-                "INSERT INTO rl_contacts "
-                "(agent_id, nickname, relation, phone, wxpusher_uid, channel_pref, remark, enabled) "
-                "VALUES (%s,%s,%s,%s,%s,%s,%s,%s)",
-                (
-                    b["agent_id"], b["nickname"],
-                    b.get("relation") or None,
-                    b.get("phone") or None,
-                    b.get("wxpusher_uid") or None,
-                    (b.get("channel_pref") or "auto").lower(),
-                    b.get("remark") or None,
-                    1 if b.get("enabled", True) else 0,
-                ),
-            )
-            new_id = cur.lastrowid
-        return jsonify({"ok": True, "id": new_id})
-
-    @app.route("/api/msg/contacts/<int:cid>", methods=["PUT"])
-    @requires_auth
-    def update_contact(cid):
-        b = request.get_json(force=True)
-        if not b.get("nickname"):
-            return jsonify({"error": "nickname 必填"}), 400
-        with _conn() as c, c.cursor() as cur:
-            cur.execute(
-                "UPDATE rl_contacts SET nickname=%s, relation=%s, phone=%s, "
-                "wxpusher_uid=%s, channel_pref=%s, remark=%s, enabled=%s WHERE id=%s",
-                (
-                    b["nickname"],
-                    b.get("relation") or None,
-                    b.get("phone") or None,
-                    b.get("wxpusher_uid") or None,
-                    (b.get("channel_pref") or "auto").lower(),
-                    b.get("remark") or None,
-                    1 if b.get("enabled", True) else 0,
-                    cid,
-                ),
-            )
-        return jsonify({"ok": True})
-
-    @app.route("/api/msg/contacts/<int:cid>", methods=["DELETE"])
-    @requires_auth
-    def delete_contact(cid):
-        with _conn() as c, c.cursor() as cur:
-            cur.execute("DELETE FROM rl_contacts WHERE id=%s", (cid,))
-        return jsonify({"ok": True})
 
     # === 模板 ===
 
@@ -237,33 +145,6 @@ def register_messaging_routes(app, requires_auth):
         with _conn() as c, c.cursor() as cur:
             cur.execute("DELETE FROM rl_message_templates WHERE id=%s", (tid,))
         return jsonify({"ok": True})
-
-    # === 发送日志 ===
-
-    @app.route("/api/msg/logs")
-    @requires_auth
-    def list_logs():
-        agent_id = request.args.get("agent_id", "")
-        limit = int(request.args.get("limit", "100"))
-        limit = max(1, min(limit, 500))
-        with _conn() as c, c.cursor() as cur:
-            if agent_id:
-                cur.execute(
-                    "SELECT * FROM rl_message_log WHERE agent_id=%s "
-                    "ORDER BY id DESC LIMIT %s",
-                    (agent_id, limit),
-                )
-            else:
-                cur.execute(
-                    "SELECT * FROM rl_message_log ORDER BY id DESC LIMIT %s",
-                    (limit,),
-                )
-            rows = list(cur.fetchall())
-        for r in rows:
-            for k, v in r.items():
-                if hasattr(v, "isoformat"):
-                    r[k] = v.isoformat(sep=" ", timespec="seconds")
-        return jsonify({"list": rows})
 
     # === 提醒计划 ===
 

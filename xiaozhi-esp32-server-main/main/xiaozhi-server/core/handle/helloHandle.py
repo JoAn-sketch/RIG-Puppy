@@ -1,6 +1,5 @@
 import time
 import json
-import uuid
 import random
 import asyncio
 from typing import TYPE_CHECKING

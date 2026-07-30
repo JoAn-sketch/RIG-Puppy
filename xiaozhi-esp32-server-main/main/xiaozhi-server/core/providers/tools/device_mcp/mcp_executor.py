@@ -6,7 +6,7 @@ if TYPE_CHECKING:
     from core.connection import ConnectionHandler
 from ..base import ToolType, ToolDefinition, ToolExecutor
 from plugins_func.register import Action, ActionResponse
-from .mcp_handler import call_mcp_tool
+from .mcp_handler import call_mcp_tool, is_camera_enabled, is_camera_related_tool
 
 
 class DeviceMCPExecutor(ToolExecutor):
@@ -29,6 +29,13 @@ class DeviceMCPExecutor(ToolExecutor):
             return ActionResponse(
                 action=Action.ERROR,
                 response="设备端MCP客户端未准备就绪",
+            )
+
+        camera_enabled = is_camera_enabled(conn.config.get("enable_camera", False))
+        if not camera_enabled and is_camera_related_tool(tool_name):
+            return ActionResponse(
+                action=Action.NONE,
+                response=None,
             )
 
         try:
@@ -61,6 +68,8 @@ class DeviceMCPExecutor(ToolExecutor):
             return ActionResponse(action=Action.REQLLM, result=str(result))
 
         except ValueError as e:
+            if is_camera_related_tool(tool_name):
+                return ActionResponse(action=Action.NONE, response=None)
             return ActionResponse(action=Action.NOTFOUND, response=str(e))
         except Exception as e:
             return ActionResponse(action=Action.ERROR, response=str(e))

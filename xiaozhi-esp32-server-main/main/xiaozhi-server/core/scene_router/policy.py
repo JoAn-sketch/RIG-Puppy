@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from typing import Dict, List
 
+from core.runtime_generation_config import get_age_profile, get_interaction_policy
 from core.scene_router.schema import SceneRouterOutput
 
 
@@ -83,18 +84,19 @@ SCENE_POLICY_SPECS: Dict[str, ScenePolicySpec] = {
         goal="识别孩子卡住的步骤，拆成小步，帮助孩子自己完成，而不是直接代答。",
         tone="耐心、稳定、像教练，不急着给完整答案。",
         response_style=[
-            "先判断题目类型和卡点。",
-            "一次只推进一个步骤。",
-            "尽量让孩子自己说出下一步或答案。",
+            "如果是颜色、数数、形状等低龄基础认知题，可以先给简短正确答案，再邀请孩子一起看或一起数。",
+            "如果孩子要求直接给答案、表示不会或太难，先鼓励，再只给一个提示或一个最小步骤。",
+            "如果孩子要求一步一步教，一轮只讲第一步，不要一次输出全部步骤。",
         ],
         ask_strategy=[
-            "可以多轮追问，但每轮只问一个小问题。",
-            "先确认理解，再推进下一步。",
+            "每轮最多问一个小问题。",
+            "优先问孩子能不能先试一个最小动作，例如先数前两个、先找一个颜色、先说前半句。",
+            "孩子直接索要答案时，只提示第一步并停下，不示范完整计算、完整造句或完整作答过程。",
         ],
         avoid=[
-            "不要直接整题代答。",
+            "孩子本轮说“直接告诉我答案”或“告诉我答案”时，不要输出最终答案、算式结果或完整代写句，只给一个提示。",
             "不要一次塞给孩子太多步骤。",
-            "不要把不会做等同于孩子能力差。",
+            "不要因为孩子说不想写就立刻放弃任务，也不要命令孩子必须写完。",
         ],
         exit_condition="当孩子自己说出过程或答案，或者明确想换题时，结束当前学习支持回合。",
     ),
@@ -174,9 +176,16 @@ SUBSCENE_HINTS: Dict[str, str] = {
     "social_rules": "解释规则背后的原因，用生活场景举例。",
     "technology_world": "把技术概念讲成孩子熟悉的动作或工具。",
     "math": "先看题目卡在哪一步，不直接报答案。",
+    "counting": "和孩子一起数，先示范短短一遍，再邀请孩子跟着数。",
+    "color": "基础颜色题可以直接回答，但要短，最多补一个生活中的同色例子。",
+    "shape": "用生活物品做例子，例如太阳、球、盘子，不讲抽象几何定义。",
+    "language_practice": "可以给一句完整儿童句子，也可以邀请孩子换一个词再说。",
     "english": "优先分成读音、意思、例子三小步。",
     "literacy_reading": "优先帮助认读和拆音，不要一次给太多字。",
     "homework_help": "以提示代替代答，让孩子先试一步。",
+    "homework_support": "以提示代替代答，让孩子先试一步；基础认知题可以给短答案。",
+    "learning_emotion": "先接住不会、难、不想写的感受，再把任务降到一个很小的动作。",
+    "learning_feedback": "先肯定努力，再反馈当前一步，不要变成长总结。",
     "story_game": "保持回合短，多给剧情选择。",
     "language_game": "保持节奏和趣味，适合一句来一句回。",
     "role_play": "让角色扮演服务互动感，不脱离安全边界。",
@@ -224,7 +233,10 @@ def _get_policy_instruction_lines(scene_output: SceneRouterOutput) -> List[str]:
 
 def build_scene_prompt_patch(scene_output: SceneRouterOutput) -> str:
     spec = get_scene_policy_spec(scene_output)
-    age_style = AGE_STYLE_HINTS.get(scene_output.age_band, AGE_STYLE_HINTS["6-8"])
+    age_group = scene_output.age_band or "6-8"
+    age_profile = get_age_profile(age_group)
+    interaction_policy = get_interaction_policy(scene_output.primary_scene)
+    age_style = AGE_STYLE_HINTS.get(age_group, AGE_STYLE_HINTS["6-8"])
     subscene_hint = SUBSCENE_HINTS.get(scene_output.subscene, "")
     style_summary = " / ".join(spec.response_style[:2])
     ask_summary = " / ".join(spec.ask_strategy[:2])
@@ -238,6 +250,8 @@ def build_scene_prompt_patch(scene_output: SceneRouterOutput) -> str:
         f"policy={scene_output.policy_profile}\n"
         f"protocol={scene_output.interaction_protocol}\n"
         f"protocol_mode={scene_output.protocol_mode}\n"
+        f"conversation_openness_level={scene_output.conversation_openness_level}\n"
+        f"conversation_openness_reason={scene_output.conversation_openness_reason}\n"
         f"rag={str(scene_output.should_use_rag).lower()}\n"
         f"memory={str(scene_output.should_use_memory).lower()}\n"
         f"vlm={str(scene_output.should_use_vlm).lower()}\n"
@@ -252,7 +266,22 @@ def build_scene_prompt_patch(scene_output: SceneRouterOutput) -> str:
         f"avoid={avoid_summary}\n"
         f"sub_hint={subscene_hint or 'none'}\n"
         "global=一轮一件事,短句,具体,不要成人化说教\n"
-        "</scene_policy>"
+        "</scene_policy>\n"
+        "<interaction_policy>\n"
+        f"information_budget={interaction_policy.get('information_budget', 'medium')}\n"
+        f"reasoning_depth={interaction_policy.get('reasoning_depth', 2)}\n"
+        f"interaction_style={interaction_policy.get('interaction_style', 'exploration')}\n"
+        f"conversation_pacing={interaction_policy.get('conversation_pacing', 'balanced')}\n"
+        f"emotional_priority={interaction_policy.get('emotional_priority', 'medium')}\n"
+        "</interaction_policy>\n"
+        "<age_profile>\n"
+        f"age_group={age_group}\n"
+        f"vocabulary_level={age_profile.get('vocabulary_level', 'simple')}\n"
+        f"max_new_concepts={age_profile.get('max_new_concepts', 4)}\n"
+        f"abstract_concept_level={age_profile.get('abstract_concept_level', 'limited')}\n"
+        f"question_style={age_profile.get('question_style', 'exploration')}\n"
+        f"support_level={age_profile.get('support_level', 'medium_high')}\n"
+        "</age_profile>"
     )
 
 

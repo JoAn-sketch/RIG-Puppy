@@ -17,6 +17,8 @@ class DialogState:
     turn_index: int = 0
     question_count_in_current_topic: int = 0
     last_policy: Optional[str] = None
+    active_topic: Optional[str] = None
+    active_entities: List[str] = field(default_factory=list)
 
 
 @dataclass
@@ -25,6 +27,8 @@ class SignalState:
     interruption: bool = False
     silence_ms: int = 0
     vlm_tags: List[str] = field(default_factory=list)
+    conversation_openness_level: int = 3
+    conversation_openness_reason: str = "neutral_default"
 
 
 @dataclass
@@ -52,5 +56,7 @@ class SceneRouterOutput:
     should_force_safe_template: bool
     interaction_protocol: str
     protocol_mode: str
+    conversation_openness_level: int
+    conversation_openness_reason: str
     confidence: float
     reason_codes: List[str] = field(default_factory=list)

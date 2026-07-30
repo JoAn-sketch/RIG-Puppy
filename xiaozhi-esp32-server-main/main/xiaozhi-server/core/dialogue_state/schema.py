@@ -15,6 +15,8 @@ class RuntimeSignals:
     understanding_signal: str = "unknown"
     topic_switch_signal: bool = False
     frustration_signal: int = 0
+    conversation_openness_level: int = 3
+    conversation_openness_reason: str = "neutral_default"
 
 
 @dataclass
@@ -54,6 +56,8 @@ class DialogueControlOutput:
     should_use_memory: bool
     should_use_rag: bool
     should_force_safe_template: bool
+    conversation_openness_level: int
+    conversation_openness_reason: str
     turn_contract: Dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:

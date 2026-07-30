@@ -40,11 +40,16 @@ from core.dialogue_state import (
 )
 from core.long_term_memory_resolver import RuntimeLongTermMemory
 from core.short_term_memory import ShortTermMemoryManager
+from core.short_term_memory_store import (
+    load_memory as load_persisted_short_memory,
+    save_memory as save_persisted_short_memory,
+)
 from core.response_orchestrator import (
     build_response_plan,
     build_response_plan_prompt_patch,
     rewrite_reply_text,
 )
+from core.daily_greeting import mark_greeting_delivered
 from core.scene_router import SceneRouter
 from core.scene_router.policy import build_safe_response
 from plugins_func.loadplugins import auto_import_modules
@@ -267,6 +272,14 @@ class ConnectionHandler:
         self.session_state.scene_prompt_patch = value
 
     @property
+    def robot_profile_prompt_patch(self):
+        return getattr(self.session_state, "robot_profile_prompt_patch", "")
+
+    @robot_profile_prompt_patch.setter
+    def robot_profile_prompt_patch(self, value):
+        self.session_state.robot_profile_prompt_patch = value
+
+    @property
     def dialogue_state_prompt_patch(self):
         return self.session_state.dialogue_state_prompt_patch
 
@@ -302,13 +315,29 @@ class ConnectionHandler:
     def short_term_memory(self):
         memory = getattr(self.session_state, "short_term_memory", None)
         if memory is None:
-            memory = ShortTermMemoryManager()
+            memory = load_persisted_short_memory(getattr(self, "device_id", "")) or ShortTermMemoryManager()
             self.session_state.short_term_memory = memory
         return memory
 
     @short_term_memory.setter
     def short_term_memory(self, value):
         self.session_state.short_term_memory = value
+
+    @property
+    def pending_daily_greeting(self):
+        return getattr(self.session_state, "pending_daily_greeting", None)
+
+    @pending_daily_greeting.setter
+    def pending_daily_greeting(self, value):
+        self.session_state.pending_daily_greeting = value
+
+    @property
+    def last_applied_daily_greeting(self):
+        return getattr(self.session_state, "last_applied_daily_greeting", None)
+
+    @last_applied_daily_greeting.setter
+    def last_applied_daily_greeting(self, value):
+        self.session_state.last_applied_daily_greeting = value
 
     @property
     def response_plan_prompt_patch(self):
@@ -660,6 +689,7 @@ class ConnectionHandler:
                 # 使用快速提示词进行初始化
                 prompt = self.prompt_manager.get_quick_prompt(user_prompt)
                 self.change_system_prompt(prompt)
+                self.refresh_robot_profile_prompt()
                 self.logger.bind(tag=TAG).info(
                     f"快速初始化组件: prompt成功 {prompt[:50]}..."
                 )
@@ -773,6 +803,7 @@ class ConnectionHandler:
         )
         if enhanced_prompt:
             self.change_system_prompt(enhanced_prompt)
+            self.refresh_robot_profile_prompt()
             self.logger.bind(tag=TAG).debug("系统提示词已增强更新")
 
     def _inject_tool_call_fewshot(self):
@@ -1186,6 +1217,8 @@ class ConnectionHandler:
         prompt_parts = []
         if self.base_prompt:
             prompt_parts.append(self.base_prompt.strip())
+        if self.robot_profile_prompt_patch:
+            prompt_parts.append(self.robot_profile_prompt_patch.strip())
         if self.scene_prompt_patch:
             prompt_parts.append(self.scene_prompt_patch.strip())
         if self.long_term_memory_prompt_patch:
@@ -1201,10 +1234,62 @@ class ConnectionHandler:
 
     def update_long_term_memory(self, long_term_memory: RuntimeLongTermMemory | None):
         self.long_term_memory = long_term_memory or RuntimeLongTermMemory()
+        self.robot_profile_prompt_patch = self._build_robot_profile_prompt_patch(
+            self.long_term_memory
+        )
         self.long_term_memory_prompt_patch = self._build_long_term_memory_prompt_patch(
             self.long_term_memory
         )
         self._refresh_runtime_prompt()
+
+    def refresh_robot_profile_prompt(self):
+        self.robot_profile_prompt_patch = self._build_robot_profile_prompt_patch(
+            self.long_term_memory
+        )
+        self._refresh_runtime_prompt()
+
+    def _build_robot_profile_prompt_patch(
+            self, long_term_memory: RuntimeLongTermMemory | None = None
+    ) -> str:
+        config_path = os.path.join(os.path.dirname(__file__), "..", "data", "robot_profile.json")
+        try:
+            with open(config_path, "r", encoding="utf-8") as f:
+                payload = json.load(f)
+        except Exception:
+            payload = {}
+
+        if not isinstance(payload, dict):
+            payload = {}
+
+        identity = payload.get("identity") or {}
+        personality = payload.get("personality") or {}
+        values = payload.get("values") or {}
+        memory = long_term_memory or RuntimeLongTermMemory()
+        runtime_robot_name = str(getattr(memory, "robot_name_preference", "") or "").strip()
+        identity_name = runtime_robot_name or str(identity.get("name") or "").strip()
+
+        def _list_text(section_value):
+            if not isinstance(section_value, list):
+                return ""
+            items = [str(item or "").strip() for item in section_value]
+            return ", ".join(item for item in items if item)
+
+        lines = ["<stable_profile>"]
+        lines.append(f"identity_name={identity_name}")
+        lines.append(f"identity_species={str(identity.get('species') or '').strip()}")
+        lines.append(f"identity_age_description={str(identity.get('ageDescription') or '').strip()}")
+        lines.append(f"identity_home={str(identity.get('home') or '').strip()}")
+        lines.append(f"identity_mission={str(identity.get('mission') or '').strip()}")
+        lines.append(f"personality_core_traits={_list_text(personality.get('coreTraits'))}")
+        lines.append(f"personality_strengths={_list_text(personality.get('strengths'))}")
+        lines.append(f"personality_weaknesses={_list_text(personality.get('weaknesses'))}")
+        lines.append(f"values_beliefs={_list_text(values.get('beliefs'))}")
+        lines.append(f"values_priorities={_list_text(values.get('priorities'))}")
+        if runtime_robot_name:
+            lines.append("identity_name_rule=identity_name 优先使用微信小程序中给机器人的固定称呼")
+        lines.append("stable_profile_rule=这些是机器人稳定身份，不要当作临时心情或近期记忆；在每轮对话中稳定体现，但不要机械复读")
+        lines.append("</stable_profile>")
+        return "\n".join(lines)
 
     def refresh_short_term_memory_prompt(self, user_text: str | None = None):
         self.short_term_memory_prompt_patch = self.short_term_memory.build_prompt_patch(
@@ -1263,6 +1348,22 @@ class ConnectionHandler:
     def _record_assistant_reply(self, reply_text, next_action=None):
         if not reply_text:
             return
+        pending_greeting = getattr(self, "pending_daily_greeting", None)
+        if pending_greeting is not None:
+            self.last_applied_daily_greeting = {
+                "action": "daily_greeting",
+                "greeting_type": getattr(pending_greeting, "greeting_type", None),
+                "source_id": getattr(pending_greeting, "source_id", None),
+                "text": getattr(pending_greeting, "text", None),
+                "context": dict(getattr(pending_greeting, "context", {}) or {}),
+            }
+            try:
+                mark_greeting_delivered(getattr(self, "device_id", ""), pending_greeting)
+            except Exception as e:
+                self.logger.bind(tag=TAG).warning(f"标记 daily greeting 已发送失败: {e}")
+            self.pending_daily_greeting = None
+        else:
+            self.last_applied_daily_greeting = None
         self.update_short_term_memory_from_turn(self.last_user_text, reply_text)
         self.dialogue_state_runtime = self.dialogue_state_manager.post_reply_update(
             self.dialogue_state_runtime,
@@ -1298,6 +1399,10 @@ class ConnectionHandler:
             subscene=subscene,
             emotion=emotion,
         )
+        try:
+            save_persisted_short_memory(getattr(self, "device_id", ""), self.short_term_memory)
+        except Exception as e:
+            self.logger.bind(tag=TAG).warning(f"持久化 short_term_memory 失败: {e}")
         self.refresh_short_term_memory_prompt(user_text=normalized_user_text)
 
     async def run_text_turn(self, text: str):
@@ -1324,6 +1429,7 @@ class ConnectionHandler:
         self.last_dialogue_state_result = None
         self.dialogue_state_runtime = None
         self.scene_prompt_patch = ""
+        self.robot_profile_prompt_patch = ""
         self.long_term_memory_prompt_patch = ""
         self.short_term_memory_prompt_patch = ""
         self.dialogue_state_prompt_patch = ""
@@ -1333,6 +1439,7 @@ class ConnectionHandler:
         self.long_term_memory = None
         self.short_term_memory = ShortTermMemoryManager()
         self.last_user_text = ""
+        self.last_applied_daily_greeting = None
         self.dialogue = Dialogue()
         if self.base_prompt:
             self._refresh_runtime_prompt()
@@ -1353,9 +1460,41 @@ class ConnectionHandler:
         self._refresh_runtime_prompt()
 
     def _rewrite_assistant_reply(self, reply_text):
-        rewrite_result = rewrite_reply_text(reply_text, self.last_response_plan)
+        rewrite_result = rewrite_reply_text(
+            reply_text,
+            self.last_response_plan,
+            user_text=self.last_user_text,
+        )
+        rewrite_result.rewritten_reply = self.apply_pending_daily_greeting(
+            rewrite_result.rewritten_reply
+        )
         self.last_response_rewrite = rewrite_result
         return rewrite_result.rewritten_reply
+
+    def apply_pending_daily_greeting(self, reply_text: str | None) -> str:
+        pending = getattr(self, "pending_daily_greeting", None)
+        base_text = str(reply_text or "").strip()
+        if pending is None:
+            return base_text
+        plan = getattr(self, "last_response_plan", None)
+        openness_level = int(getattr(plan, "conversation_openness_level", 3) or 3) if plan is not None else 3
+        current_scene = str(getattr(plan, "current_scene", "") or "") if plan is not None else ""
+        if openness_level <= 3 or current_scene not in {"relationship_building"}:
+            self.pending_daily_greeting = None
+            return base_text
+        state_result = getattr(self, "last_dialogue_state_result", None)
+        social_state = {}
+        if state_result is not None:
+            social_state = (getattr(state_result, "state", {}) or {}).get("social_state", {}) or {}
+        greeting_text = str(getattr(pending, "text", "") or "").strip()
+        if not greeting_text:
+            self.pending_daily_greeting = None
+            return base_text
+        if social_state.get("is_greeting_turn"):
+            return greeting_text
+        if not base_text:
+            return greeting_text
+        return f"{greeting_text} {base_text}"
 
     def _has_memory_trigger(self, query):
         normalized = re.sub(r"\s+", "", (query or "").strip().lower())
@@ -1464,6 +1603,19 @@ class ConnectionHandler:
         response_rewrite = None
         if self.last_response_rewrite is not None:
             response_rewrite = self.last_response_rewrite.to_dict()
+        daily_greeting = None
+        applied_daily_greeting = getattr(self, "last_applied_daily_greeting", None)
+        pending_daily_greeting = getattr(self, "pending_daily_greeting", None)
+        if isinstance(applied_daily_greeting, dict) and applied_daily_greeting:
+            daily_greeting = dict(applied_daily_greeting)
+        elif pending_daily_greeting is not None:
+            daily_greeting = {
+                "action": "daily_greeting",
+                "greeting_type": getattr(pending_daily_greeting, "greeting_type", None),
+                "source_id": getattr(pending_daily_greeting, "source_id", None),
+                "text": getattr(pending_daily_greeting, "text", None),
+                "context": dict(getattr(pending_daily_greeting, "context", {}) or {}),
+            }
         long_term_memory = None
         if self.long_term_memory is not None:
             long_term_memory = {
@@ -1481,6 +1633,14 @@ class ConnectionHandler:
         short_term_memory = None
         if self.short_term_memory is not None:
             short_term_memory = self.short_term_memory.to_dict()
+        conversation_openness = None
+        if self.last_dialogue_state_result is not None:
+            state = getattr(self.last_dialogue_state_result, "state", {}) or {}
+            interaction_state = state.get("interaction_state", {}) or {}
+            conversation_openness = {
+                "level": interaction_state.get("conversation_openness_level", 3),
+                "reason": interaction_state.get("conversation_openness_reason", "neutral_default"),
+            }
         return {
             "scene": scene,
             "long_term_memory": long_term_memory,
@@ -1488,6 +1648,8 @@ class ConnectionHandler:
             "dialogue_state": dialogue_state,
             "response_plan": response_plan,
             "response_rewrite": response_rewrite,
+            "daily_greeting": daily_greeting,
+            "conversation_openness": conversation_openness,
         }
 
     async def _send_runtime_debug_message(self, stage="turn_ready"):

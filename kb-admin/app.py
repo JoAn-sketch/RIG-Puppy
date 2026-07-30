@@ -10,6 +10,10 @@ import sys
 import importlib.util
 import threading
 import uuid
+import yaml
+import hashlib
+import hmac
+import base64
 from functools import wraps
 from datetime import datetime, timedelta
 from flask import Flask, request, jsonify, send_from_directory, send_file, Response
@@ -26,6 +30,8 @@ FILES_DIR = os.path.join(DATA_DIR, "files")
 PROMPTS_DIR = os.path.join(DATA_DIR, "prompts")
 os.makedirs(FILES_DIR, exist_ok=True)
 os.makedirs(PROMPTS_DIR, exist_ok=True)
+RUNTIME_DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "xiaozhi-server", "data")
+os.makedirs(RUNTIME_DATA_DIR, exist_ok=True)
 
 app = Flask(__name__, static_folder="static", static_url_path="")
 H = {"Authorization": f"Bearer {ZHIPU_API_KEY}"}
@@ -42,6 +48,14 @@ XIAOZHI_DEBUG_DEVICE_NAME = os.environ.get("XIAOZHI_DEBUG_DEVICE_NAME", "kb-admi
 ROBOT_DEBUG_SESSION_TTL_SECONDS = 1800
 ROBOT_DEBUG_SESSIONS = {}
 ROBOT_DEBUG_SESSIONS_LOCK = threading.Lock()
+
+GREETING_CANDIDATE_TYPE_PRIORITY = {
+    "knowledge_fact": 1,
+    "user_interest": 2,
+    "emotional_moment": 3,
+    "personal_event": 4,
+    "unfinished_thread": 5,
+}
 
 SCENE_ROUTER_ROOT = os.path.join(
     os.path.dirname(__file__),
@@ -65,6 +79,551 @@ SCENE_ROUTER_POLICY_PATH = os.path.join(
     "scene_router",
     "policy.py",
 )
+AGE_PROFILE_CONFIG_PATH = os.path.join(DATA_DIR, "age_profiles.json")
+INTERACTION_POLICY_CONFIG_PATH = os.path.join(DATA_DIR, "scene_interaction_policies.json")
+INTERESTS_CONFIG_PATH = os.path.join(DATA_DIR, "interest_influence.json")
+SCENE_INTEREST_CONFIG_PATH = os.path.join(DATA_DIR, "scene_interest_config.json")
+DAILY_GREETING_CONFIG_PATH = os.path.join(DATA_DIR, "daily_greeting_config.json")
+ROBOT_PROFILE_CONFIG_PATH = os.path.join(DATA_DIR, "robot_profile.json")
+RUNTIME_AGE_PROFILE_CONFIG_PATH = os.path.join(RUNTIME_DATA_DIR, "age_profiles.json")
+RUNTIME_INTERACTION_POLICY_CONFIG_PATH = os.path.join(RUNTIME_DATA_DIR, "scene_interaction_policies.json")
+RUNTIME_INTERESTS_CONFIG_PATH = os.path.join(RUNTIME_DATA_DIR, "interest_influence.json")
+RUNTIME_SCENE_INTEREST_CONFIG_PATH = os.path.join(RUNTIME_DATA_DIR, "scene_interest_config.json")
+RUNTIME_DAILY_GREETING_CONFIG_PATH = os.path.join(RUNTIME_DATA_DIR, "daily_greeting_config.json")
+RUNTIME_DAILY_GREETING_STATE_PATH = os.path.join(RUNTIME_DATA_DIR, "daily_greeting_state.json")
+RUNTIME_ROBOT_PROFILE_CONFIG_PATH = os.path.join(RUNTIME_DATA_DIR, "robot_profile.json")
+RUNTIME_SOURCE_ROOT = os.path.join(
+    os.path.dirname(__file__),
+    "..",
+    "xiaozhi-esp32-server-main",
+    "main",
+    "xiaozhi-server",
+)
+RUNTIME_DEFAULT_CONFIG_PATH = os.path.join(RUNTIME_SOURCE_ROOT, "config.yaml")
+RUNTIME_CUSTOM_CONFIG_PATH = os.path.join(RUNTIME_SOURCE_ROOT, "data", ".config.yaml")
+
+DEFAULT_AGE_PROFILES = {
+    "3-5": {
+        "label": "3-5岁",
+        "vocabulary_level": "very_simple",
+        "max_new_concepts": 2,
+        "abstract_concept_level": "none",
+        "question_style": "observation",
+        "support_level": "high",
+    },
+    "6-8": {
+        "label": "6-8岁",
+        "vocabulary_level": "simple",
+        "max_new_concepts": 4,
+        "abstract_concept_level": "limited",
+        "question_style": "exploration",
+        "support_level": "medium_high",
+    },
+    "9-11": {
+        "label": "9-11岁",
+        "vocabulary_level": "age_appropriate",
+        "max_new_concepts": 6,
+        "abstract_concept_level": "allowed",
+        "question_style": "discussion",
+        "support_level": "medium",
+    },
+}
+
+DEFAULT_INTERACTION_POLICIES = {
+    "safety_risk": {
+        "information_budget": "low",
+        "reasoning_depth": 1,
+        "interaction_style": "observation",
+        "conversation_pacing": "progressive",
+        "emotional_priority": "high",
+    },
+    "emotion_support": {
+        "information_budget": "low",
+        "reasoning_depth": 1,
+        "interaction_style": "exploration",
+        "conversation_pacing": "progressive",
+        "emotional_priority": "high",
+    },
+    "curiosity": {
+        "information_budget": "medium",
+        "reasoning_depth": 2,
+        "interaction_style": "exploration",
+        "conversation_pacing": "balanced",
+        "emotional_priority": "medium",
+    },
+    "learning_support": {
+        "information_budget": "low",
+        "reasoning_depth": 1,
+        "interaction_style": "observation",
+        "conversation_pacing": "progressive",
+        "emotional_priority": "high",
+    },
+    "play_interaction": {
+        "information_budget": "low",
+        "reasoning_depth": 1,
+        "interaction_style": "observation",
+        "conversation_pacing": "balanced",
+        "emotional_priority": "medium",
+    },
+    "system_repair": {
+        "information_budget": "low",
+        "reasoning_depth": 1,
+        "interaction_style": "discussion",
+        "conversation_pacing": "progressive",
+        "emotional_priority": "medium",
+    },
+    "relationship_building": {
+        "information_budget": "low",
+        "reasoning_depth": 1,
+        "interaction_style": "observation",
+        "conversation_pacing": "balanced",
+        "emotional_priority": "high",
+    },
+}
+
+DEFAULT_INTEREST_TOPICS = [
+    {"key": "animals", "label": "🐶 小动物"},
+    {"key": "dinosaurs", "label": "🦖 恐龙"},
+    {"key": "space", "label": "🚀 太空"},
+    {"key": "vehicles", "label": "🚗 汽车和交通工具"},
+    {"key": "nature", "label": "🌳 大自然"},
+    {"key": "sports", "label": "⚽ 运动"},
+    {"key": "art_and_crafts", "label": "🎨 画画和手工"},
+    {"key": "music_and_dance", "label": "🎵 音乐和跳舞"},
+    {"key": "stories_and_picture_books", "label": "📚 故事和绘本"},
+    {"key": "riddles_and_games", "label": "🧩 猜谜和小游戏"},
+]
+
+DEFAULT_INTEREST_INFLUENCE_POLICY = {
+    "example_bias": "high",
+    "story_bias": "high",
+    "conversation_bias": "medium",
+    "game_bias": "medium",
+    "memory_reference": "occasionally",
+}
+
+DEFAULT_SCENE_INTEREST_CONFIGS = {
+    "safety_risk": {
+        "use_interest_examples": False,
+        "use_interest_story": False,
+        "use_interest_games": False,
+        "use_interest_conversation": False,
+    },
+    "emotion_support": {
+        "use_interest_examples": False,
+        "use_interest_story": False,
+        "use_interest_games": False,
+        "use_interest_conversation": False,
+    },
+    "curiosity": {
+        "use_interest_examples": True,
+        "use_interest_story": False,
+        "use_interest_games": False,
+        "use_interest_conversation": False,
+    },
+    "learning_support": {
+        "use_interest_examples": False,
+        "use_interest_story": False,
+        "use_interest_games": False,
+        "use_interest_conversation": False,
+    },
+    "play_interaction": {
+        "use_interest_examples": False,
+        "use_interest_story": False,
+        "use_interest_games": True,
+        "use_interest_conversation": False,
+    },
+    "system_repair": {
+        "use_interest_examples": False,
+        "use_interest_story": False,
+        "use_interest_games": False,
+        "use_interest_conversation": False,
+    },
+    "relationship_building": {
+        "use_interest_examples": False,
+        "use_interest_story": False,
+        "use_interest_games": False,
+        "use_interest_conversation": True,
+    },
+}
+
+DEFAULT_DAILY_GREETING_CONFIG = {
+    "version": 1,
+    "enabled": True,
+    "first_meaningful_interaction_only": True,
+    "mark_delivered_once_per_day": True,
+    "block_on_higher_priority_interruptions": True,
+    "goal": (
+        "Generate one personalized greeting at the beginning of each day that helps the robot "
+        "feel continuous, caring and attentive."
+    ),
+    "trigger_conditions": [
+        "First meaningful interaction of the calendar day.",
+        "Greeting has not already been delivered today.",
+        "No higher-priority interruption exists, such as emergency or safety events.",
+    ],
+    "pipeline": [
+        "First Interaction Today",
+        "Collect Greeting Candidates",
+        "Filter Invalid Candidates",
+        "Priority Ranking",
+        "Select One Candidate",
+        "Generate Greeting",
+        "Mark Greeting As Delivered",
+        "Continue Conversation",
+    ],
+    "greeting_structure": [
+        "Reason: why the robot is bringing this up.",
+        "Content: the actual memory or event.",
+        "Invitation: invite the child to continue.",
+    ],
+    "selection_rules": [
+        "Only one greeting topic should be selected each day.",
+        "Never combine multiple greeting types in one greeting.",
+        "If today's greeting has already been delivered, return to the normal conversation flow immediately.",
+    ],
+    "design_principles": [
+        "The greeting should feel personal rather than random.",
+        "Memories should only be referenced when they are relevant.",
+        "Never invent memories.",
+        "Never repeat the same greeting multiple times in one day.",
+        "The greeting should naturally lead into conversation instead of ending the interaction.",
+    ],
+    "future_extensions": [
+        "Weather",
+        "Birthday",
+        "Holidays",
+        "School schedule",
+        "Parent reminders",
+        "Robot memories",
+        "Weekly recap",
+        "Seasonal events",
+    ],
+    "state_example": {
+        "date": "2026-07-08",
+        "delivered": True,
+        "greeting_type": "follow_up",
+        "source_id": "follow_up_001",
+        "timestamp": "08:13",
+    },
+    "greeting_types": {
+        "follow_up": {
+            "label": "Follow-up",
+            "priority": 100,
+            "enabled": True,
+            "purpose": "Continue unfinished conversations from previous days.",
+            "template": "Reason -> Follow-up -> Invitation",
+            "examples": [
+                "Yesterday you told me you were going to the zoo! Did you see your favorite animals?",
+                "Yesterday you mentioned your spelling test. How did it go today?",
+            ],
+            "notes": "Use when there is a clear unfinished topic from previous days.",
+        },
+        "emotional_check_in": {
+            "label": "Emotional Check-in",
+            "priority": 90,
+            "enabled": True,
+            "purpose": "Follow up on significant emotions from previous conversations.",
+            "template": "Memory -> Care -> Invitation",
+            "examples": [
+                "You seemed a little nervous yesterday. How are you feeling today?",
+                "You were really excited yesterday. Are you still thinking about it today?",
+            ],
+            "notes": "Use only for meaningful emotions, not trivial mood mentions.",
+        },
+        "achievement_milestone": {
+            "label": "Achievement / Milestone",
+            "priority": 70,
+            "enabled": True,
+            "purpose": "Celebrate shared progress or milestones.",
+            "template": "Shared progress -> Celebration -> Invitation",
+            "examples": [
+                "We've been chatting together for a whole week!",
+                "You kept up your reading goal for several days. Want to keep the streak going today?",
+            ],
+            "notes": "Use sparingly so milestones still feel special.",
+        },
+        "memory_recall": {
+            "label": "Memory Recall",
+            "priority": 50,
+            "enabled": True,
+            "purpose": "Reference stable long-term memories or preferences.",
+            "template": "Memory -> Light connection -> Invitation",
+            "examples": [
+                "I remembered you really like penguins!",
+                "I still remember that you love little animals. Want to talk about one today?",
+            ],
+            "notes": "Should be used occasionally, not every day.",
+        },
+        "interest_greeting": {
+            "label": "Interest Greeting",
+            "priority": 30,
+            "enabled": True,
+            "purpose": "Start the day through favorite interests when no stronger memory source is available.",
+            "template": "Interest cue -> Content tease -> Invitation",
+            "examples": [
+                "I learned something fun about space today!",
+                "I found an interesting dinosaur question for you!",
+            ],
+            "notes": "Use favorite interests as a warm opener, not as a forced topic switch.",
+        },
+        "generic_greeting": {
+            "label": "Generic Greeting",
+            "priority": 10,
+            "enabled": True,
+            "purpose": "Fallback greeting when no other candidate is available.",
+            "template": "Warm opening -> Invitation",
+            "examples": [
+                "Good morning!",
+                "What shall we do today?",
+            ],
+            "notes": "Only use when no other greeting source is available.",
+        },
+    },
+    "boot_greeting": {
+        "enabled": True,
+        "auto_play_after_startup": True,
+        "wait_for_network": True,
+        "wait_for_core_services": True,
+        "max_duration_seconds": 3,
+        "library": {
+            "categories": [
+                {
+                    "key": "wake_up",
+                    "label": "Wake Up",
+                    "weight": 40,
+                    "greetings": [
+                        {"id": "wake_01", "text": "我醒来啦。"},
+                        {"id": "wake_02", "text": "我已经准备好啦。"},
+                        {"id": "wake_03", "text": "我在这里啦。"},
+                    ],
+                },
+                {
+                    "key": "happy_to_see_you",
+                    "label": "Happy To See You",
+                    "weight": 30,
+                    "greetings": [
+                        {"id": "happy_01", "text": "见到你我很开心。"},
+                        {"id": "happy_02", "text": "你来啦，我好开心。"},
+                    ],
+                },
+                {
+                    "key": "adventure",
+                    "label": "Adventure",
+                    "weight": 20,
+                    "greetings": [
+                        {"id": "adventure_01", "text": "今天也一起去发现有趣的事情吧。"},
+                        {"id": "adventure_02", "text": "今天不知道会有什么新冒险呢。"},
+                    ],
+                },
+                {
+                    "key": "ready_to_play",
+                    "label": "Ready To Play",
+                    "weight": 10,
+                    "greetings": [
+                        {"id": "play_01", "text": "我都准备好啦。"},
+                        {"id": "play_02", "text": "我随时都可以陪你玩。"},
+                    ],
+                },
+            ]
+        },
+        "last_boot_greeting": {
+            "category": "",
+            "greeting_id": "",
+        },
+    },
+}
+
+DEFAULT_ROBOT_PROFILE_CONFIG = {
+    "identity": {
+        "name": "Quokka",
+        "species": "Quokka",
+        "ageDescription": "About the same age as the child.",
+        "home": "Sunshine Island",
+        "mission": "Grow up together with children through curiosity, kindness and play.",
+    },
+    "personality": {
+        "coreTraits": ["curious", "optimistic", "playful"],
+        "strengths": ["encouraging", "good listener"],
+        "weaknesses": ["sometimes gets distracted", "gets overly excited"],
+    },
+    "values": {
+        "beliefs": [
+            "Curiosity helps us grow.",
+            "Making mistakes is part of learning.",
+            "Everyone has their own strengths.",
+        ],
+        "priorities": ["Safety", "Kindness", "Honesty", "Curiosity"],
+    },
+}
+
+DEFAULT_INTEREST_ADAPTER = {
+    "animals": {
+        "domains": [
+            "fun_facts",
+            "behaviors",
+            "habitats",
+            "comparisons",
+            "emotions",
+            "imagination",
+            "stories",
+            "games",
+            "conservation",
+            "science",
+        ],
+        "example_context": ["pets", "mammals", "wildlife"],
+        "story_context": ["animal_adventure", "friendship", "caring_for_animals"],
+        "conversation_context": ["animal_facts", "zoos", "animal_behaviors"],
+        "game_context": ["animal_guessing", "animal_quiz"],
+    },
+    "dinosaurs": {
+        "domains": [
+            "species",
+            "fossils",
+            "behaviors",
+            "extinction",
+            "imagination",
+            "comparisons",
+            "habitats",
+            "science",
+        ],
+        "example_context": ["dinosaur_species", "fossils"],
+        "story_context": ["dinosaur_adventure", "time_travel"],
+        "conversation_context": ["dinosaur_facts", "paleontology"],
+        "game_context": ["dinosaur_quiz"],
+    },
+    "space": {
+        "domains": [
+            "fun_facts",
+            "planets",
+            "astronauts",
+            "rockets",
+            "imagination",
+            "future",
+            "mysteries",
+            "science",
+        ],
+        "example_context": ["planets", "rockets", "astronauts"],
+        "story_context": ["space_adventure", "exploration", "missions"],
+        "conversation_context": ["astronomy", "planets", "space_facts"],
+        "game_context": ["space_quiz", "planet_guessing"],
+    },
+    "vehicles": {
+        "domains": [
+            "how_it_moves",
+            "design",
+            "speed",
+            "jobs",
+            "history",
+            "future",
+            "safety",
+            "imagination",
+            "comparisons",
+        ],
+        "example_context": ["cars", "transportation", "traffic_tools"],
+        "story_context": ["travel_adventure", "rescue_missions", "city_journeys"],
+        "conversation_context": ["vehicle_facts", "transportation", "how_things_move"],
+        "game_context": ["vehicle_guessing", "traffic_quiz"],
+    },
+    "nature": {
+        "domains": [
+            "plants",
+            "weather",
+            "seasons",
+            "habitats",
+            "ecosystems",
+            "observation",
+            "conservation",
+            "imagination",
+            "science",
+        ],
+        "example_context": ["plants", "weather", "outdoors"],
+        "story_context": ["forest_adventure", "exploration", "nature_friendship"],
+        "conversation_context": ["nature_facts", "seasons", "outdoor_observation"],
+        "game_context": ["nature_quiz", "outdoor_guessing"],
+    },
+    "sports": {
+        "domains": [
+            "skills",
+            "teamwork",
+            "practice",
+            "body",
+            "rules",
+            "strategy",
+            "feelings",
+            "games",
+            "comparisons",
+        ],
+        "example_context": ["games", "movement", "teamwork"],
+        "story_context": ["sports_challenge", "teamwork", "practice_growth"],
+        "conversation_context": ["sports_facts", "movement", "competition"],
+        "game_context": ["sports_quiz", "movement_guessing"],
+    },
+    "art_and_crafts": {
+        "domains": [
+            "techniques",
+            "colors",
+            "creativity",
+            "materials",
+            "challenges",
+            "observation",
+            "imagination",
+            "projects",
+        ],
+        "example_context": ["colors", "making_things", "creative_tools"],
+        "story_context": ["creative_adventure", "making_projects", "art_friendship"],
+        "conversation_context": ["art_ideas", "craft_materials", "creative_process"],
+        "game_context": ["art_guessing", "craft_quiz"],
+    },
+    "music_and_dance": {
+        "domains": [
+            "rhythm",
+            "instruments",
+            "movement",
+            "feelings",
+            "creativity",
+            "performance",
+            "patterns",
+            "games",
+        ],
+        "example_context": ["rhythm", "songs", "movement"],
+        "story_context": ["music_adventure", "dance_party", "performance_fun"],
+        "conversation_context": ["music_facts", "instruments", "rhythm_patterns"],
+        "game_context": ["music_quiz", "rhythm_guessing"],
+    },
+    "stories_and_picture_books": {
+        "domains": [
+            "characters",
+            "story_worlds",
+            "plot",
+            "feelings",
+            "imagination",
+            "pictures",
+            "choices",
+            "endings",
+        ],
+        "example_context": ["characters", "story_worlds", "picture_books"],
+        "story_context": ["storybook_adventure", "imagination", "friendship"],
+        "conversation_context": ["story_talk", "book_characters", "plot_curiosity"],
+        "game_context": ["story_quiz", "character_guessing"],
+    },
+    "riddles_and_games": {
+        "domains": [
+            "logic",
+            "patterns",
+            "clues",
+            "memory",
+            "wordplay",
+            "strategy",
+            "mini_games",
+            "challenges",
+        ],
+        "example_context": ["patterns", "clues", "playful_logic"],
+        "story_context": ["puzzle_adventure", "mystery_fun", "problem_solving"],
+        "conversation_context": ["riddle_talk", "mini_games", "playful_thinking"],
+        "game_context": ["riddle_quiz", "guessing_game"],
+    },
+}
 
 try:
     from core.scene_router import ChildProfile, DialogState, SceneRouter, SceneRouterInput, SignalState
@@ -373,6 +932,684 @@ def _build_grounded_greeting_reply_for_debug(dialogue_state):
     return f"现在更像{current_label}呢，不过见到你很开心，{recommended}。"
 
 
+def _normalize_age_profile_value(field_name, value):
+    if field_name == "max_new_concepts":
+        try:
+            normalized = int(value)
+        except (TypeError, ValueError):
+            raise ValueError("max_new_concepts must be integer")
+        return max(1, min(12, normalized))
+    normalized = str(value or "").strip()
+    if not normalized:
+        raise ValueError(f"{field_name} required")
+    return normalized
+
+
+def _load_age_profiles():
+    profiles = json.loads(json.dumps(DEFAULT_AGE_PROFILES, ensure_ascii=False))
+    if not os.path.exists(AGE_PROFILE_CONFIG_PATH):
+        return profiles
+    try:
+        with open(AGE_PROFILE_CONFIG_PATH, "r", encoding="utf-8") as f:
+            raw = json.load(f)
+    except Exception:
+        return profiles
+
+    if not isinstance(raw, dict):
+        return profiles
+
+    for age_group, defaults in DEFAULT_AGE_PROFILES.items():
+        incoming = raw.get(age_group) or {}
+        if not isinstance(incoming, dict):
+            continue
+        merged = dict(defaults)
+        for field_name in defaults.keys():
+            if field_name not in incoming:
+                continue
+            try:
+                merged[field_name] = _normalize_age_profile_value(field_name, incoming[field_name])
+            except ValueError:
+                continue
+        profiles[age_group] = merged
+    return profiles
+
+
+def _save_age_profiles(profiles):
+    with open(AGE_PROFILE_CONFIG_PATH, "w", encoding="utf-8") as f:
+        json.dump(profiles, f, ensure_ascii=False, indent=2)
+    with open(RUNTIME_AGE_PROFILE_CONFIG_PATH, "w", encoding="utf-8") as f:
+        json.dump(profiles, f, ensure_ascii=False, indent=2)
+
+
+def _normalize_interaction_policy_value(field_name, value):
+    if field_name == "reasoning_depth":
+        try:
+            normalized = int(value)
+        except (TypeError, ValueError):
+            raise ValueError("reasoning_depth must be integer")
+        return max(1, min(3, normalized))
+    normalized = str(value or "").strip()
+    if not normalized:
+        raise ValueError(f"{field_name} required")
+    return normalized
+
+
+def _build_default_interaction_policy(scene_name):
+    scene_defaults = DEFAULT_INTERACTION_POLICIES.get(scene_name)
+    if scene_defaults:
+        return dict(scene_defaults)
+    return {
+        "information_budget": "medium",
+        "reasoning_depth": 2,
+        "interaction_style": "exploration",
+        "conversation_pacing": "balanced",
+        "emotional_priority": "medium",
+    }
+
+
+def _load_interaction_policies():
+    defaults = {}
+    try:
+        rules_spec = importlib.util.spec_from_file_location(
+            f"scene_router_rules_policy_defaults_{int(time.time() * 1000)}",
+            SCENE_ROUTER_RULES_PATH,
+        )
+        if rules_spec is not None and rules_spec.loader is not None:
+            rules_module = importlib.util.module_from_spec(rules_spec)
+            rules_spec.loader.exec_module(rules_module)
+            scene_rules = getattr(rules_module, "SCENE_RULES", {}) or {}
+            for scene_name in scene_rules.keys():
+                defaults[scene_name] = _build_default_interaction_policy(scene_name)
+    except Exception:
+        defaults = {}
+    if not defaults:
+        for scene_name in DEFAULT_INTERACTION_POLICIES.keys():
+            defaults[scene_name] = _build_default_interaction_policy(scene_name)
+
+    profiles = json.loads(json.dumps(defaults, ensure_ascii=False))
+    if not os.path.exists(INTERACTION_POLICY_CONFIG_PATH):
+        return profiles
+    try:
+        with open(INTERACTION_POLICY_CONFIG_PATH, "r", encoding="utf-8") as f:
+            raw = json.load(f)
+    except Exception:
+        return profiles
+
+    if not isinstance(raw, dict):
+        return profiles
+
+    for scene_name, default_policy in defaults.items():
+        incoming = raw.get(scene_name) or {}
+        if not isinstance(incoming, dict):
+            continue
+        merged = dict(default_policy)
+        for field_name in default_policy.keys():
+            if field_name not in incoming:
+                continue
+            try:
+                merged[field_name] = _normalize_interaction_policy_value(field_name, incoming[field_name])
+            except ValueError:
+                continue
+        profiles[scene_name] = merged
+    return profiles
+
+
+def _save_interaction_policies(policies):
+    with open(INTERACTION_POLICY_CONFIG_PATH, "w", encoding="utf-8") as f:
+        json.dump(policies, f, ensure_ascii=False, indent=2)
+    with open(RUNTIME_INTERACTION_POLICY_CONFIG_PATH, "w", encoding="utf-8") as f:
+        json.dump(policies, f, ensure_ascii=False, indent=2)
+
+
+def _normalize_scene_interest_config_value(field_name, value):
+    return bool(value)
+
+
+def _build_default_scene_interest_config(scene_name):
+    config = DEFAULT_SCENE_INTEREST_CONFIGS.get(scene_name)
+    if config:
+        return dict(config)
+    return {
+        "use_interest_examples": False,
+        "use_interest_story": False,
+        "use_interest_games": False,
+        "use_interest_conversation": False,
+    }
+
+
+def _load_scene_interest_configs():
+    defaults = {}
+    try:
+        rules_spec = importlib.util.spec_from_file_location(
+            f"scene_router_rules_interest_defaults_{int(time.time() * 1000)}",
+            SCENE_ROUTER_RULES_PATH,
+        )
+        if rules_spec is not None and rules_spec.loader is not None:
+            rules_module = importlib.util.module_from_spec(rules_spec)
+            rules_spec.loader.exec_module(rules_module)
+            scene_rules = getattr(rules_module, "SCENE_RULES", {}) or {}
+            for scene_name in scene_rules.keys():
+                defaults[scene_name] = _build_default_scene_interest_config(scene_name)
+    except Exception:
+        defaults = {}
+    if not defaults:
+        for scene_name in DEFAULT_SCENE_INTEREST_CONFIGS.keys():
+            defaults[scene_name] = _build_default_scene_interest_config(scene_name)
+
+    configs = json.loads(json.dumps(defaults, ensure_ascii=False))
+    if not os.path.exists(SCENE_INTEREST_CONFIG_PATH):
+        return configs
+    try:
+        with open(SCENE_INTEREST_CONFIG_PATH, "r", encoding="utf-8") as f:
+            raw = json.load(f)
+    except Exception:
+        return configs
+
+    if not isinstance(raw, dict):
+        return configs
+
+    for scene_name, defaults_value in defaults.items():
+        incoming = raw.get(scene_name) or {}
+        if not isinstance(incoming, dict):
+            continue
+        merged = dict(defaults_value)
+        for field_name in defaults_value.keys():
+            if field_name not in incoming:
+                continue
+            merged[field_name] = _normalize_scene_interest_config_value(
+                field_name,
+                incoming.get(field_name),
+            )
+        configs[scene_name] = merged
+    return configs
+
+
+def _save_scene_interest_configs(configs):
+    with open(SCENE_INTEREST_CONFIG_PATH, "w", encoding="utf-8") as f:
+        json.dump(configs, f, ensure_ascii=False, indent=2)
+    with open(RUNTIME_SCENE_INTEREST_CONFIG_PATH, "w", encoding="utf-8") as f:
+        json.dump(configs, f, ensure_ascii=False, indent=2)
+
+
+def _normalize_interest_influence_value(field_name, value):
+    normalized = str(value or "").strip()
+    if not normalized:
+        raise ValueError(f"{field_name} required")
+    return normalized
+
+
+def _normalize_interest_context_list(value):
+    items = []
+    if isinstance(value, list):
+        raw_items = value
+    else:
+        raw_items = str(value or "").split(",")
+    for item in raw_items:
+        normalized = str(item or "").strip()
+        if normalized:
+            items.append(normalized)
+    return items
+
+
+def _load_interest_influence_config():
+    config = {
+        "favorite_topics": list(DEFAULT_INTEREST_TOPICS),
+        "interest_influence": dict(DEFAULT_INTEREST_INFLUENCE_POLICY),
+        "interest_adapter": json.loads(json.dumps(DEFAULT_INTEREST_ADAPTER, ensure_ascii=False)),
+    }
+    if not os.path.exists(INTERESTS_CONFIG_PATH):
+        return config
+    try:
+        with open(INTERESTS_CONFIG_PATH, "r", encoding="utf-8") as f:
+            raw = json.load(f)
+    except Exception:
+        return config
+
+    if not isinstance(raw, dict):
+        return config
+
+    topics = raw.get("favorite_topics")
+    if isinstance(topics, list):
+        normalized_topics = []
+        for item in topics:
+            if not isinstance(item, dict):
+                continue
+            key = str(item.get("key") or "").strip()
+            label = str(item.get("label") or "").strip()
+            if not key or not label:
+                continue
+            normalized_topics.append({"key": key, "label": label})
+        if normalized_topics:
+            config["favorite_topics"] = normalized_topics
+
+    incoming_policy = raw.get("interest_influence")
+    if isinstance(incoming_policy, dict):
+        merged = dict(DEFAULT_INTEREST_INFLUENCE_POLICY)
+        for field_name in DEFAULT_INTEREST_INFLUENCE_POLICY.keys():
+            if field_name not in incoming_policy:
+                continue
+            try:
+                merged[field_name] = _normalize_interest_influence_value(field_name, incoming_policy.get(field_name))
+            except ValueError:
+                continue
+        config["interest_influence"] = merged
+
+    incoming_adapter = raw.get("interest_adapter")
+    if isinstance(incoming_adapter, dict):
+        merged_adapter = json.loads(json.dumps(DEFAULT_INTEREST_ADAPTER, ensure_ascii=False))
+        for topic_key, defaults in DEFAULT_INTEREST_ADAPTER.items():
+            incoming_topic = incoming_adapter.get(topic_key)
+            if not isinstance(incoming_topic, dict):
+                continue
+            merged_topic = dict(defaults)
+            for field_name in defaults.keys():
+                if field_name not in incoming_topic:
+                    continue
+                merged_topic[field_name] = _normalize_interest_context_list(incoming_topic.get(field_name))
+            merged_adapter[topic_key] = merged_topic
+        config["interest_adapter"] = merged_adapter
+    return config
+
+
+def _save_interest_influence_config(config):
+    with open(INTERESTS_CONFIG_PATH, "w", encoding="utf-8") as f:
+        json.dump(config, f, ensure_ascii=False, indent=2)
+    with open(RUNTIME_INTERESTS_CONFIG_PATH, "w", encoding="utf-8") as f:
+        json.dump(config, f, ensure_ascii=False, indent=2)
+
+
+def _normalize_daily_text_list(value):
+    if isinstance(value, list):
+        raw_items = value
+    else:
+        raw_items = str(value or "").splitlines()
+    items = []
+    for item in raw_items:
+        normalized = str(item or "").strip()
+        if normalized:
+            items.append(normalized)
+    return items
+
+
+def _normalize_robot_profile_list(value):
+    return _normalize_daily_text_list(value)
+
+
+def _load_robot_profile_config():
+    config = json.loads(json.dumps(DEFAULT_ROBOT_PROFILE_CONFIG, ensure_ascii=False))
+    if not os.path.exists(ROBOT_PROFILE_CONFIG_PATH):
+        return config
+    try:
+        with open(ROBOT_PROFILE_CONFIG_PATH, "r", encoding="utf-8") as f:
+            raw = json.load(f)
+    except Exception:
+        return config
+
+    if not isinstance(raw, dict):
+        return config
+
+    for section_name in ("identity", "personality", "values"):
+        incoming = raw.get(section_name)
+        if not isinstance(incoming, dict):
+            continue
+        section = dict(config[section_name])
+        for key, default_value in section.items():
+            if key not in incoming:
+                continue
+            if isinstance(default_value, list):
+                normalized = _normalize_robot_profile_list(incoming.get(key))
+                if normalized:
+                    section[key] = normalized
+            else:
+                text = str(incoming.get(key) or "").strip()
+                if text:
+                    section[key] = text
+        config[section_name] = section
+
+    return config
+
+
+def _save_robot_profile_config(config):
+    with open(ROBOT_PROFILE_CONFIG_PATH, "w", encoding="utf-8") as f:
+        json.dump(config, f, ensure_ascii=False, indent=2)
+    with open(RUNTIME_ROBOT_PROFILE_CONFIG_PATH, "w", encoding="utf-8") as f:
+        json.dump(config, f, ensure_ascii=False, indent=2)
+
+
+def _load_runtime_manage_api_config():
+    merged = {}
+    for candidate_path in (RUNTIME_DEFAULT_CONFIG_PATH, RUNTIME_CUSTOM_CONFIG_PATH):
+        if not os.path.exists(candidate_path):
+            continue
+        try:
+            with open(candidate_path, "r", encoding="utf-8") as f:
+                payload = yaml.safe_load(f) or {}
+        except Exception:
+            continue
+        if isinstance(payload, dict):
+            merged.update(payload)
+
+    manager_api = merged.get("manager-api")
+    if not isinstance(manager_api, dict):
+        return {}
+    return {
+        "url": str(manager_api.get("url") or "").strip(),
+        "secret": str(manager_api.get("secret") or "").strip(),
+    }
+
+
+def _extract_robot_name_preference(payload):
+    if not isinstance(payload, dict):
+        return ""
+    data = payload.get("data") if isinstance(payload.get("data"), dict) else payload
+    long_term_memory = data.get("longTermMemory") if isinstance(data.get("longTermMemory"), dict) else data
+    return str(long_term_memory.get("robotNamePreference") or "").strip()
+
+
+def _normalize_child_memory_payload(payload, source=""):
+    if not isinstance(payload, dict):
+        return None
+    data = payload.get("data") if isinstance(payload.get("data"), dict) else payload
+    memory = data.get("longTermMemory") if isinstance(data.get("longTermMemory"), dict) else data
+    if not isinstance(memory, dict):
+        return None
+
+    def pick(*keys):
+        for key in keys:
+            value = memory.get(key)
+            if value not in (None, "", "NULL"):
+                return value
+        return None
+
+    def list_value(*keys):
+        value = pick(*keys)
+        if isinstance(value, list):
+            return [str(item or "").strip() for item in value if str(item or "").strip()]
+        if isinstance(value, str):
+            stripped = value.strip()
+            if not stripped:
+                return []
+            try:
+                parsed = json.loads(stripped)
+                if isinstance(parsed, list):
+                    return [str(item or "").strip() for item in parsed if str(item or "").strip()]
+            except Exception:
+                pass
+            return [item.strip() for item in stripped.split(",") if item.strip()]
+        return []
+
+    age = pick("age")
+    try:
+        age = int(age) if age not in (None, "") else None
+    except (TypeError, ValueError):
+        age = None
+
+    profile_version = pick("profileVersion", "profile_version")
+    try:
+        profile_version = int(profile_version) if profile_version not in (None, "") else None
+    except (TypeError, ValueError):
+        profile_version = None
+
+    summary = {
+        "nickname_preference": str(pick("nicknamePreference", "nickname_preference") or "").strip(),
+        "age": age,
+        "age_group": str(pick("ageGroup", "age_group") or "").strip(),
+        "robot_name_preference": str(pick("robotNamePreference", "robot_name_preference") or "").strip(),
+        "interests": list_value("interests"),
+        "favorite_dog_types": list_value("favoriteDogTypes", "favorite_dog_types"),
+        "desired_activities": list_value("desiredActivities", "desired_activities"),
+        "parent_goals": list_value("parentGoals", "parent_goals"),
+        "profile_version": profile_version,
+        "source": source,
+    }
+    if any(value for key, value in summary.items() if key != "source"):
+        return summary
+    return None
+
+
+def _load_child_memory_summary(device_id=None):
+    return None
+
+
+def _load_child_memory_summaries(device_ids):
+    return {}
+
+
+def _resolve_effective_robot_identity_name(device_id=None):
+    normalized_device_id = str(device_id or XIAOZHI_DEBUG_DEVICE_ID).strip() or XIAOZHI_DEBUG_DEVICE_ID
+    try:
+        rows = mysql_query(
+            "SELECT a.agent_name "
+            "FROM ai_device d "
+            "LEFT JOIN ai_agent a ON d.agent_id = a.id "
+            f"WHERE LOWER(d.id)='{_sql_safe(normalized_device_id.lower())}' "
+            "LIMIT 1"
+        )
+        if rows:
+            agent_name = str(rows[0].get("agent_name") or "").strip()
+            if agent_name:
+                return agent_name
+    except Exception:
+        pass
+
+    return ""
+
+
+def _parse_db_datetime_to_ts(value):
+    raw = str(value or "").strip()
+    if not raw or raw.upper() == "NULL":
+        return None
+    for fmt in ("%Y-%m-%d %H:%M:%S.%f", "%Y-%m-%d %H:%M:%S"):
+        try:
+            return datetime.strptime(raw, fmt).timestamp()
+        except ValueError:
+            continue
+    return None
+
+
+def _normalize_daily_greeting_type(type_name, raw):
+    default = dict(DEFAULT_DAILY_GREETING_CONFIG["greeting_types"][type_name])
+    if not isinstance(raw, dict):
+        return default
+
+    merged = dict(default)
+    merged["label"] = str(raw.get("label") or default["label"]).strip() or default["label"]
+    merged["enabled"] = bool(raw.get("enabled", default["enabled"]))
+    try:
+        merged["priority"] = max(1, min(999, int(raw.get("priority", default["priority"]))))
+    except (TypeError, ValueError):
+        merged["priority"] = default["priority"]
+
+    for field_name in ("purpose", "template", "notes"):
+        merged[field_name] = str(raw.get(field_name) or default[field_name]).strip() or default[field_name]
+
+    examples = _normalize_daily_text_list(raw.get("examples"))
+    merged["examples"] = examples or list(default["examples"])
+    return merged
+
+
+def _normalize_boot_greeting_config(raw):
+    default = json.loads(
+        json.dumps(DEFAULT_DAILY_GREETING_CONFIG["boot_greeting"], ensure_ascii=False)
+    )
+    if not isinstance(raw, dict):
+        return default
+
+    merged = dict(default)
+    for field_name in (
+        "enabled",
+        "auto_play_after_startup",
+        "wait_for_network",
+        "wait_for_core_services",
+    ):
+        if field_name in raw:
+            merged[field_name] = bool(raw.get(field_name))
+
+    if "max_duration_seconds" in raw:
+        try:
+            merged["max_duration_seconds"] = max(
+                1,
+                min(30, int(raw.get("max_duration_seconds"))),
+            )
+        except (TypeError, ValueError):
+            merged["max_duration_seconds"] = default["max_duration_seconds"]
+
+    incoming_last = raw.get("last_boot_greeting")
+    if isinstance(incoming_last, dict):
+        merged["last_boot_greeting"] = {
+            "category": str(incoming_last.get("category") or "").strip(),
+            "greeting_id": str(incoming_last.get("greeting_id") or "").strip(),
+        }
+
+    default_categories = list(default["library"]["categories"])
+    incoming_library = raw.get("library")
+    if isinstance(incoming_library, dict) and isinstance(incoming_library.get("categories"), list):
+        normalized_categories = []
+        for index, item in enumerate(incoming_library.get("categories") or []):
+            if not isinstance(item, dict):
+                continue
+            fallback = default_categories[index] if index < len(default_categories) else {}
+            key = str(item.get("key") or fallback.get("key") or "").strip()
+            label = str(item.get("label") or fallback.get("label") or key).strip() or key
+            if not key:
+                continue
+            try:
+                weight = max(1, min(999, int(item.get("weight", fallback.get("weight", 10)))))
+            except (TypeError, ValueError):
+                weight = int(fallback.get("weight", 10) or 10)
+            greetings = []
+            incoming_greetings = item.get("greetings")
+            if isinstance(incoming_greetings, list):
+                for g_index, greeting in enumerate(incoming_greetings):
+                    if not isinstance(greeting, dict):
+                        continue
+                    fallback_greetings = fallback.get("greetings") or []
+                    fallback_greeting = fallback_greetings[g_index] if g_index < len(fallback_greetings) else {}
+                    greeting_id = str(
+                        greeting.get("id")
+                        or fallback_greeting.get("id")
+                        or f"{key}_{g_index + 1:02d}"
+                    ).strip()
+                    greeting_text = str(
+                        greeting.get("text")
+                        or fallback_greeting.get("text")
+                        or ""
+                    ).strip()
+                    if greeting_id and greeting_text:
+                        greetings.append({"id": greeting_id, "text": greeting_text})
+            if not greetings:
+                fallback_greetings = fallback.get("greetings") or []
+                greetings = [
+                    {
+                        "id": str(greeting.get("id") or "").strip(),
+                        "text": str(greeting.get("text") or "").strip(),
+                    }
+                    for greeting in fallback_greetings
+                    if str(greeting.get("id") or "").strip() and str(greeting.get("text") or "").strip()
+                ]
+            normalized_categories.append(
+                {
+                    "key": key,
+                    "label": label,
+                    "weight": weight,
+                    "greetings": greetings,
+                }
+            )
+        if normalized_categories:
+            merged["library"] = {"categories": normalized_categories}
+
+    return merged
+
+
+def _load_daily_greeting_config():
+    config = json.loads(json.dumps(DEFAULT_DAILY_GREETING_CONFIG, ensure_ascii=False))
+    if not os.path.exists(DAILY_GREETING_CONFIG_PATH):
+        return config
+    try:
+        with open(DAILY_GREETING_CONFIG_PATH, "r", encoding="utf-8") as f:
+            raw = json.load(f)
+    except Exception:
+        return config
+
+    if not isinstance(raw, dict):
+        return config
+
+    for field_name in (
+        "enabled",
+        "first_meaningful_interaction_only",
+        "mark_delivered_once_per_day",
+        "block_on_higher_priority_interruptions",
+    ):
+        if field_name in raw:
+            config[field_name] = bool(raw.get(field_name))
+
+    if raw.get("version") is not None:
+        try:
+            config["version"] = max(1, int(raw.get("version")))
+        except (TypeError, ValueError):
+            pass
+
+    for field_name in ("goal",):
+        if field_name in raw:
+            config[field_name] = str(raw.get(field_name) or "").strip() or config[field_name]
+
+    for field_name in (
+        "trigger_conditions",
+        "pipeline",
+        "greeting_structure",
+        "selection_rules",
+        "design_principles",
+        "future_extensions",
+    ):
+        if field_name in raw:
+            normalized = _normalize_daily_text_list(raw.get(field_name))
+            if normalized:
+                config[field_name] = normalized
+
+    incoming_state = raw.get("state_example")
+    if isinstance(incoming_state, dict):
+        state = dict(config["state_example"])
+        for key in state.keys():
+            if key not in incoming_state:
+                continue
+            if key == "delivered":
+                state[key] = bool(incoming_state.get(key))
+            else:
+                state[key] = str(incoming_state.get(key) or "").strip() or state[key]
+        config["state_example"] = state
+
+    incoming_types = raw.get("greeting_types")
+    if isinstance(incoming_types, dict):
+        normalized_types = {}
+        for type_name in DEFAULT_DAILY_GREETING_CONFIG["greeting_types"].keys():
+            normalized_types[type_name] = _normalize_daily_greeting_type(type_name, incoming_types.get(type_name))
+        config["greeting_types"] = normalized_types
+
+    config["boot_greeting"] = _normalize_boot_greeting_config(raw.get("boot_greeting"))
+    runtime_raw = {}
+    if os.path.exists(RUNTIME_DAILY_GREETING_CONFIG_PATH):
+        try:
+            with open(RUNTIME_DAILY_GREETING_CONFIG_PATH, "r", encoding="utf-8") as f:
+                runtime_raw = json.load(f)
+        except Exception:
+            runtime_raw = {}
+    runtime_boot = runtime_raw.get("boot_greeting") if isinstance(runtime_raw, dict) else None
+    if isinstance(runtime_boot, dict) and isinstance(runtime_boot.get("last_boot_greeting"), dict):
+        config["boot_greeting"]["last_boot_greeting"] = {
+            "category": str(runtime_boot["last_boot_greeting"].get("category") or "").strip(),
+            "greeting_id": str(runtime_boot["last_boot_greeting"].get("greeting_id") or "").strip(),
+        }
+
+    return config
+
+
+def _save_daily_greeting_config(config):
+    with open(DAILY_GREETING_CONFIG_PATH, "w", encoding="utf-8") as f:
+        json.dump(config, f, ensure_ascii=False, indent=2)
+    with open(RUNTIME_DAILY_GREETING_CONFIG_PATH, "w", encoding="utf-8") as f:
+        json.dump(config, f, ensure_ascii=False, indent=2)
+
+
 def _load_scene_router_snapshot():
     rules_spec = importlib.util.spec_from_file_location(
         f"scene_router_rules_snapshot_{int(time.time() * 1000)}",
@@ -396,6 +1633,8 @@ def _load_scene_router_snapshot():
     policy_specs = getattr(policy_module, "SCENE_POLICY_SPECS", {}) or {}
     subscene_hints = getattr(policy_module, "SUBSCENE_HINTS", {}) or {}
     age_style_hints = getattr(policy_module, "AGE_STYLE_HINTS", {}) or {}
+    interaction_policies = _load_interaction_policies()
+    scene_interest_configs = _load_scene_interest_configs()
     scenes = []
     for scene_name, scene_rule in scene_rules.items():
         subscene_rules = scene_rule.get("subscene_rules") or []
@@ -420,6 +1659,8 @@ def _load_scene_router_snapshot():
             "should_use_vlm": bool(scene_rule.get("should_use_vlm")),
             "should_escalate_parent": bool(scene_rule.get("should_escalate_parent")),
             "policy": policy_data,
+            "interaction_policy": interaction_policies.get(scene_name) or _build_default_interaction_policy(scene_name),
+            "scene_interest_config": scene_interest_configs.get(scene_name) or _build_default_scene_interest_config(scene_name),
             "subscenes": [
                 {
                     "subscene": subscene,
@@ -471,6 +1712,216 @@ def mysql_exec(sql):
     return True
 
 
+def _mysql_short_memory_rows():
+    rows = mysql_query(
+        "SELECT device_id, HEX(memory_json) AS memory_hex, updated_at "
+        "FROM ai_short_term_memory ORDER BY updated_at DESC"
+    )
+    parsed = []
+    for row in rows:
+        memory_hex = str(row.get("memory_hex") or "").strip()
+        payload = {}
+        if memory_hex:
+            try:
+                payload = json.loads(bytes.fromhex(memory_hex).decode("utf-8"))
+            except Exception:
+                payload = {}
+        parsed.append(
+            {
+                "device_id": str(row.get("device_id") or "").strip(),
+                "updated_at": str(row.get("updated_at") or "").strip(),
+                "memory": payload if isinstance(payload, dict) else {},
+            }
+        )
+    return parsed
+
+
+def _date_window_ms(date_text):
+    date_value = str(date_text or "").strip()
+    if not date_value:
+        date_value = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+    try:
+        start = datetime.strptime(date_value, "%Y-%m-%d")
+    except ValueError:
+        raise ValueError("date must be YYYY-MM-DD")
+    end = start + timedelta(days=1)
+    return date_value, int(start.timestamp() * 1000), int(end.timestamp() * 1000)
+
+
+def _clean_daily_source_hint(text):
+    value = str(text or "").strip()
+    if not value:
+        return ""
+    for prefix in ("孩子提到最近经历：", "孩子提到：", "孩子在继续追问："):
+        if value.startswith(prefix):
+            value = value[len(prefix):].strip()
+            break
+    value = value.split("；后来", 1)[0].strip(" ，,。！？!?；;")
+    if value.startswith("我的"):
+        value = value[2:].strip(" ，,。！？!?；;")
+    value = value.replace("我昨天", "").replace("昨天", "").strip(" ，,。！？!?；;")
+    value = value.replace("我的猫", "猫猫").replace("我的小猫", "小猫").replace("我的狗", "狗狗")
+    value = value.replace("他", "它").replace("她", "它")
+    value = value.replace("带猫猫去", "猫猫去").replace("带小猫去", "小猫去").replace("带狗狗去", "狗狗去")
+    if "猫" in value and "医院" in value and "检查" in value and ("病快好了" in value or "快好了" in value):
+        return "猫猫去医院检查后快好了"
+    if "猫" in value and "医院" in value and ("病" in value or "不舒服" in value):
+        return "猫猫去医院检查"
+    if "猫" in value and ("病快好了" in value or "快好了" in value):
+        return "猫猫的病快好了"
+    if "猫" in value and ("生病" in value or "不舒服" in value):
+        return "猫猫生病了"
+    if any(fragment in value for fragment in ("我的和就能", "和就能", "得很清楚")):
+        if "猫" in value:
+            return "猫晚上看得很清楚这件事"
+        if "狗" in value:
+            return "狗狗的事情"
+        return ""
+    if "猫" in value and "晚上" in value and ("看得很清楚" in value or "看得清楚" in value):
+        return "猫晚上看得很清楚这件事"
+    return value[:48].rstrip(" ，,。！？!?；;")
+
+
+def _format_daily_source_potential_text(hint):
+    value = str(hint or "").strip(" ，,。！？!?；;")
+    if not value:
+        return ""
+    if any(marker in value for marker in ("病", "不舒服", "医院", "检查", "输液")):
+        if "快好" in value or "好起来" in value or "好多" in value:
+            return f"昨天你说{value}，今天它怎么样啦？"
+        return f"昨天你说{value}，今天好一点了吗？"
+    if value.startswith(("去", "看", "参加", "比赛", "表演")):
+        return f"昨天你说{value}，后来怎么样啦？"
+    return f"昨天你提到{value}，今天还想和我说说吗？"
+
+
+def _daily_followup_source_id(topic):
+    raw = (
+        str(topic.get("topic_id") or "").strip()
+        or str(topic.get("topic") or "").strip()
+        or str(topic.get("summary") or "").strip()
+        or "unknown"
+    )
+    return "follow_up_" + hashlib.sha1(raw.encode("utf-8")).hexdigest()[:10]
+
+
+def _is_daily_followup_candidate(topic, start_ms, end_ms):
+    if not isinstance(topic, dict):
+        return False
+    memory_type = str(topic.get("memory_type") or "").strip()
+    if memory_type not in {"event", "task", "health", "emotion"}:
+        return False
+    last_active = int(topic.get("last_active_at_ms") or 0)
+    if last_active < start_ms or last_active >= end_ms:
+        return False
+    follow_up = topic.get("follow_up") or {}
+    naturalness = follow_up.get("naturalness") or {}
+    return bool(follow_up.get("eligible")) and bool(naturalness.get("passed"))
+
+
+def _load_daily_greeting_state_snapshot():
+    for path in (RUNTIME_DAILY_GREETING_STATE_PATH,):
+        if not os.path.exists(path):
+            continue
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                payload = json.load(f)
+            return payload if isinstance(payload, dict) else {}
+        except Exception:
+            pass
+    cmd = [
+        "docker",
+        "exec",
+        "xiaozhi-esp32-server",
+        "cat",
+        "/opt/xiaozhi-esp32-server/data/daily_greeting_state.json",
+    ]
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=8)
+        if r.returncode == 0 and r.stdout.strip():
+            payload = json.loads(r.stdout)
+            return payload if isinstance(payload, dict) else {}
+    except Exception:
+        return {}
+    return {}
+
+
+def _selected_daily_greeting_for_device(device_id):
+    state = _load_daily_greeting_state_snapshot()
+    devices = state.get("devices") or {}
+    normalized = str(device_id or "").strip().lower()
+    device_state = devices.get(normalized) or devices.get(str(device_id or "").strip()) or {}
+    if not isinstance(device_state, dict):
+        return {}
+    return {
+        "date": device_state.get("date"),
+        "delivered": bool(device_state.get("delivered")),
+        "greeting_type": device_state.get("greeting_type"),
+        "source_id": device_state.get("source_id"),
+        "timestamp": device_state.get("timestamp"),
+        "generated": bool(device_state.get("generated")),
+        "generated_text": device_state.get("generated_text"),
+        "recent_patterns": device_state.get("recent_patterns") or [],
+    }
+
+
+def _build_greeting_source_candidate(topic):
+    summary = str(topic.get("summary") or "").strip()
+    last_user_text = str(topic.get("last_user_text") or "").strip()
+    topic_name = str(topic.get("topic") or "").strip()
+    greeting_candidate = topic.get("greeting_candidate") or {}
+    if not isinstance(greeting_candidate, dict):
+        greeting_candidate = {}
+    if not greeting_candidate:
+        try:
+            from core.short_term_memory import ShortTermTopic
+
+            hydrated = ShortTermTopic.from_dict(topic).to_dict()
+            greeting_candidate = hydrated.get("greeting_candidate") or {}
+            if not summary:
+                summary = str(hydrated.get("summary") or "").strip()
+            if not last_user_text:
+                last_user_text = str(hydrated.get("last_user_text") or "").strip()
+            if not topic_name:
+                topic_name = str(hydrated.get("topic") or "").strip()
+        except Exception:
+            greeting_candidate = {}
+    hint = (
+        _clean_daily_source_hint(greeting_candidate.get("content"))
+        or _clean_daily_source_hint(summary)
+        or _clean_daily_source_hint(last_user_text)
+        or _clean_daily_source_hint(topic_name)
+    )
+    candidate_type = str(greeting_candidate.get("type") or "knowledge_fact")
+    greeting_score = float(greeting_candidate.get("score") or 0.0)
+    emotional_weight = float(greeting_candidate.get("emotionalWeight") or 0.0)
+    follow_up_needed = bool(greeting_candidate.get("followUpNeeded"))
+    if not greeting_candidate:
+        follow_up_needed = bool((topic.get("follow_up") or {}).get("eligible"))
+    return {
+        "source_id": _daily_followup_source_id(topic),
+        "topic_id": topic.get("topic_id"),
+        "topic": topic_name,
+        "display_hint": hint,
+        "potential_text": _format_daily_source_potential_text(hint),
+        "summary": summary,
+        "memory_type": topic.get("memory_type"),
+        "greeting_candidate": greeting_candidate,
+        "greeting_candidate_type": candidate_type,
+        "greeting_candidate_type_priority": GREETING_CANDIDATE_TYPE_PRIORITY.get(candidate_type, 0),
+        "greeting_score": greeting_score,
+        "emotional_weight": emotional_weight,
+        "follow_up_needed": follow_up_needed,
+        "follow_up": topic.get("follow_up") or {},
+        "entities": topic.get("entities") or [],
+        "open_questions": topic.get("open_questions") or [],
+        "importance": topic.get("importance"),
+        "last_user_text": topic.get("last_user_text"),
+        "last_assistant_text": topic.get("last_assistant_text"),
+        "last_active_at_ms": topic.get("last_active_at_ms"),
+    }
+
+
 @app.route("/")
 @requires_auth
 def index():
@@ -481,6 +1932,143 @@ def index():
 @requires_auth
 def scene_router_page():
     return send_from_directory("static", "scene-router.html")
+
+
+@app.route("/age-profile")
+@requires_auth
+def age_profile_page():
+    return send_from_directory("static", "age-profile.html")
+
+
+@app.route("/interests")
+@requires_auth
+def interests_page():
+    return send_from_directory("static", "interests.html")
+
+
+@app.route("/greeting")
+@requires_auth
+def greeting_page():
+    return send_from_directory("static", "greeting.html")
+
+
+@app.route("/greeting-sources")
+@requires_auth
+def greeting_sources_page():
+    response = send_from_directory("static", "greeting-sources.html")
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    response.headers["Pragma"] = "no-cache"
+    return response
+
+
+@app.route("/robot-profile")
+@requires_auth
+def robot_profile_page():
+    return send_from_directory("static", "robot-profile.html")
+
+
+@app.route("/devices")
+@requires_auth
+def devices_page():
+    return send_from_directory("static", "devices.html")
+
+
+def _resolve_device_websocket_url():
+    try:
+        with open(RUNTIME_CUSTOM_CONFIG_PATH, "r", encoding="utf-8") as f:
+            runtime_config = yaml.safe_load(f) or {}
+        websocket_url = str((runtime_config.get("server") or {}).get("websocket") or "").strip()
+        if websocket_url:
+            return websocket_url
+    except Exception:
+        pass
+    return "ws://122.51.155.114:8000/xiaozhi/v1/"
+
+
+def _load_yaml_config(path):
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = yaml.safe_load(f) or {}
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def _resolve_device_auth_secret():
+    for path in (
+        os.path.join(RUNTIME_DATA_DIR, ".config.yaml"),
+        RUNTIME_CUSTOM_CONFIG_PATH,
+        RUNTIME_DEFAULT_CONFIG_PATH,
+    ):
+        config = _load_yaml_config(path)
+        server_config = config.get("server") or {}
+        auth_key = str(server_config.get("auth_key") or "").strip()
+        if auth_key and "你" not in auth_key:
+            return auth_key
+
+        manager_secret = str((config.get("manager-api") or {}).get("secret") or "").strip()
+        if manager_secret and "你" not in manager_secret:
+            return manager_secret
+    return ""
+
+
+def _generate_device_auth_token(client_id, device_id):
+    client_id = str(client_id or "").strip()
+    device_id = str(device_id or "").strip()
+    secret = _resolve_device_auth_secret()
+    if not client_id or not device_id or not secret:
+        return ""
+
+    timestamp = int(time.time())
+    content = f"{client_id}|{device_id}|{timestamp}"
+    signature = hmac.new(
+        secret.encode("utf-8"),
+        content.encode("utf-8"),
+        hashlib.sha256,
+    ).digest()
+    encoded = base64.urlsafe_b64encode(signature).decode("utf-8").rstrip("=")
+    return f"{encoded}.{timestamp}"
+
+
+@app.route("/ota/", methods=["GET", "POST", "OPTIONS"])
+def ota_for_device():
+    if request.method == "OPTIONS":
+        return Response("", status=204)
+
+    websocket_url = _resolve_device_websocket_url()
+    if request.method == "GET":
+        return Response(
+            f"OTA接口运行正常，向设备发送的websocket地址是：{websocket_url}",
+            mimetype="text/plain",
+        )
+
+    payload = request.get_json(silent=True) or {}
+    application = payload.get("application") if isinstance(payload, dict) else {}
+    device_version = ""
+    if isinstance(application, dict):
+        device_version = str(application.get("version") or "").strip()
+    if not device_version:
+        device_version = str(request.headers.get("Device-Version") or request.headers.get("App-Version") or "0.0.0")
+    device_id = str(request.headers.get("Device-Id") or "").strip()
+    client_id = str(request.headers.get("Client-Id") or "").strip()
+    token = _generate_device_auth_token(client_id, device_id)
+
+    return jsonify(
+        {
+            "server_time": {
+                "timestamp": int(round(time.time() * 1000)),
+                "timezone_offset": 8 * 60,
+            },
+            "firmware": {
+                "version": device_version,
+                "url": "",
+            },
+            "websocket": {
+                "url": websocket_url,
+                "token": token,
+            },
+        }
+    )
 
 
 @app.route("/monitor")
@@ -889,33 +2477,7 @@ def delete_prompt_version(agent_id, filename):
 @app.route("/portrait")
 @requires_auth
 def portrait_page():
-    return send_from_directory("static", "portrait.html")
-
-
-@app.route("/mood")
-@requires_auth
-def mood_page():
-    return send_from_directory("static", "mood.html")
-
-
-@app.route("/api/mood")
-@requires_auth
-def api_mood():
-    agent_id = request.args.get("agent_id", "")
-    days = int(request.args.get("days", 14))
-    if not agent_id:
-        return jsonify([])
-    rows = mysql_query(f"""SELECT mood_date, dominant_emotion, emotion_scores, summary, msg_count
-        FROM rl_mood_daily WHERE agent_id='{agent_id}'
-        ORDER BY mood_date DESC LIMIT {days}""")
-    for r in rows:
-        if r.get("emotion_scores") and r["emotion_scores"] != "NULL":
-            try:
-                r["emotion_scores"] = json.loads(r["emotion_scores"])
-            except Exception:
-                pass
-        r["msg_count"] = int(r.get("msg_count", 0))
-    return jsonify(rows)
+    return Response("Not Found", status=404)
 
 
 @app.route("/api/portrait/<agent_id>")
@@ -1343,278 +2905,216 @@ def api_settings_apply_config():
         return jsonify({"error": str(e)}), 500
 
 
-# IoT device routes for kb-admin app.py
-# To be appended before `if __name__ == "__main__":`
-
-
-@app.route("/iot")
+@app.route("/api/devices/live", methods=["GET"])
 @requires_auth
-def page_iot():
-    return send_from_directory("static", "iot.html")
-
-
-@app.route("/api/iot/devices", methods=["GET"])
-@requires_auth
-def api_iot_devices_list():
-    rows = mysql_query("SELECT * FROM rl_iot_device ORDER BY room, device_name")
-    return jsonify(rows)
-
-
-@app.route("/api/iot/devices/<int:device_id>", methods=["GET"])
-@requires_auth
-def api_iot_device_get(device_id):
-    rows = mysql_query(f"SELECT * FROM rl_iot_device WHERE id={int(device_id)}")
-    if not rows:
-        return jsonify({"error": "not found"}), 404
-    return jsonify(rows[0])
-
-
-@app.route("/api/iot/devices", methods=["POST"])
-@requires_auth
-def api_iot_device_create():
-    data = request.get_json(silent=True) or {}
-    did = data.get("device_id", "").replace("'", "")
-    name = data.get("device_name", "").replace("'", "")
-    dtype = data.get("device_type", "other").replace("'", "")
-    room = data.get("room", "").replace("'", "")
-    protocol = data.get("protocol", "http").replace("'", "")
-    endpoint = data.get("endpoint", "").replace("'", "")
-    if not did or not name:
-        return jsonify({"error": "device_id and device_name required"}), 400
-    try:
-        mysql_exec(
-            f"INSERT INTO rl_iot_device (device_id, device_name, device_type, room, protocol, endpoint) "
-            f"VALUES ('{did}', '{name}', '{dtype}', '{room}', '{protocol}', '{endpoint}')"
+def api_devices_live():
+    def build_database_fallback_response():
+        rows = mysql_query(
+            "SELECT d.id, d.mac_address, d.alias, d.board, d.app_version, d.agent_id, "
+            "d.last_connected_at, d.update_date, a.agent_name "
+            "FROM ai_device d "
+            "LEFT JOIN ai_agent a ON d.agent_id = a.id "
+            "ORDER BY COALESCE(d.last_connected_at, d.update_date) DESC "
+            "LIMIT 200"
         )
-        return jsonify({"ok": True})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-
-@app.route("/api/iot/devices/<int:device_id>", methods=["PUT"])
-@requires_auth
-def api_iot_device_update(device_id):
-    data = request.get_json(silent=True) or {}
-    name = data.get("device_name", "").replace("'", "")
-    dtype = data.get("device_type", "other").replace("'", "")
-    room = data.get("room", "").replace("'", "")
-    protocol = data.get("protocol", "http").replace("'", "")
-    endpoint = data.get("endpoint", "").replace("'", "")
-    try:
-        mysql_exec(
-            f"UPDATE rl_iot_device SET device_name='{name}', device_type='{dtype}', "
-            f"room='{room}', protocol='{protocol}', endpoint='{endpoint}' "
-            f"WHERE id={int(device_id)}"
+        items = []
+        child_memory_by_device = _load_child_memory_summaries(
+            [
+                device_key
+                for row in rows
+                for device_key in (row.get("id"), row.get("mac_address"))
+            ]
         )
-        return jsonify({"ok": True})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        for row in rows:
+            device_id = str(row.get("id") or "").strip()
+            device_mac = str(row.get("mac_address") or "").strip()
+            last_connected_at = _parse_db_datetime_to_ts(row.get("last_connected_at"))
+            update_date = _parse_db_datetime_to_ts(row.get("update_date"))
+            last_ts = last_connected_at or update_date
+            child_memory = child_memory_by_device.get(device_id.lower()) or child_memory_by_device.get(device_mac.lower())
+            robot_name = (
+                str((child_memory or {}).get("robot_name_preference") or "").strip()
+                or (_resolve_effective_robot_identity_name(device_id) if device_id else "")
+            )
+            items.append(
+                {
+                    "device_id": device_id,
+                    "device_mac": device_mac,
+                    "agent_id": str(row.get("agent_id") or "").strip(),
+                    "agent_name": str(row.get("agent_name") or "").strip(),
+                    "robot_name": robot_name,
+                    "child_memory": child_memory,
+                    "alias": str(row.get("alias") or "").strip(),
+                    "board": str(row.get("board") or "").strip(),
+                    "app_version": str(row.get("app_version") or "").strip(),
+                    "client_id": "",
+                    "client_ip": "",
+                    "connected_at": last_connected_at,
+                    "last_activity_at": last_ts,
+                    "last_seen_at": last_ts,
+                    "idle_seconds": None,
+                    "connection_alive": False,
+                    "conn_from_mqtt_gateway": False,
+                    "session_id": "",
+                    "source": "database_fallback",
+                }
+            )
+        return {
+            "ok": True,
+            "count": len(items),
+            "devices": items,
+            "source": "database_fallback",
+            "live_supported": False,
+        }
 
-
-@app.route("/api/iot/devices/<int:device_id>", methods=["DELETE"])
-@requires_auth
-def api_iot_device_delete(device_id):
     try:
-        mysql_exec(f"DELETE FROM rl_iot_device WHERE id={int(device_id)}")
-        return jsonify({"ok": True})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        live_devices = []
+        runtime_ok = False
+        try:
+            response = requests.get(
+                f"{XIAOZHI_DEBUG_HTTP_BASE.rstrip('/')}/debug/runtime/live-devices",
+                headers={"x-debug-token": XIAOZHI_DEBUG_AUTH_SECRET},
+                timeout=5,
+            )
+            payload = response.json() if response.content else {}
+            if response.status_code < 400:
+                live_devices = payload.get("devices") or []
+                runtime_ok = True
+        except Exception:
+            runtime_ok = False
 
+        if not runtime_ok:
+            return jsonify(build_database_fallback_response())
 
-@app.route("/api/iot/command", methods=["POST"])
-@requires_auth
-def api_iot_command():
-    """Send a command to a device. Logs the command and attempts delivery."""
-    data = request.get_json(silent=True) or {}
-    device_id = data.get("device_id", "").replace("'", "")
-    action = data.get("action", "").replace("'", "")
-    params = data.get("params", {})
-    source = data.get("source", "manual").replace("'", "")
-    if not device_id or not action:
-        return jsonify({"error": "device_id and action required"}), 400
-
-    import json as _json
-    params_str = _json.dumps(params, ensure_ascii=False).replace("'", "\\'")
-
-    try:
-        # Log the command
-        mysql_exec(
-            f"INSERT INTO rl_iot_log (device_id, action, params, result, source) "
-            f"VALUES ('{device_id}', '{action}', '{params_str}', 'pending', '{source}')"
+        sql = (
+            "SELECT d.id, d.mac_address, d.alias, d.board, d.app_version, d.agent_id, a.agent_name "
+            "FROM ai_device d "
+            "LEFT JOIN ai_agent a ON d.agent_id = a.id"
         )
+        rows = mysql_query(sql)
+        device_meta = {}
+        for row in rows:
+            device_id = str(row.get("id") or "").strip()
+            mac_address = str(row.get("mac_address") or "").strip()
+            alias = str(row.get("alias") or "").strip()
+            board = str(row.get("board") or "").strip()
+            app_version = str(row.get("app_version") or "").strip()
+            agent_id = str(row.get("agent_id") or "").strip()
+            agent_name = str(row.get("agent_name") or "").strip()
+            for key in (device_id.lower(), mac_address.lower()):
+                if key:
+                    device_meta[key] = {
+                        "device_id": device_id,
+                        "mac_address": mac_address,
+                        "alias": alias,
+                        "board": board,
+                        "app_version": app_version,
+                        "agent_id": agent_id,
+                        "agent_name": agent_name,
+                    }
 
-        # TODO: Actually send command to device via HTTP/MQTT based on protocol
-        # For now just mark as success (device integration will be added later)
-        rows = mysql_query(f"SELECT id FROM rl_iot_log WHERE device_id='{device_id}' ORDER BY id DESC LIMIT 1")
-        if rows:
-            log_id = rows[0]["id"]
-            mysql_exec(f"UPDATE rl_iot_log SET result='success' WHERE id={log_id}")
-
-        # Update device state based on command
-        state_update = None
-        if action == "turn_on":
-            state_update = '{"on": true}'
-        elif action == "turn_off":
-            state_update = '{"on": false}'
-        elif action == "set_brightness":
-            state_update = _json.dumps({"on": True, "brightness": params.get("brightness", 100)})
-        elif action == "set_temp":
-            state_update = _json.dumps({"on": True, "temperature": params.get("temperature", 26)})
-        elif action == "set_mode":
-            state_update = _json.dumps({"on": True, "mode": params.get("mode", "auto")})
-        elif action in ("open", "set_position"):
-            pos = params.get("position", 100) if action == "set_position" else 100
-            state_update = _json.dumps({"position": pos})
-        elif action == "close":
-            state_update = '{"position": 0}'
-
-        if state_update:
-            mysql_exec(
-                f"UPDATE rl_iot_device SET state_json='{state_update}', "
-                f"is_online=1, last_seen=NOW() WHERE device_id='{device_id}'"
+        child_memory_by_device = _load_child_memory_summaries(
+            [
+                device_key
+                for meta in device_meta.values()
+                for device_key in (meta.get("device_id"), meta.get("mac_address"))
+            ]
+        )
+        items = []
+        for entry in live_devices:
+            normalized_device_id = str(entry.get("device_id") or "").strip()
+            meta = device_meta.get(normalized_device_id.lower(), {})
+            resolved_device_id = meta.get("device_id") or normalized_device_id
+            resolved_device_mac = meta.get("mac_address") or normalized_device_id
+            child_memory = (
+                child_memory_by_device.get(resolved_device_id.lower())
+                or child_memory_by_device.get(resolved_device_mac.lower())
+                or child_memory_by_device.get(normalized_device_id.lower())
+            )
+            robot_name = (
+                str((child_memory or {}).get("robot_name_preference") or "").strip()
+                or _resolve_effective_robot_identity_name(resolved_device_id)
+            )
+            items.append(
+                {
+                    "device_id": resolved_device_id,
+                    "device_mac": resolved_device_mac,
+                    "agent_id": meta.get("agent_id") or "",
+                    "agent_name": meta.get("agent_name") or "",
+                    "robot_name": robot_name,
+                    "child_memory": child_memory,
+                    "alias": meta.get("alias") or "",
+                    "board": meta.get("board") or "",
+                    "app_version": meta.get("app_version") or "",
+                    "client_id": str(entry.get("client_id") or ""),
+                    "client_ip": str(entry.get("client_ip") or ""),
+                    "connected_at": entry.get("connected_at"),
+                    "last_activity_at": entry.get("last_activity_at"),
+                    "last_seen_at": entry.get("last_seen_at"),
+                    "idle_seconds": entry.get("idle_seconds"),
+                    "connection_alive": bool(entry.get("connection_alive")),
+                    "conn_from_mqtt_gateway": bool(entry.get("conn_from_mqtt_gateway")),
+                    "session_id": str(entry.get("session_id") or ""),
+                    "source": "runtime",
+                }
             )
 
-        return jsonify({"ok": True})
+        return jsonify({
+            "ok": True,
+            "count": len(items),
+            "devices": items,
+            "source": "runtime",
+            "live_supported": True,
+        })
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
 
-@app.route("/api/iot/report", methods=["POST"])
-def api_iot_report():
-    """Device reports its state (no auth - called by devices themselves)."""
-    data = request.get_json(silent=True) or {}
-    device_id = data.get("device_id", "").replace("'", "")
-    state = data.get("state", {})
-    if not device_id:
-        return jsonify({"error": "device_id required"}), 400
-
-    import json as _json
-    state_str = _json.dumps(state, ensure_ascii=False).replace("'", "\\'")
+@app.route("/api/age-profiles", methods=["GET"])
+@requires_auth
+def api_age_profiles_get():
     try:
-        mysql_exec(
-            f"UPDATE rl_iot_device SET state_json='{state_str}', "
-            f"is_online=1, last_seen=NOW() WHERE device_id='{device_id}'"
-        )
-        return jsonify({"ok": True})
+        profiles = _load_age_profiles()
+        rows = []
+        for age_group in ("3-5", "6-8", "9-11"):
+            item = dict(profiles.get(age_group) or DEFAULT_AGE_PROFILES[age_group])
+            item["age_group"] = age_group
+            rows.append(item)
+        return jsonify(rows)
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
 
-@app.route("/api/iot/logs", methods=["GET"])
+@app.route("/api/age-profiles/<age_group>", methods=["PUT"])
 @requires_auth
-def api_iot_logs():
-    rows = mysql_query("SELECT * FROM rl_iot_log ORDER BY id DESC LIMIT 50")
-    return jsonify(rows)
+def api_age_profiles_put(age_group):
+    if age_group not in DEFAULT_AGE_PROFILES:
+        return jsonify({"error": "unknown age_group"}), 400
 
-
-# Health profile routes for kb-admin app.py
-
-
-@app.route("/health")
-@requires_auth
-def page_health():
-    return send_from_directory("static", "health.html")
-
-
-@app.route("/api/health/profile", methods=["GET"])
-@requires_auth
-def api_health_profile_list():
-    rows = mysql_query(
-        "SELECT * FROM rl_health_profile ORDER BY FIELD(category,'basic','vitals','medical','lifestyle'), id"
+    data = request.get_json(silent=True) or {}
+    allowed_fields = (
+        "vocabulary_level",
+        "max_new_concepts",
+        "abstract_concept_level",
+        "question_style",
+        "support_level",
     )
-    return jsonify(rows)
-
-
-@app.route("/api/health/profile", methods=["PUT"])
-@requires_auth
-def api_health_profile_update():
-    data = request.get_json(silent=True) or {}
-    updates = data.get("updates", [])
-    if not updates:
-        return jsonify({"error": "no updates"}), 400
     try:
-        for item in updates:
-            key = item.get("field_key", "").replace("'", "")
-            val = item.get("value", "").replace("'", "\\'")
-            if key:
-                mysql_exec(
-                    f"UPDATE rl_health_profile SET field_value='{val}', source='manual' "
-                    f"WHERE field_key='{key}'"
-                )
-        return jsonify({"ok": True})
+        profiles = _load_age_profiles()
+        existing = dict(profiles.get(age_group) or DEFAULT_AGE_PROFILES[age_group])
+        for field_name in allowed_fields:
+            if field_name not in data:
+                continue
+            existing[field_name] = _normalize_age_profile_value(field_name, data.get(field_name))
+        profiles[age_group] = existing
+        _save_age_profiles(profiles)
+        response = dict(existing)
+        response["age_group"] = age_group
+        return jsonify({"ok": True, "profile": response, "config_path": AGE_PROFILE_CONFIG_PATH})
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
     except Exception as e:
         return jsonify({"error": str(e)}), 500
-
-
-@app.route("/api/health/profile/field", methods=["POST"])
-@requires_auth
-def api_health_profile_add_field():
-    data = request.get_json(silent=True) or {}
-    cat = data.get("category", "basic").replace("'", "")
-    key = data.get("field_key", "").replace("'", "")
-    name = data.get("field_name", "").replace("'", "")
-    unit = data.get("unit", "").replace("'", "")
-    if not key or not name:
-        return jsonify({"error": "field_key and field_name required"}), 400
-    try:
-        mysql_exec(
-            f"INSERT INTO rl_health_profile (category, field_key, field_name, unit) "
-            f"VALUES ('{cat}', '{key}', '{name}', '{unit}')"
-        )
-        return jsonify({"ok": True})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-
-@app.route("/api/health/report", methods=["POST"])
-def api_health_report():
-    """Device/external system reports a single health data point (no auth)."""
-    data = request.get_json(silent=True) or {}
-    key = data.get("field_key", "").replace("'", "")
-    val = data.get("value", "").replace("'", "\\'")
-    source = data.get("source", "device").replace("'", "")
-    note = data.get("note", "").replace("'", "\\'")
-    if not key:
-        return jsonify({"error": "field_key required"}), 400
-    try:
-        mysql_exec(
-            f"UPDATE rl_health_profile SET field_value='{val}', source='{source}', "
-            f"note='{note}' WHERE field_key='{key}'"
-        )
-        return jsonify({"ok": True})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-
-@app.route("/api/health/report-batch", methods=["POST"])
-def api_health_report_batch():
-    """Device/external system reports multiple health data points (no auth)."""
-    data = request.get_json(silent=True) or {}
-    items = data.get("data", [])
-    source = data.get("source", "device").replace("'", "")
-    if not items:
-        return jsonify({"error": "no data"}), 400
-    try:
-        for item in items:
-            key = item.get("field_key", "").replace("'", "")
-            val = item.get("value", "").replace("'", "\\'")
-            note = item.get("note", "").replace("'", "\\'")
-            if key:
-                mysql_exec(
-                    f"UPDATE rl_health_profile SET field_value='{val}', source='{source}', "
-                    f"note='{note}' WHERE field_key='{key}'"
-                )
-        return jsonify({"ok": True, "count": len(items)})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-
-# ========== 儿童题库 ==========
-
-@app.route("/kid")
-@requires_auth
-def page_kid():
-    return send_from_directory("static", "kid.html")
 
 
 @app.route("/dingyi-models")
@@ -1833,7 +3333,14 @@ def api_dingyi_chat_send():
     try:
         binding = _load_dingyiguo_llm_binding()
         runtime_session = _get_robot_debug_session(session_key, device_id=device_id)
-        result = runtime_session.send_turn(user_text)
+        try:
+            result = runtime_session.send_turn(user_text)
+        except Exception as first_error:
+            if "上一轮回复仍未完成" not in str(first_error):
+                raise
+            _reset_robot_debug_session(session_key, device_id=device_id)
+            runtime_session = _get_robot_debug_session(session_key, device_id=device_id)
+            result = runtime_session.send_turn(user_text)
         runtime_debug = result.get("runtime_debug") or {}
         return jsonify({
             "ok": True,
@@ -1845,6 +3352,9 @@ def api_dingyi_chat_send():
             "dialogue_state": runtime_debug.get("dialogue_state"),
             "response_plan": runtime_debug.get("response_plan"),
             "response_rewrite": runtime_debug.get("response_rewrite"),
+            "daily_greeting": runtime_debug.get("daily_greeting"),
+            "conversation_openness": runtime_debug.get("conversation_openness"),
+            "long_term_memory": runtime_debug.get("long_term_memory"),
             "debug_source": "runtime",
             "runtime_mode": result.get("mode") or "unknown",
             "runtime_session_key": session_key,
@@ -1873,6 +3383,357 @@ def api_scene_router_scenes():
         return jsonify({
             "ok": True,
             **_load_scene_router_snapshot(),
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/scene-router/interaction-policy/<scene_name>", methods=["PUT"])
+@requires_auth
+def api_scene_router_interaction_policy_put(scene_name):
+    data = request.get_json(silent=True) or {}
+    allowed_fields = (
+        "information_budget",
+        "reasoning_depth",
+        "interaction_style",
+        "conversation_pacing",
+        "emotional_priority",
+    )
+    try:
+        policies = _load_interaction_policies()
+        existing = dict(policies.get(scene_name) or _build_default_interaction_policy(scene_name))
+        for field_name in allowed_fields:
+            if field_name not in data:
+                continue
+            existing[field_name] = _normalize_interaction_policy_value(field_name, data.get(field_name))
+        policies[scene_name] = existing
+        _save_interaction_policies(policies)
+        return jsonify({
+            "ok": True,
+            "scene_name": scene_name,
+            "interaction_policy": existing,
+            "config_path": INTERACTION_POLICY_CONFIG_PATH,
+        })
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/scene-router/scene-interest-config/<scene_name>", methods=["PUT"])
+@requires_auth
+def api_scene_router_scene_interest_config_put(scene_name):
+    data = request.get_json(silent=True) or {}
+    allowed_fields = (
+        "use_interest_examples",
+        "use_interest_story",
+        "use_interest_games",
+        "use_interest_conversation",
+    )
+    try:
+        configs = _load_scene_interest_configs()
+        existing = dict(configs.get(scene_name) or _build_default_scene_interest_config(scene_name))
+        for field_name in allowed_fields:
+            if field_name not in data:
+                continue
+            existing[field_name] = _normalize_scene_interest_config_value(field_name, data.get(field_name))
+        configs[scene_name] = existing
+        _save_scene_interest_configs(configs)
+        return jsonify({
+            "ok": True,
+            "scene_name": scene_name,
+            "scene_interest_config": existing,
+            "config_path": SCENE_INTEREST_CONFIG_PATH,
+        })
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/interests/config", methods=["GET"])
+@requires_auth
+def api_interests_config():
+    try:
+        config = _load_interest_influence_config()
+        return jsonify({
+            "ok": True,
+            **config,
+            "config_path": INTERESTS_CONFIG_PATH,
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/interests/config", methods=["PUT"])
+@requires_auth
+def api_interests_config_put():
+    data = request.get_json(silent=True) or {}
+    allowed_fields = (
+        "example_bias",
+        "story_bias",
+        "conversation_bias",
+        "game_bias",
+        "memory_reference",
+    )
+    try:
+        config = _load_interest_influence_config()
+        existing = dict(config.get("interest_influence") or DEFAULT_INTEREST_INFLUENCE_POLICY)
+        for field_name in allowed_fields:
+            if field_name not in data:
+                continue
+            existing[field_name] = _normalize_interest_influence_value(field_name, data.get(field_name))
+        adapter = json.loads(json.dumps(DEFAULT_INTEREST_ADAPTER, ensure_ascii=False))
+        incoming_adapter = data.get("interest_adapter")
+        if isinstance(incoming_adapter, dict):
+            for topic_key, defaults in DEFAULT_INTEREST_ADAPTER.items():
+                incoming_topic = incoming_adapter.get(topic_key)
+                if not isinstance(incoming_topic, dict):
+                    continue
+                merged_topic = dict(defaults)
+                for field_name in defaults.keys():
+                    if field_name not in incoming_topic:
+                        continue
+                    merged_topic[field_name] = _normalize_interest_context_list(incoming_topic.get(field_name))
+                adapter[topic_key] = merged_topic
+        config["interest_influence"] = existing
+        config["favorite_topics"] = list(DEFAULT_INTEREST_TOPICS)
+        config["interest_adapter"] = adapter
+        _save_interest_influence_config(config)
+        return jsonify({
+            "ok": True,
+            "interest_influence": existing,
+            "favorite_topics": config["favorite_topics"],
+            "interest_adapter": config["interest_adapter"],
+            "config_path": INTERESTS_CONFIG_PATH,
+        })
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/robot-profile", methods=["GET"])
+@requires_auth
+def api_robot_profile_get():
+    try:
+        config = _load_robot_profile_config()
+        effective_identity_name = _resolve_effective_robot_identity_name()
+        payload = json.loads(json.dumps(config, ensure_ascii=False))
+        if effective_identity_name:
+            payload["identity"]["name"] = effective_identity_name
+        return jsonify({
+            "ok": True,
+            **payload,
+            "configured_identity_name": str(config.get("identity", {}).get("name") or "").strip(),
+            "effective_identity_name": effective_identity_name,
+            "runtime_device_id": XIAOZHI_DEBUG_DEVICE_ID,
+            "config_path": ROBOT_PROFILE_CONFIG_PATH,
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/robot-profile", methods=["PUT"])
+@requires_auth
+def api_robot_profile_put():
+    data = request.get_json(silent=True) or {}
+    try:
+        config = _load_robot_profile_config()
+        for section_name in ("identity", "personality", "values"):
+            incoming = data.get(section_name)
+            if not isinstance(incoming, dict):
+                continue
+            section = dict(config[section_name])
+            for key, default_value in section.items():
+                if key not in incoming:
+                    continue
+                if isinstance(default_value, list):
+                    normalized = _normalize_robot_profile_list(incoming.get(key))
+                    if normalized:
+                        section[key] = normalized
+                else:
+                    text = str(incoming.get(key) or "").strip()
+                    if text:
+                        section[key] = text
+            config[section_name] = section
+
+        _save_robot_profile_config(config)
+        return jsonify({
+            "ok": True,
+            **config,
+            "config_path": ROBOT_PROFILE_CONFIG_PATH,
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/greeting/config", methods=["GET"])
+@requires_auth
+def api_greeting_config_get():
+    try:
+        config = _load_daily_greeting_config()
+        return jsonify({
+            "ok": True,
+            **config,
+            "config_path": DAILY_GREETING_CONFIG_PATH,
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/greeting-sources/devices", methods=["GET"])
+@requires_auth
+def api_greeting_sources_devices():
+    try:
+        target_date, start_ms, end_ms = _date_window_ms(request.args.get("date"))
+        devices = []
+        for row in _mysql_short_memory_rows():
+            topics = list((row.get("memory") or {}).get("topics") or [])
+            candidate_count = sum(
+                1 for topic in topics
+                if _is_daily_followup_candidate(topic, start_ms, end_ms)
+            )
+            devices.append(
+                {
+                    "device_id": row.get("device_id"),
+                    "updated_at": row.get("updated_at"),
+                    "topic_count": len(topics),
+                    "candidate_count": candidate_count,
+                    "selected": _selected_daily_greeting_for_device(row.get("device_id")),
+                }
+            )
+        return jsonify({
+            "ok": True,
+            "date": target_date,
+            "devices": devices,
+        })
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/greeting-sources/device/<path:device_id>", methods=["GET"])
+@requires_auth
+def api_greeting_sources_device(device_id):
+    try:
+        target_date, start_ms, end_ms = _date_window_ms(request.args.get("date"))
+        normalized = str(device_id or "").strip()
+        matched = None
+        for row in _mysql_short_memory_rows():
+            if str(row.get("device_id") or "").strip() == normalized:
+                matched = row
+                break
+        if matched is None:
+            return jsonify({"error": "device not found"}), 404
+        topics = list((matched.get("memory") or {}).get("topics") or [])
+        candidates = [
+            _build_greeting_source_candidate(topic)
+            for topic in topics
+            if _is_daily_followup_candidate(topic, start_ms, end_ms)
+        ]
+        candidates.sort(
+            key=lambda item: (
+                float(item.get("greeting_score") or 0),
+                int(item.get("greeting_candidate_type_priority") or 0),
+                {"health": 5, "emotion": 4, "task": 3, "event": 2}.get(str(item.get("memory_type") or ""), 0),
+                float(item.get("importance") or 0),
+                int(item.get("last_active_at_ms") or 0),
+            ),
+            reverse=True,
+        )
+        selected = _selected_daily_greeting_for_device(normalized)
+        selected_source = str(selected.get("source_id") or "")
+        for candidate in candidates:
+            candidate["selected_by_daily_greeting"] = bool(
+                selected_source and selected_source == str(candidate.get("source_id") or "")
+            )
+        return jsonify({
+            "ok": True,
+            "date": target_date,
+            "device_id": normalized,
+            "updated_at": matched.get("updated_at"),
+            "selected": selected,
+            "candidates": candidates,
+            "candidate_count": len(candidates),
+        })
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/greeting/config", methods=["PUT"])
+@requires_auth
+def api_greeting_config_put():
+    data = request.get_json(silent=True) or {}
+    try:
+        config = _load_daily_greeting_config()
+        for field_name in (
+            "enabled",
+            "first_meaningful_interaction_only",
+            "mark_delivered_once_per_day",
+            "block_on_higher_priority_interruptions",
+        ):
+            if field_name in data:
+                config[field_name] = bool(data.get(field_name))
+
+        if "version" in data:
+            try:
+                config["version"] = max(1, int(data.get("version")))
+            except (TypeError, ValueError):
+                pass
+
+        if "goal" in data:
+            config["goal"] = str(data.get("goal") or "").strip() or config["goal"]
+
+        for field_name in (
+            "trigger_conditions",
+            "pipeline",
+            "greeting_structure",
+            "selection_rules",
+            "design_principles",
+            "future_extensions",
+        ):
+            if field_name not in data:
+                continue
+            normalized = _normalize_daily_text_list(data.get(field_name))
+            if normalized:
+                config[field_name] = normalized
+
+        incoming_state = data.get("state_example")
+        if isinstance(incoming_state, dict):
+            state = dict(config["state_example"])
+            for key in state.keys():
+                if key not in incoming_state:
+                    continue
+                if key == "delivered":
+                    state[key] = bool(incoming_state.get(key))
+                else:
+                    state[key] = str(incoming_state.get(key) or "").strip() or state[key]
+            config["state_example"] = state
+
+        incoming_types = data.get("greeting_types")
+        if isinstance(incoming_types, dict):
+            normalized_types = {}
+            for type_name in DEFAULT_DAILY_GREETING_CONFIG["greeting_types"].keys():
+                normalized_types[type_name] = _normalize_daily_greeting_type(
+                    type_name,
+                    incoming_types.get(type_name),
+                )
+            config["greeting_types"] = normalized_types
+
+        if "boot_greeting" in data:
+            config["boot_greeting"] = _normalize_boot_greeting_config(
+                data.get("boot_greeting")
+            )
+
+        _save_daily_greeting_config(config)
+        return jsonify({
+            "ok": True,
+            **config,
+            "config_path": DAILY_GREETING_CONFIG_PATH,
         })
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -1926,115 +3787,6 @@ def api_dingyi_models_switch():
             "llm_model_id": binding["llm_model_id"],
             "model_name": model_name,
         })
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-
-@app.route("/api/kid/stats", methods=["GET"])
-@requires_auth
-def api_kid_stats():
-    try:
-        total_row = mysql_query("SELECT COUNT(*) as cnt FROM rl_kid_content WHERE enabled=1")
-        total = int(total_row[0]["cnt"]) if total_row else 0
-        type_rows = mysql_query(
-            "SELECT content_type, COUNT(*) as cnt FROM rl_kid_content WHERE enabled=1 GROUP BY content_type"
-        )
-        by_type = {r["content_type"]: int(r["cnt"]) for r in type_rows}
-        return jsonify({"total": total, "by_type": by_type})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-
-@app.route("/api/kid/questions", methods=["GET"])
-@requires_auth
-def api_kid_questions_list():
-    try:
-        ctype = request.args.get("type", "")
-        age = request.args.get("age", "")
-        enabled = request.args.get("enabled", "")
-        filters = []
-        if ctype:
-            filters.append(f"content_type='{ctype}'")
-        if age:
-            filters.append(f"age_band='{age}'")
-        if enabled != "":
-            filters.append(f"enabled={int(enabled)}")
-        where = ("WHERE " + " AND ".join(filters)) if filters else ""
-        rows = mysql_query(
-            f"SELECT id, content_type, question, answer, age_band, reward_group, comfort_group, enabled "
-            f"FROM rl_kid_content {where} ORDER BY id DESC LIMIT 500"
-        )
-        return jsonify(rows)
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-
-@app.route("/api/kid/questions", methods=["POST"])
-@requires_auth
-def api_kid_question_create():
-    data = request.get_json(silent=True) or {}
-    q = data.get("question", "").replace("'", "''")
-    a = data.get("answer", "").replace("'", "''")
-    ct = data.get("content_type", "riddle").replace("'", "")
-    age = data.get("age_band", "6-8").replace("'", "")
-    rg = data.get("reward_group", "happy").replace("'", "")
-    cg = data.get("comfort_group", "comfort").replace("'", "")
-    if not q or not a:
-        return jsonify({"error": "question and answer required"}), 400
-    try:
-        mysql_exec(
-            f"INSERT INTO rl_kid_content (content_type, question, answer, age_band, reward_group, comfort_group) "
-            f"VALUES ('{ct}', '{q}', '{a}', '{age}', '{rg}', '{cg}')"
-        )
-        return jsonify({"ok": True})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-
-@app.route("/api/kid/questions/<int:qid>", methods=["PUT"])
-@requires_auth
-def api_kid_question_update(qid):
-    data = request.get_json(silent=True) or {}
-    sets = []
-    field_map = {
-        "content_type": "content_type", "question": "question", "answer": "answer",
-        "age_band": "age_band", "reward_group": "reward_group", "comfort_group": "comfort_group",
-    }
-    for key, col in field_map.items():
-        if key in data:
-            val = str(data[key]).replace("'", "''")
-            sets.append(f"{col}='{val}'")
-    if "enabled" in data:
-        sets.append(f"enabled={int(data['enabled'])}")
-    if not sets:
-        return jsonify({"error": "nothing to update"}), 400
-    try:
-        mysql_exec(f"UPDATE rl_kid_content SET {','.join(sets)} WHERE id={qid}")
-        return jsonify({"ok": True})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-
-@app.route("/api/kid/questions/<int:qid>", methods=["DELETE"])
-@requires_auth
-def api_kid_question_delete(qid):
-    try:
-        mysql_exec(f"DELETE FROM rl_kid_content WHERE id={qid}")
-        return jsonify({"ok": True})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-
-@app.route("/api/kid/profiles", methods=["GET"])
-@requires_auth
-def api_kid_profiles():
-    try:
-        rows = mysql_query(
-            "SELECT device_mac, total_questions, total_correct, best_streak, "
-            "fav_type, weak_type, active_days, profile_json, updated_at "
-            "FROM rl_kid_profile ORDER BY updated_at DESC LIMIT 20"
-        )
-        return jsonify(rows)
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 

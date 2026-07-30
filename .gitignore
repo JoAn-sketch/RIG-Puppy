@@ -6,6 +6,7 @@ __pycache__/
 
 kb-admin/.env
 xiaozhi-server/data/.config.yaml
+xiaozhi-esp32-server-main/main/xiaozhi-server/data/.config.yaml
 sync_from_server.py
 
 xiaozhi-esp32-server-main/.git

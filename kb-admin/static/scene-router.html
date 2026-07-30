@@ -43,8 +43,18 @@ button:hover { background:#0369a1; }
 .policy-row:last-child { margin-bottom: 0; }
 .policy-row .label { font-size: 12px; color: #64748b; margin-bottom: 4px; }
 .policy-row .value { font-size: 13px; color: #0f172a; line-height: 1.7; }
+.policy-form-grid { display:grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.policy-field label { display:block; font-size: 12px; color: #64748b; margin-bottom: 6px; }
+.policy-field select,
+.policy-field input { width:100%; padding: 8px 10px; border:1px solid #cbd5e1; border-radius: 10px; font-size: 13px; background:#fff; color:#0f172a; }
+.policy-field select:focus,
+.policy-field input:focus { outline:none; border-color:#38bdf8; box-shadow: 0 0 0 3px rgba(56, 189, 248, .15); }
+.policy-actions { display:flex; align-items:center; justify-content:space-between; gap: 10px; margin-top: 12px; }
+.policy-note { font-size: 12px; color:#64748b; }
 .policy-list { margin: 0; padding-left: 18px; }
 .policy-list li { margin: 4px 0; color: #0f172a; font-size: 13px; line-height: 1.6; }
+.token-list { display:flex; flex-wrap:wrap; gap: 6px; }
+.token { display:inline-flex; padding: 3px 8px; border-radius: 999px; background: #ffedd5; border: 1px solid #fdba74; color: #9a3412; font-size: 12px; }
 .subscene-list { display:grid; gap: 10px; }
 .subscene-item { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; padding: 12px; }
 .subscene-name { font-size: 13px; font-weight: 700; margin-bottom: 8px; color: #0f172a; }
@@ -55,6 +65,7 @@ button:hover { background:#0369a1; }
 @media (max-width: 960px) {
   .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .scene-grid { grid-template-columns: 1fr; }
+  .policy-form-grid { grid-template-columns: 1fr; }
 }
 </style>
 </head>
@@ -66,7 +77,6 @@ button:hover { background:#0369a1; }
     <a href="/scene-router" style="color:#38bdf8">🧭 Scene Router</a>
     <a href="/dingyi-chat" style="color:#f59e0b">💬 对话模拟</a>
     <a href="/dingyi-models" style="color:#34d399">🤖 模型切换</a>
-    <a href="/kid" style="color:#fbbf24">🧒 儿童</a>
   </div>
 </header>
 
@@ -99,6 +109,46 @@ button:hover { background:#0369a1; }
 </main>
 
 <script>
+const INTERACTION_POLICY_FIELDS = [
+  {
+    key: 'information_budget',
+    label: 'Information Budget',
+    type: 'select',
+    options: ['low', 'medium', 'high'],
+  },
+  {
+    key: 'reasoning_depth',
+    label: 'Reasoning Depth',
+    type: 'select',
+    options: [1, 2, 3],
+  },
+  {
+    key: 'interaction_style',
+    label: 'Interaction Style',
+    type: 'select',
+    options: ['observation', 'exploration', 'discussion'],
+  },
+  {
+    key: 'conversation_pacing',
+    label: 'Conversation Pacing',
+    type: 'select',
+    options: ['progressive', 'balanced', 'comprehensive'],
+  },
+  {
+    key: 'emotional_priority',
+    label: 'Emotional Priority',
+    type: 'select',
+    options: ['low', 'medium', 'high'],
+  },
+];
+
+const SCENE_INTEREST_FIELDS = [
+  { key: 'use_interest_examples', label: 'Use Interest Examples' },
+  { key: 'use_interest_story', label: 'Use Interest Story' },
+  { key: 'use_interest_games', label: 'Use Interest Games' },
+  { key: 'use_interest_conversation', label: 'Use Interest Conversation' },
+];
+
 function esc(s) {
   return String(s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
@@ -112,6 +162,133 @@ function riskClass(level) {
 function listHtml(items) {
   if (!items || !items.length) return '<div class="muted">-</div>';
   return `<ul class="policy-list">${items.map(item => `<li>${esc(item)}</li>`).join('')}</ul>`;
+}
+
+function tokenList(items) {
+  if (!items || !items.length) return '<div class="muted">-</div>';
+  return `<div class="token-list">${items.map(item => `<span class="token">${esc(item)}</span>`).join('')}</div>`;
+}
+
+function buildInteractionPolicyForm(scene) {
+  const policy = scene.interaction_policy || {};
+  const fields = INTERACTION_POLICY_FIELDS.map((field) => {
+    const fieldId = `policy-${scene.scene_name}-${field.key}`;
+    const options = field.options.map((option) => {
+      const value = String(option);
+      const selected = String(policy[field.key] || '') === value ? 'selected' : '';
+      return `<option value="${esc(value)}" ${selected}>${esc(value)}</option>`;
+    }).join('');
+    return `
+      <div class="policy-field">
+        <label for="${esc(fieldId)}">${esc(field.label)}</label>
+        <select id="${esc(fieldId)}" data-scene-name="${esc(scene.scene_name)}" data-field-key="${esc(field.key)}">
+          ${options}
+        </select>
+      </div>
+    `;
+  }).join('');
+
+  return `
+    <div class="policy-block">
+      <div class="policy-title">Interaction Policy</div>
+      <div class="policy-form-grid">${fields}</div>
+      <div class="policy-actions">
+        <div class="policy-note">这一层定义该 scene 的互动节奏和信息密度。</div>
+        <button type="button" onclick="saveInteractionPolicy('${esc(scene.scene_name)}', this)">保存 Policy</button>
+      </div>
+    </div>
+  `;
+}
+
+function buildSceneInterestConfigForm(scene) {
+  const config = scene.scene_interest_config || {};
+  const fields = SCENE_INTEREST_FIELDS.map((field) => {
+    const fieldId = `scene-interest-${scene.scene_name}-${field.key}`;
+    const checked = config[field.key] ? 'checked' : '';
+    return `
+      <div class="policy-field">
+        <label for="${esc(fieldId)}">${esc(field.label)}</label>
+        <input type="checkbox" id="${esc(fieldId)}" data-scene-name="${esc(scene.scene_name)}" data-field-key="${esc(field.key)}" ${checked}>
+      </div>
+    `;
+  }).join('');
+
+  return `
+    <div class="policy-block">
+      <div class="policy-title">Scene Interest Configuration</div>
+      <div class="policy-form-grid">${fields}</div>
+      <div class="policy-actions">
+        <div class="policy-note">这一层决定当前 scene 允许哪些兴趣能力进入 prompt builder。</div>
+        <button type="button" onclick="saveSceneInterestConfig('${esc(scene.scene_name)}', this)">保存 Interest Config</button>
+      </div>
+    </div>
+  `;
+}
+
+function collectInteractionPolicy(sceneName) {
+  const payload = {};
+  INTERACTION_POLICY_FIELDS.forEach((field) => {
+    const el = document.getElementById(`policy-${sceneName}-${field.key}`);
+    if (!el) return;
+    payload[field.key] = field.key === 'reasoning_depth' ? Number(el.value) : el.value;
+  });
+  return payload;
+}
+
+function collectSceneInterestConfig(sceneName) {
+  const payload = {};
+  SCENE_INTEREST_FIELDS.forEach((field) => {
+    const el = document.getElementById(`scene-interest-${sceneName}-${field.key}`);
+    if (!el) return;
+    payload[field.key] = !!el.checked;
+  });
+  return payload;
+}
+
+async function saveInteractionPolicy(sceneName, button) {
+  const payload = collectInteractionPolicy(sceneName);
+  button.disabled = true;
+  button.textContent = '保存中...';
+  try {
+    const res = await fetch(`/api/scene-router/interaction-policy/${encodeURIComponent(sceneName)}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || data.error) throw new Error(data.error || ('HTTP ' + res.status));
+    button.textContent = '已保存';
+    setTimeout(() => { button.textContent = '保存 Policy'; }, 1200);
+  } catch (e) {
+    button.textContent = '保存失败';
+    setTimeout(() => { button.textContent = '保存 Policy'; }, 1400);
+    alert('保存失败: ' + String(e));
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function saveSceneInterestConfig(sceneName, button) {
+  const payload = collectSceneInterestConfig(sceneName);
+  button.disabled = true;
+  button.textContent = '保存中...';
+  try {
+    const res = await fetch(`/api/scene-router/scene-interest-config/${encodeURIComponent(sceneName)}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || data.error) throw new Error(data.error || ('HTTP ' + res.status));
+    button.textContent = '已保存';
+    setTimeout(() => { button.textContent = '保存 Interest Config'; }, 1200);
+  } catch (e) {
+    button.textContent = '保存失败';
+    setTimeout(() => { button.textContent = '保存 Interest Config'; }, 1400);
+    alert('保存失败: ' + String(e));
+  } finally {
+    button.disabled = false;
+  }
 }
 
 async function loadScenes() {
@@ -188,6 +365,9 @@ async function loadScenes() {
             <div class="value">${esc(scene.policy?.exit_condition || '-')}</div>
           </div>
         </div>
+
+        ${buildInteractionPolicyForm(scene)}
+        ${buildSceneInterestConfigForm(scene)}
 
         <div class="subscene-list">
           ${(scene.subscenes || []).map(sub => `

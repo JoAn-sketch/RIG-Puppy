@@ -34,6 +34,9 @@ from .schema import (
     DialogueStateManagerResult,
 )
 from core.response_orchestrator.planner import build_response_plan
+from core.topic_lifecycle import (
+    update_topic_lifecycle,
+)
 
 
 RUNTIME_SECTION_TAGS = (
@@ -89,6 +92,7 @@ def build_dialogue_state_prompt_patch(result: DialogueStateManagerResult) -> str
     social_state = state.get("social_state", {})
     protocol_state = state.get("protocol_state", {})
     child_profile = state.get("child_profile", {})
+    interaction_state = state.get("interaction_state", {})
     turn_contract = control.turn_contract or {}
     phase_hints = PHASE_POLICY_HINTS.get(
         (control.current_scene, control.current_phase),
@@ -120,6 +124,8 @@ def build_dialogue_state_prompt_patch(result: DialogueStateManagerResult) -> str
         f"has_explained={str(bool(protocol_state.get('has_explained_in_scene'))).lower()}",
         f"time_slot={social_state.get('current_time_slot') or 'unknown'}",
         f"greeting_conflict={str(bool(social_state.get('greeting_conflict_with_time'))).lower()}",
+        f"conversation_openness_level={interaction_state.get('conversation_openness_level', 3)}",
+        f"conversation_openness_reason={interaction_state.get('conversation_openness_reason', 'neutral_default')}",
         "</dialogue_state>",
         "<phase_policy>",
         f"action={turn_contract.get('primary_action', 'answer_only')}",
@@ -190,6 +196,10 @@ class DialogueStateManager:
 
         state["user_state"]["emotion_state"] = scene_output.emotion_state
         state["user_state"]["frustration_level"] = manager_input.signals.frustration_signal
+        state["interaction_state"] = {
+            "conversation_openness_level": int(getattr(manager_input.signals, "conversation_openness_level", 3) or 3),
+            "conversation_openness_reason": str(getattr(manager_input.signals, "conversation_openness_reason", "neutral_default") or "neutral_default"),
+        }
         age_group = getattr(manager_input.child_profile, "age_group", None) or getattr(
             manager_input.child_profile, "age_band", "6-8"
         )
@@ -199,10 +209,22 @@ class DialogueStateManager:
             "age": getattr(manager_input.child_profile, "age", None),
             "age_group": age_group,
             "age_band": getattr(manager_input.child_profile, "age_band", age_group),
+            "interests": list(getattr(manager_input.child_profile, "interests", []) or []),
             "concept_budget": age_contract["concept_budget"],
         }
         state["meta"]["updated_at_ms"] = timestamp_ms
         self._update_greeting_context(state, manager_input.text, timestamp_ms)
+        topic_lifecycle = update_topic_lifecycle(
+            previous_state=state.get("topic_state"),
+            user_text=manager_input.text,
+            scene_name=current_scene,
+            subscene=current_subscene,
+            openness_level=state["interaction_state"]["conversation_openness_level"],
+            timestamp_ms=timestamp_ms,
+            interests=state["child_profile"].get("interests") or [],
+        )
+        state["topic_state"] = topic_lifecycle["topic_state"]
+        state["topic_decision"] = topic_lifecycle["topic_decision"]
 
         if current_scene == "safety_risk":
             current_phase = DEFAULT_PHASES["safety_risk"]
@@ -263,6 +285,8 @@ class DialogueStateManager:
             should_use_memory=scene_output.should_use_memory,
             should_use_rag=scene_output.should_use_rag,
             should_force_safe_template=scene_output.should_force_safe_template,
+            conversation_openness_level=int(getattr(scene_output, "conversation_openness_level", 3) or 3),
+            conversation_openness_reason=str(getattr(scene_output, "conversation_openness_reason", "neutral_default") or "neutral_default"),
         )
         state["protocol_state"]["interaction_protocol"] = control.interaction_protocol
         state["protocol_state"]["protocol_mode"] = control.protocol_mode
@@ -358,6 +382,27 @@ class DialogueStateManager:
                 "greeting_conflict_with_time": False,
                 "greeting_conflict_with_previous": False,
                 "recommended_greeting": None,
+            },
+            "interaction_state": {
+                "conversation_openness_level": 3,
+                "conversation_openness_reason": "neutral_default",
+            },
+            "topic_state": {
+                "topic": "",
+                "category": "general",
+                "turn_count": 0,
+                "engagement_score": 0.5,
+                "saturation_score": 0.0,
+                "last_updated": timestamp_ms,
+                "recent_topics": [],
+                "recent_user_moves": [],
+            },
+            "topic_decision": {
+                "action": "continue",
+                "reason": "init",
+                "transition_type": "none",
+                "topic_source": "current_topic",
+                "guidance": "继续当前话题。",
             },
             "protocol_state": {
                 "interaction_protocol": "warm_companion_v1",

@@ -104,6 +104,8 @@ def _build_grounded_context_reply(text: str) -> str | None:
 
 
 def _build_grounded_greeting_reply(conn: "ConnectionHandler", text: str) -> str | None:
+    if getattr(conn, "pending_daily_greeting", None) is not None:
+        return None
     state_result = getattr(conn, "last_dialogue_state_result", None)
     if state_result is None:
         return None
@@ -343,10 +345,7 @@ async def process_intent_result(
 
 
 def speak_txt(conn: "ConnectionHandler", text):
-    response_plan = getattr(conn, "last_response_plan", None)
-    rewrite_result = rewrite_reply_text(text, response_plan)
-    text = rewrite_result.rewritten_reply
-    conn.last_response_rewrite = rewrite_result
+    text = conn._rewrite_assistant_reply(text)
     # 记录文本到 sentence_id 映射
     conn.tts.store_tts_text(conn.sentence_id, text)
 

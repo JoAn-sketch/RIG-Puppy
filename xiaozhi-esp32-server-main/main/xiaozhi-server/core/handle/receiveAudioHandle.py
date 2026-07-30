@@ -11,6 +11,9 @@ from core.dialogue_state import (
     RuntimeSignals,
     build_dialogue_state_prompt_patch,
 )
+from core.daily_greeting import maybe_get_daily_greeting
+from core.daily_activity_aggregator import record_interaction_event
+from core.conversation_openness import evaluate_conversation_openness
 from core.long_term_memory_resolver import resolve_long_term_memory_for_device
 from core.profile_resolver import resolve_child_profile_for_device
 from core.utils.util import audio_to_data
@@ -96,6 +99,12 @@ async def startToChat(conn: "ConnectionHandler", text):
         )
         conn.update_long_term_memory(runtime_long_term_memory)
         conn.refresh_short_term_memory_prompt(user_text=actual_text)
+        active_short_topic = conn.short_term_memory.get_active_topic(user_text=actual_text)
+        lifecycle_state = (
+            getattr(conn, "dialogue_state_runtime", None) or {}
+        ).get("topic_state") or {}
+        lifecycle_topic = str(lifecycle_state.get("topic") or "").strip()
+        openness = evaluate_conversation_openness(actual_text)
         age_band = runtime_child_profile.age_band
         router_input = SceneRouterInput(
             text=actual_text,
@@ -110,15 +119,32 @@ async def startToChat(conn: "ConnectionHandler", text):
                 current_subscene=getattr(getattr(conn, "last_scene_output", None), "subscene", None),
                 turn_index=len(getattr(conn.dialogue, "dialogue", [])),
                 last_policy=getattr(getattr(conn, "last_scene_output", None), "policy_profile", None),
+                active_topic=lifecycle_topic or getattr(active_short_topic, "topic", None),
+                active_entities=list(getattr(active_short_topic, "entities", []) or []),
             ),
             signals=SignalState(
                 emotion_hint="neutral",
                 interruption=bool(conn.client_is_speaking),
                 silence_ms=0,
                 vlm_tags=[],
+                conversation_openness_level=openness.level,
+                conversation_openness_reason=openness.reason,
             ),
         )
         conn.last_scene_output = conn.scene_router.route(router_input)
+        try:
+            record_interaction_event(
+                device_id=conn.headers.get("device-id"),
+                session_id=conn.session_id,
+                scene_name=getattr(conn.last_scene_output, "primary_scene", None),
+                subscene=getattr(conn.last_scene_output, "subscene", None),
+                protocol_mode=getattr(conn.last_scene_output, "protocol_mode", None),
+                emotion_state=getattr(conn.last_scene_output, "emotion_state", None),
+            )
+        except Exception as aggregate_error:
+            conn.logger.bind(tag=TAG).warning(
+                f"daily activity aggregation failed: {aggregate_error}"
+            )
         conn.scene_prompt_patch = build_scene_prompt_patch(conn.last_scene_output)
         manager_input = DialogueStateManagerInput(
             text=actual_text,
@@ -133,12 +159,15 @@ async def startToChat(conn: "ConnectionHandler", text):
                 understanding_signal="unknown",
                 topic_switch_signal=False,
                 frustration_signal=0,
+                conversation_openness_level=openness.level,
+                conversation_openness_reason=openness.reason,
             ),
             child_profile=ChildProfileSnapshot(
                 nickname=runtime_child_profile.nickname,
                 age=runtime_child_profile.age,
                 age_group=runtime_child_profile.age_group,
                 age_band=age_band,
+                interests=list(getattr(runtime_long_term_memory, "interests", []) or []),
             ),
         )
         conn.last_dialogue_state_result = conn.dialogue_state_manager.update(manager_input)
@@ -147,24 +176,62 @@ async def startToChat(conn: "ConnectionHandler", text):
             conn.last_dialogue_state_result
         )
         conn._refresh_response_plan()
+        daily_greeting_start = time.perf_counter()
+        conn.pending_daily_greeting = maybe_get_daily_greeting(
+            device_id=conn.headers.get("device-id"),
+            user_text=actual_text,
+            wakeup_words=conn.config.get("wakeup_words") or [],
+            child_profile=runtime_child_profile,
+            long_term_memory=runtime_long_term_memory,
+            short_term_memory=conn.short_term_memory,
+            llm=getattr(conn, "llm", None),
+            scene_name=getattr(conn.last_scene_output, "primary_scene", None),
+            conversation_openness_level=openness.level,
+        )
+        daily_greeting_elapsed_ms = int((time.perf_counter() - daily_greeting_start) * 1000)
         conn.logger.bind(tag=TAG).info(
             f"scene_router => scene={conn.last_scene_output.primary_scene}, "
             f"subscene={conn.last_scene_output.subscene}, "
             f"policy={conn.last_scene_output.policy_profile}, "
-            f"risk={conn.last_scene_output.risk_level}"
+            f"risk={conn.last_scene_output.risk_level}, "
+            f"openness={openness.level}:{openness.reason}"
         )
+        if conn.pending_daily_greeting is not None:
+            conn.logger.bind(tag=TAG).info(
+                f"daily_greeting => type={conn.pending_daily_greeting.greeting_type}, "
+                f"source_id={conn.pending_daily_greeting.source_id}, "
+                f"generated={getattr(conn.pending_daily_greeting, 'generated', False)}, "
+                f"elapsed_ms={daily_greeting_elapsed_ms}"
+            )
+        elif daily_greeting_elapsed_ms >= 50:
+            conn.logger.bind(tag=TAG).info(
+                f"daily_greeting => skipped, elapsed_ms={daily_greeting_elapsed_ms}"
+            )
         conn.logger.bind(tag=TAG).info(
             f"dialogue_state => phase={conn.last_dialogue_state_result.control.current_phase}, "
             f"next_action={conn.last_dialogue_state_result.control.next_action}, "
             f"rule={conn.last_dialogue_state_result.debug.matched_rule}, "
-            f"close={conn.last_dialogue_state_result.control.should_close_scene}"
+            f"close={conn.last_dialogue_state_result.control.should_close_scene}, "
+            f"openness={conn.last_dialogue_state_result.control.conversation_openness_level}:{conn.last_dialogue_state_result.control.conversation_openness_reason}"
+        )
+        topic_state = (conn.last_dialogue_state_result.state or {}).get("topic_state") or {}
+        topic_decision = (conn.last_dialogue_state_result.state or {}).get("topic_decision") or {}
+        conn.logger.bind(tag=TAG).info(
+            f"topic_lifecycle => topic={topic_state.get('topic')}, "
+            f"category={topic_state.get('category')}, "
+            f"turns={topic_state.get('turn_count')}, "
+            f"engagement={topic_state.get('engagement_score')}, "
+            f"saturation={topic_state.get('saturation_score')}, "
+            f"action={topic_decision.get('action')}, "
+            f"reason={topic_decision.get('reason')}"
         )
         if getattr(conn, "last_response_plan", None) is not None:
             conn.logger.bind(tag=TAG).info(
                 f"response_plan => action={conn.last_response_plan.primary_action}, "
                 f"sentence_budget={conn.last_response_plan.sentence_budget}, "
                 f"ask_followup={conn.last_response_plan.ask_followup}, "
-                f"allow_summary={conn.last_response_plan.allow_summary}"
+                f"allow_summary={conn.last_response_plan.allow_summary}, "
+                f"openness={conn.last_response_plan.conversation_openness_level}:{conn.last_response_plan.conversation_openness_mode}"
             )
         if hasattr(conn, "_publish_runtime_debug"):
             conn._publish_runtime_debug("turn_ready")

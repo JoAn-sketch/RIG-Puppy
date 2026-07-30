@@ -65,6 +65,39 @@ class LiveConnectionRegistry:
             for key in stale_client_keys:
                 self._client_connections.pop(key, None)
 
+    def snapshot(self) -> list[dict]:
+        now = time.time()
+        result = []
+        with self._lock:
+            stale_device_keys = []
+            for key, (conn, seen_at) in self._device_connections.items():
+                if not self._is_alive(conn):
+                    stale_device_keys.append(key)
+                    continue
+                headers = getattr(conn, "headers", None) or {}
+                if not isinstance(headers, dict):
+                    headers = {}
+                result.append(
+                    {
+                        "device_id": str(getattr(conn, "device_id", "") or ""),
+                        "client_id": str(headers.get("client-id", "") or ""),
+                        "client_ip": str(getattr(conn, "client_ip", "") or ""),
+                        "connected_at": float(getattr(conn, "first_activity_time", 0.0) or 0.0) / 1000.0,
+                        "last_activity_at": float(getattr(conn, "last_activity_time", 0.0) or 0.0) / 1000.0,
+                        "last_seen_at": float(seen_at or 0.0),
+                        "connection_alive": True,
+                        "conn_from_mqtt_gateway": bool(getattr(conn, "conn_from_mqtt_gateway", False)),
+                        "session_id": str(getattr(conn, "session_id", "") or ""),
+                    }
+                )
+            for key in stale_device_keys:
+                self._device_connections.pop(key, None)
+        result.sort(key=lambda item: item.get("last_activity_at") or item.get("last_seen_at") or 0.0, reverse=True)
+        for item in result:
+            last_ts = item.get("last_activity_at") or item.get("last_seen_at") or 0.0
+            item["idle_seconds"] = max(0, int(now - last_ts)) if last_ts else None
+        return result
+
     def _remove_if_same_locked(self, mapping, key, conn: "ConnectionHandler") -> None:
         normalized = self._normalize_device_id(key)
         if not normalized:

@@ -18,9 +18,11 @@ def get_project_dir():
 
 
 def read_config(config_path):
+    if not os.path.exists(config_path):
+        return {}
     with open(config_path, "r", encoding="utf-8") as file:
         config = yaml.safe_load(file)
-    return config
+    return config or {}
 
 
 def load_config():
@@ -83,10 +85,19 @@ async def get_config_from_api_async(config):
             "ip": config["server"].get("ip", ""),
             "port": config["server"].get("port", ""),
             "http_port": config["server"].get("http_port", ""),
+            "websocket": config["server"].get("websocket", ""),
             "vision_explain": config["server"].get("vision_explain", ""),
             "auth_key": config["server"].get("auth_key", ""),
         }
-    config_data["server"]["auth"] = {"enabled": auth_enabled}
+    config_data["server"]["auth"] = {
+        "enabled": auth_enabled,
+        "allowed_devices": config.get("server", {})
+        .get("auth", {})
+        .get("allowed_devices", []),
+        "expire_seconds": config.get("server", {})
+        .get("auth", {})
+        .get("expire_seconds"),
+    }
     # 如果服务器没有prompt_template，则从本地配置读取
     if not config_data.get("prompt_template"):
         config_data["prompt_template"] = config.get("prompt_template")

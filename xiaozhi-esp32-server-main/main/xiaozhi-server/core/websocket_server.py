@@ -232,4 +232,10 @@ class WebSocketServer:
                     token, client_id=client_id, username=device_id
                 )
                 if not auth_success:
+                    token_ts = ""
+                    if "." in token:
+                        token_ts = token.rsplit(".", 1)[-1]
+                    self.logger.bind(tag=TAG).warning(
+                        f"认证失败: device-id={device_id}, client-id={client_id}, token_ts={token_ts}"
+                    )
                     raise AuthenticationError("Invalid token")

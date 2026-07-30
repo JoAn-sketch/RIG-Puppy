@@ -1,0 +1,21 @@
+CREATE TABLE IF NOT EXISTS child_daily_activity_summary (
+    id BIGINT NOT NULL AUTO_INCREMENT,
+    device_id VARCHAR(128) NOT NULL,
+    summary_date DATE NOT NULL,
+    total_duration INT NOT NULL DEFAULT 0 COMMENT '总陪伴时长，分钟',
+    total_duration_seconds INT NOT NULL DEFAULT 0 COMMENT '内部累加秒数，用于分钟四舍五入',
+    session_count INT NOT NULL DEFAULT 0 COMMENT '互动 session 数',
+    activity_distribution_json TEXT NOT NULL COMMENT '活动分布 JSON',
+    scene_distribution_json TEXT NOT NULL COMMENT '场景分布 JSON',
+    primary_activity VARCHAR(64) NOT NULL DEFAULT 'other',
+    primary_scene VARCHAR(64) NOT NULL DEFAULT 'relationship_building',
+    active_periods_json TEXT NOT NULL COMMENT '活跃时间段 JSON',
+    highlight_metadata_json TEXT NOT NULL COMMENT '高光生成元数据 JSON，不含对话原文',
+    session_state_json MEDIUMTEXT NOT NULL COMMENT '内部 session 去重和增量时长状态，不含对话原文',
+    finalized TINYINT NOT NULL DEFAULT 0,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_child_daily_activity_device_date (device_id, summary_date),
+    KEY idx_child_daily_activity_date (summary_date)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

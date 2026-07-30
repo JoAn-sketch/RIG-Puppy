@@ -5,6 +5,24 @@ from config.logger import setup_logging
 from plugins_func.register import Action, ActionResponse
 from .base import ToolType, ToolDefinition, ToolExecutor
 
+DISABLED_VISUAL_TOOL_MARKERS = (
+    "camera",
+    "take_photo",
+    "preview",
+    "vision",
+    "face",
+    "facetrack",
+    "face_track",
+    "face_locate",
+    "eye_gaze",
+    "display_set_eye_gaze",
+)
+
+
+def _is_disabled_visual_tool_name(tool_name: str) -> bool:
+    normalized = str(tool_name or "").strip().lower()
+    return any(marker in normalized for marker in DISABLED_VISUAL_TOOL_MARKERS)
+
 
 class ToolManager:
     """统一工具管理器，管理所有类型的工具"""
@@ -78,6 +96,9 @@ class ToolManager:
             # 查找工具类型
             tool_type = self.get_tool_type(tool_name)
             if not tool_type:
+                if _is_disabled_visual_tool_name(tool_name):
+                    self.logger.info(f"忽略已禁用视觉工具调用: {tool_name}")
+                    return ActionResponse(action=Action.NONE, response=None)
                 return ActionResponse(
                     action=Action.NOTFOUND,
                     response=f"工具 {tool_name} 不存在",

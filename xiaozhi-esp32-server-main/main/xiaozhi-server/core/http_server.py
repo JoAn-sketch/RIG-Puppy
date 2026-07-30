@@ -92,12 +92,20 @@ class SimpleHttpServer:
                                 "/debug/runtime/text/reset",
                                 self.runtime_debug_handler.handle_reset,
                             ),
+                            web.get(
+                                "/debug/runtime/live-devices",
+                                self.runtime_debug_handler.handle_live_devices,
+                            ),
                             web.options(
                                 "/debug/runtime/text/send",
                                 self.runtime_debug_handler.handle_options,
                             ),
                             web.options(
                                 "/debug/runtime/text/reset",
+                                self.runtime_debug_handler.handle_options,
+                            ),
+                            web.options(
+                                "/debug/runtime/live-devices",
                                 self.runtime_debug_handler.handle_options,
                             ),
                         ]

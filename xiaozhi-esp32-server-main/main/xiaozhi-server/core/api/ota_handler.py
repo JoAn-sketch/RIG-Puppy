@@ -6,6 +6,7 @@ import hmac
 import os
 import re
 import glob
+from urllib.parse import urlsplit, urlunsplit
 from typing import Dict, List, Tuple
 from aiohttp import web
 
@@ -140,6 +141,50 @@ class OTAHandler(BaseHandler):
         else:
             return f"ws://{local_ip}:{port}/xiaozhi/v1/"
 
+    def _get_request_host(self, request) -> str:
+        forwarded_host = request.headers.get("x-forwarded-host", "").strip()
+        if forwarded_host:
+            return forwarded_host
+        host = request.headers.get("host", "").strip()
+        if host:
+            return host
+        return request.host or ""
+
+    def _build_request_scoped_websocket_url(
+        self, request, fallback_url: str, websocket_port: int
+    ) -> str:
+        host = self._get_request_host(request)
+        if not host:
+            return fallback_url
+
+        proto = request.headers.get("x-forwarded-proto", "").strip().lower()
+        if not proto:
+            proto = request.scheme
+        ws_scheme = "wss" if proto == "https" else "ws"
+
+        if ":" not in host and websocket_port not in (80, 443):
+            host = f"{host}:{websocket_port}"
+
+        return f"{ws_scheme}://{host}/xiaozhi/v1/"
+
+    def _override_host_in_url(self, original_url: str, request) -> str:
+        host = self._get_request_host(request)
+        if not host:
+            return original_url
+
+        proto = request.headers.get("x-forwarded-proto", "").strip().lower()
+        if not proto:
+            proto = request.scheme
+
+        parsed = urlsplit(original_url)
+        scheme = parsed.scheme
+        if scheme in ("ws", "wss"):
+            scheme = "wss" if proto == "https" else "ws"
+        elif scheme in ("http", "https"):
+            scheme = "https" if proto == "https" else "http"
+
+        return urlunsplit((scheme, host, parsed.path, parsed.query, parsed.fragment))
+
     async def handle_post(self, request):
         """处理 OTA POST 请求
 
@@ -180,6 +225,10 @@ class OTAHandler(BaseHandler):
             websocket_port = int(server_config.get("port", 8000))
             http_port = int(server_config.get("http_port", 8003))
             local_ip = get_local_ip()
+            default_websocket_url = self._get_websocket_url(local_ip, websocket_port)
+            websocket_url = self._build_request_scoped_websocket_url(
+                request, default_websocket_url, websocket_port
+            )
 
             # Determine device model (prefer headers)
             device_model = ""
@@ -290,11 +339,11 @@ class OTAHandler(BaseHandler):
                         token = self.auth.generate_token(client_id, device_id)
                 # NOTE: use websocket_port here
                 return_json["websocket"] = {
-                    "url": self._get_websocket_url(local_ip, websocket_port),
+                    "url": websocket_url,
                     "token": token,
                 }
                 self.logger.bind(tag=TAG).info(
-                    f"未配置MQTT网关，为设备 {device_id} 下发WebSocket配置"
+                    f"未配置MQTT网关，为设备 {device_id} 下发WebSocket配置: {websocket_url}"
                 )
 
             # Now check firmware files for updates
@@ -321,6 +370,7 @@ class OTAHandler(BaseHandler):
                         chosen_url = vision_url.replace(
                             "/mcp/vision/explain", f"/xiaozhi/ota/download/{fname}"
                         )
+                        chosen_url = self._override_host_in_url(chosen_url, request)
                         break
 
                 if chosen_url:

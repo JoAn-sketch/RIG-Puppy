@@ -8,6 +8,36 @@ from config.logger import setup_logging
 TAG = __name__
 logger = setup_logging()
 
+CAMERA_RELATED_TOOL_MARKERS = (
+    "camera",
+    "take_photo",
+    "preview",
+    "vision",
+    "face",
+    "facetrack",
+    "face_track",
+    "face_locate",
+    "eye_gaze",
+    "display_set_eye_gaze",
+)
+
+
+def is_camera_enabled(value) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return False
+    if isinstance(value, (int, float)):
+        return value != 0
+    if isinstance(value, str):
+        return value.strip().lower() not in {"", "0", "false", "no", "off", "disabled"}
+    return bool(value)
+
+
+def is_camera_related_tool(tool_name: str) -> bool:
+    normalized = str(tool_name or "").lower()
+    return any(marker in normalized for marker in CAMERA_RELATED_TOOL_MARKERS)
+
 
 class MCPClient:
     """设备端MCP客户端，用于管理MCP状态和工具"""
@@ -20,6 +50,13 @@ class MCPClient:
         self.next_id = 1
         self.lock = asyncio.Lock()
         self._cached_available_tools = None  # Cache for get_available_tools
+        self.enable_camera = False
+
+    def set_enable_camera(self, enabled):
+        normalized = is_camera_enabled(enabled)
+        if self.enable_camera != normalized:
+            self.enable_camera = normalized
+            self._cached_available_tools = None
 
     def has_tool(self, name: str) -> bool:
         return name in self.tools
@@ -32,6 +69,8 @@ class MCPClient:
         # If cache is not valid, regenerate the list
         result = []
         for tool_name, tool_data in self.tools.items():
+            if not self.enable_camera and is_camera_related_tool(tool_name):
+                continue
             function_def = {
                 "name": tool_name,
                 "description": tool_data["description"],

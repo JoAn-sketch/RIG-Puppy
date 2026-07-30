@@ -1,0 +1,551 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Greeting - kb-admin</title>
+<style>
+* { box-sizing: border-box; }
+body { margin: 0; font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; background: linear-gradient(180deg, #f5f7fb 0%, #eef6ff 100%); color: #172033; }
+header { background: #0f172a; color: #fff; padding: 14px 24px; display: flex; justify-content: space-between; align-items: center; }
+header h1 { margin: 0; font-size: 18px; font-weight: 600; }
+header a { color: #94a3b8; text-decoration: none; font-size: 13px; margin-left: 16px; }
+header a:hover { color: #fff; }
+main { max-width: 1320px; margin: 24px auto; padding: 0 16px 40px; }
+.hero, .card, .type-card { background: #fff; border-radius: 16px; border: 1px solid #dbe6f4; box-shadow: 0 10px 28px rgba(15, 23, 42, 0.06); }
+.hero { padding: 24px 26px; margin-bottom: 18px; background: linear-gradient(135deg, #fff7ed 0%, #fffbeb 36%, #eff6ff 100%); border-color: #fdba74; }
+.hero h2 { margin: 0 0 10px; font-size: 22px; color: #172033; }
+.hero p { margin: 0; font-size: 13px; line-height: 1.8; color: #475569; max-width: 980px; }
+.tabs { display: flex; gap: 10px; margin-bottom: 18px; flex-wrap: wrap; }
+.tab-btn { border: 1px solid #cbd5e1; border-radius: 999px; background: #fff; color: #334155; padding: 10px 16px; font-size: 13px; font-weight: 700; cursor: pointer; }
+.tab-btn.active { background: linear-gradient(135deg, #f97316 0%, #ea580c 100%); color: #fff; border-color: #ea580c; }
+.layout { display: grid; gap: 18px; }
+.top-grid { display: grid; grid-template-columns: 1.2fr .8fr; gap: 18px; }
+.card { padding: 20px; }
+.card h3 { margin: 0 0 8px; font-size: 16px; color: #0f172a; }
+.card p { margin: 0 0 14px; color: #64748b; font-size: 12px; line-height: 1.7; }
+.field-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.field { margin-bottom: 12px; }
+.field label { display: block; margin-bottom: 6px; font-size: 12px; font-weight: 600; color: #334155; }
+.field input[type="text"], .field input[type="number"], .field textarea, .field select { width: 100%; padding: 9px 10px; border: 1px solid #cbd5e1; border-radius: 10px; font-size: 13px; color: #0f172a; background: #fff; }
+.field textarea { min-height: 110px; resize: vertical; line-height: 1.65; }
+.field input:focus, .field textarea:focus, .field select:focus { outline: none; border-color: #38bdf8; box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.16); }
+.switches { display: grid; gap: 10px; }
+.toggle { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 12px 14px; background: #f8fafc; border: 1px solid #dbe6f4; border-radius: 12px; }
+.toggle strong { display: block; font-size: 13px; color: #0f172a; }
+.toggle span { display: block; font-size: 12px; color: #64748b; margin-top: 3px; }
+.toggle input { width: 18px; height: 18px; }
+.type-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.type-card { padding: 18px; background: linear-gradient(180deg, #fff 0%, #f8fbff 100%); }
+.type-card h4 { margin: 0; font-size: 16px; color: #0f172a; }
+.type-meta { margin: 8px 0 14px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.pill { display: inline-flex; align-items: center; padding: 3px 10px; border-radius: 999px; font-size: 11px; font-weight: 700; letter-spacing: .02em; background: #e0f2fe; color: #0369a1; }
+.pill.low { background: #ede9fe; color: #6d28d9; }
+.pill.warn { background: #ffedd5; color: #c2410c; }
+.actions { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.actions .hint { color: #94a3b8; font-size: 12px; }
+button.primary { border: 0; border-radius: 10px; cursor: pointer; padding: 10px 16px; font-size: 13px; font-weight: 700; color: #fff; background: linear-gradient(135deg, #f97316 0%, #ea580c 100%); }
+button.primary:hover { filter: brightness(.97); }
+button.primary:disabled { opacity: .55; cursor: not-allowed; }
+code.inline { font-size: 12px; padding: 2px 6px; border-radius: 6px; background: #e2e8f0; color: #334155; }
+.panel { display: none; }
+.panel.active { display: block; }
+#toast { position: fixed; right: 28px; bottom: 28px; background: #10b981; color: #fff; padding: 10px 18px; border-radius: 10px; font-size: 13px; box-shadow: 0 10px 24px rgba(0,0,0,.18); opacity: 0; transform: translateY(12px); transition: opacity .25s, transform .25s; pointer-events: none; z-index: 1000; }
+#toast.show { opacity: 1; transform: translateY(0); }
+#toast.error { background: #ef4444; }
+@media (max-width: 1040px) {
+  .top-grid, .type-grid, .field-grid { grid-template-columns: 1fr; }
+}
+</style>
+</head>
+<body>
+<header>
+  <h1>🌅 Greeting</h1>
+  <div>
+    <a href="/">📚 后端</a>
+    <a href="/scene-router">🧭 Scene Router</a>
+    <a href="/interests">✨ Interests</a>
+    <a href="/greeting">🌅 Greeting</a>
+  </div>
+</header>
+
+<main>
+  <section class="hero">
+    <h2>Greeting Strategy Center</h2>
+    <p>这个页面统一管理 <code class="inline">Daily Greeting</code> 和 <code class="inline">Boot Greeting</code>。配置会同步写到 <code class="inline">kb-admin/data</code> 和运行时 <code class="inline">xiaozhi-server/data</code>。</p>
+  </section>
+
+  <section class="tabs">
+    <button id="tab-daily" class="tab-btn active" type="button" onclick="switchTab('daily')">Daily Greeting</button>
+    <button id="tab-boot" class="tab-btn" type="button" onclick="switchTab('boot')">Boot Greeting</button>
+  </section>
+
+  <section id="panel-daily" class="panel active">
+    <section class="layout">
+      <div class="top-grid">
+        <article class="card">
+          <h3>Goal + Core Flow</h3>
+          <p>保留 Daily Greeting 的目标、触发条件、流程和设计原则。列表字段一行一条。</p>
+          <div class="field">
+            <label for="goal">Goal</label>
+            <textarea id="goal"></textarea>
+          </div>
+          <div class="field-grid">
+            <div class="field">
+              <label for="trigger_conditions">Trigger Conditions</label>
+              <textarea id="trigger_conditions"></textarea>
+            </div>
+            <div class="field">
+              <label for="pipeline">Greeting Pipeline</label>
+              <textarea id="pipeline"></textarea>
+            </div>
+            <div class="field">
+              <label for="greeting_structure">Greeting Structure</label>
+              <textarea id="greeting_structure"></textarea>
+            </div>
+            <div class="field">
+              <label for="selection_rules">Selection Rules</label>
+              <textarea id="selection_rules"></textarea>
+            </div>
+            <div class="field">
+              <label for="design_principles">Design Principles</label>
+              <textarea id="design_principles"></textarea>
+            </div>
+            <div class="field">
+              <label for="future_extensions">Future Extensions</label>
+              <textarea id="future_extensions"></textarea>
+            </div>
+          </div>
+        </article>
+
+        <article class="card">
+          <h3>Runtime Switches</h3>
+          <p>控制 Daily Greeting 在运行时的总开关与基本约束。</p>
+          <div class="switches">
+            <label class="toggle">
+              <div>
+                <strong>Enable Daily Greeting</strong>
+                <span>关闭后完全不进入 greeting pipeline。</span>
+              </div>
+              <input id="enabled" type="checkbox">
+            </label>
+            <label class="toggle">
+              <div>
+                <strong>First Meaningful Interaction Only</strong>
+                <span>只在当天第一次互动时尝试 greeting。</span>
+              </div>
+              <input id="first_meaningful_interaction_only" type="checkbox">
+            </label>
+            <label class="toggle">
+              <div>
+                <strong>Mark Delivered Once Per Day</strong>
+                <span>当天一旦发出 greeting，就不再重复。</span>
+              </div>
+              <input id="mark_delivered_once_per_day" type="checkbox">
+            </label>
+            <label class="toggle">
+              <div>
+                <strong>Block On Higher-Priority Interruptions</strong>
+                <span>安全/紧急等更高优先级事件出现时，直接跳过 greeting。</span>
+              </div>
+              <input id="block_on_higher_priority_interruptions" type="checkbox">
+            </label>
+          </div>
+
+          <div class="field-grid" style="margin-top:16px">
+            <div class="field">
+              <label for="state_date">State Example: date</label>
+              <input id="state_date" type="text">
+            </div>
+            <div class="field">
+              <label for="state_greeting_type">State Example: greeting_type</label>
+              <input id="state_greeting_type" type="text">
+            </div>
+            <div class="field">
+              <label for="state_source_id">State Example: source_id</label>
+              <input id="state_source_id" type="text">
+            </div>
+            <div class="field">
+              <label for="state_timestamp">State Example: timestamp</label>
+              <input id="state_timestamp" type="text">
+            </div>
+          </div>
+          <label class="toggle" style="margin-top:4px">
+            <div>
+              <strong>State Example: delivered</strong>
+              <span>这里只是结构示例，不代表当天真实 delivered 记录。</span>
+            </div>
+            <input id="state_delivered" type="checkbox">
+          </label>
+        </article>
+      </div>
+
+      <article class="card">
+        <h3>Greeting Types</h3>
+        <p>每天只选一个 greeting topic。这里可以编辑每种 type 的优先级、用途、模板和示例。</p>
+        <div id="type-grid" class="type-grid">
+          <div class="type-card">Loading...</div>
+        </div>
+      </article>
+    </section>
+  </section>
+
+  <section id="panel-boot" class="panel">
+    <section class="layout">
+      <div class="top-grid">
+        <article class="card">
+          <h3>Boot Greeting Library</h3>
+          <p>按 category 管理启动问候文案。运行时会先按权重选 category，再从该 category 内随机选一句。</p>
+          <div id="boot-library-grid" class="type-grid">
+            <div class="type-card">Loading...</div>
+          </div>
+        </article>
+
+        <article class="card">
+          <h3>Boot Runtime Switches</h3>
+          <p>控制自动播放开关和基本时机约束。</p>
+          <div class="switches">
+            <label class="toggle">
+              <div>
+                <strong>Enable Boot Greeting</strong>
+                <span>关闭后启动完成不自动播报。</span>
+              </div>
+              <input id="boot_enabled" type="checkbox">
+            </label>
+            <label class="toggle">
+              <div>
+                <strong>Auto Play After Startup</strong>
+                <span>服务 ready 后立即自动播报一条短句。</span>
+              </div>
+              <input id="boot_auto_play_after_startup" type="checkbox">
+            </label>
+            <label class="toggle">
+              <div>
+                <strong>Wait For Network</strong>
+                <span>要求网络连接完成后再播。</span>
+              </div>
+              <input id="boot_wait_for_network" type="checkbox">
+            </label>
+            <label class="toggle">
+              <div>
+                <strong>Wait For Core Services</strong>
+                <span>要求核心服务 ready 后再播。</span>
+              </div>
+              <input id="boot_wait_for_core_services" type="checkbox">
+            </label>
+          </div>
+          <div class="field" style="margin-top:16px">
+            <label for="boot_max_duration_seconds">Max Duration Seconds</label>
+            <input id="boot_max_duration_seconds" type="number" min="1" max="30">
+          </div>
+          <div class="field" style="margin-top:16px">
+            <label for="boot_last_greeting">Last Boot Greeting</label>
+            <input id="boot_last_greeting" type="text" disabled>
+          </div>
+        </article>
+      </div>
+    </section>
+  </section>
+
+  <section class="card" style="margin-top:18px">
+    <div class="actions">
+      <span class="hint">保存后会同步到本地配置和运行时 data 目录。</span>
+      <button id="save-btn" class="primary" type="button" onclick="saveConfig()">保存 Greeting 策略</button>
+    </div>
+  </section>
+</main>
+
+<div id="toast"></div>
+
+<script>
+var toastTimer = null;
+var configPath = "";
+var greetingTypes = {};
+var bootCategories = [];
+var typeOrder = [
+  "follow_up",
+  "emotional_check_in",
+  "achievement_milestone",
+  "memory_recall",
+  "interest_greeting",
+  "generic_greeting"
+];
+
+function switchTab(name) {
+  var daily = name === "daily";
+  document.getElementById("tab-daily").classList.toggle("active", daily);
+  document.getElementById("tab-boot").classList.toggle("active", !daily);
+  document.getElementById("panel-daily").classList.toggle("active", daily);
+  document.getElementById("panel-boot").classList.toggle("active", !daily);
+}
+
+function showToast(msg, isError) {
+  var t = document.getElementById("toast");
+  t.textContent = (isError ? "✗ " : "✓ ") + msg;
+  t.className = "show" + (isError ? " error" : "");
+  if (toastTimer) clearTimeout(toastTimer);
+  toastTimer = setTimeout(function () { t.className = ""; }, 2600);
+}
+
+function escapeHtml(str) {
+  return String(str == null ? "" : str)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function linesToText(lines) {
+  return Array.isArray(lines) ? lines.join("\n") : "";
+}
+
+function textToLines(text) {
+  return String(text || "")
+    .split("\n")
+    .map(function (line) { return line.trim(); })
+    .filter(function (line) { return line; });
+}
+
+function applyConfig(data) {
+  configPath = data.config_path || "";
+  greetingTypes = data.greeting_types || {};
+
+  document.getElementById("goal").value = data.goal || "";
+  document.getElementById("trigger_conditions").value = linesToText(data.trigger_conditions);
+  document.getElementById("pipeline").value = linesToText(data.pipeline);
+  document.getElementById("greeting_structure").value = linesToText(data.greeting_structure);
+  document.getElementById("selection_rules").value = linesToText(data.selection_rules);
+  document.getElementById("design_principles").value = linesToText(data.design_principles);
+  document.getElementById("future_extensions").value = linesToText(data.future_extensions);
+
+  document.getElementById("enabled").checked = !!data.enabled;
+  document.getElementById("first_meaningful_interaction_only").checked = !!data.first_meaningful_interaction_only;
+  document.getElementById("mark_delivered_once_per_day").checked = !!data.mark_delivered_once_per_day;
+  document.getElementById("block_on_higher_priority_interruptions").checked = !!data.block_on_higher_priority_interruptions;
+
+  var state = data.state_example || {};
+  document.getElementById("state_date").value = state.date || "";
+  document.getElementById("state_greeting_type").value = state.greeting_type || "";
+  document.getElementById("state_source_id").value = state.source_id || "";
+  document.getElementById("state_timestamp").value = state.timestamp || "";
+  document.getElementById("state_delivered").checked = !!state.delivered;
+
+  var boot = data.boot_greeting || {};
+  bootCategories = ((boot.library || {}).categories || []).slice();
+  document.getElementById("boot_enabled").checked = !!boot.enabled;
+  document.getElementById("boot_auto_play_after_startup").checked = !!boot.auto_play_after_startup;
+  document.getElementById("boot_wait_for_network").checked = !!boot.wait_for_network;
+  document.getElementById("boot_wait_for_core_services").checked = !!boot.wait_for_core_services;
+  document.getElementById("boot_max_duration_seconds").value = boot.max_duration_seconds || 3;
+  var last = boot.last_boot_greeting || {};
+  var lastText = [last.category || "", last.greeting_id || ""].filter(Boolean).join(" / ");
+  document.getElementById("boot_last_greeting").value = lastText || "None";
+
+  renderGreetingTypes();
+  renderBootLibrary();
+}
+
+function renderGreetingTypes() {
+  var grid = document.getElementById("type-grid");
+  grid.innerHTML = typeOrder.map(function (typeKey) {
+    var item = greetingTypes[typeKey] || {};
+    var priorityClass = (item.priority || 0) >= 90 ? "warn" : ((item.priority || 0) <= 30 ? "low" : "");
+    return '' +
+      '<section class="type-card">' +
+        '<h4>' + escapeHtml(item.label || typeKey) + '</h4>' +
+        '<div class="type-meta">' +
+          '<span class="pill ' + priorityClass + '">priority ' + escapeHtml(item.priority || "") + '</span>' +
+          '<span class="pill">key ' + escapeHtml(typeKey) + '</span>' +
+        '</div>' +
+        '<label class="toggle" style="margin-bottom:12px">' +
+          '<div>' +
+            '<strong>Enabled</strong>' +
+            '<span>关闭后这类 greeting 不参与候选排序。</span>' +
+          '</div>' +
+          '<input id="' + typeKey + '-enabled" type="checkbox"' + (item.enabled ? ' checked' : '') + '>' +
+        '</label>' +
+        '<div class="field-grid">' +
+          buildField(typeKey, 'priority', 'Priority', item.priority || 10, 'number') +
+          buildField(typeKey, 'template', 'Template', item.template || '', 'text') +
+        '</div>' +
+        buildTextarea(typeKey, 'purpose', 'Purpose', item.purpose || '', 3) +
+        buildTextarea(typeKey, 'examples', 'Examples (one per line)', linesToText(item.examples), 5) +
+        buildTextarea(typeKey, 'notes', 'Notes', item.notes || '', 3) +
+      '</section>';
+  }).join("");
+}
+
+function buildField(typeKey, fieldKey, label, value, type) {
+  return '' +
+    '<div class="field">' +
+      '<label for="' + typeKey + '-' + fieldKey + '">' + escapeHtml(label) + '</label>' +
+      '<input id="' + typeKey + '-' + fieldKey + '" type="' + type + '" value="' + escapeHtml(value) + '">' +
+    '</div>';
+}
+
+function buildTextarea(typeKey, fieldKey, label, value, rows) {
+  return '' +
+    '<div class="field">' +
+      '<label for="' + typeKey + '-' + fieldKey + '">' + escapeHtml(label) + '</label>' +
+      '<textarea id="' + typeKey + '-' + fieldKey + '" rows="' + rows + '">' + escapeHtml(value) + '</textarea>' +
+    '</div>';
+}
+
+function renderBootLibrary() {
+  var grid = document.getElementById("boot-library-grid");
+  grid.innerHTML = bootCategories.map(function (category, index) {
+    return '' +
+      '<section class="type-card">' +
+        '<h4>' + escapeHtml(category.label || category.key || ('category_' + index)) + '</h4>' +
+        '<div class="type-meta">' +
+          '<span class="pill">key ' + escapeHtml(category.key || '') + '</span>' +
+          '<span class="pill warn">weight ' + escapeHtml(category.weight || '') + '</span>' +
+        '</div>' +
+        '<div class="field-grid">' +
+          buildBootField(index, 'key', 'Category Key', category.key || '', 'text') +
+          buildBootField(index, 'label', 'Category Label', category.label || '', 'text') +
+          buildBootField(index, 'weight', 'Weight', category.weight || 10, 'number') +
+        '</div>' +
+        buildBootTextarea(index, 'greetings', 'Greetings (one per line, format: id|text)', (category.greetings || []).map(function (item) { return (item.id || '') + '|' + (item.text || ''); }).join('\n'), 7) +
+      '</section>';
+  }).join("");
+}
+
+function buildBootField(index, fieldKey, label, value, type) {
+  return '' +
+    '<div class="field">' +
+      '<label for="boot-category-' + index + '-' + fieldKey + '">' + escapeHtml(label) + '</label>' +
+      '<input id="boot-category-' + index + '-' + fieldKey + '" type="' + type + '" value="' + escapeHtml(value) + '">' +
+    '</div>';
+}
+
+function buildBootTextarea(index, fieldKey, label, value, rows) {
+  return '' +
+    '<div class="field">' +
+      '<label for="boot-category-' + index + '-' + fieldKey + '">' + escapeHtml(label) + '</label>' +
+      '<textarea id="boot-category-' + index + '-' + fieldKey + '" rows="' + rows + '">' + escapeHtml(value) + '</textarea>' +
+    '</div>';
+}
+
+function collectGreetingTypes() {
+  var payload = {};
+  typeOrder.forEach(function (typeKey) {
+    payload[typeKey] = {
+      label: greetingTypes[typeKey] && greetingTypes[typeKey].label ? greetingTypes[typeKey].label : typeKey,
+      enabled: document.getElementById(typeKey + '-enabled').checked,
+      priority: Number(document.getElementById(typeKey + '-priority').value || 0),
+      template: document.getElementById(typeKey + '-template').value,
+      purpose: document.getElementById(typeKey + '-purpose').value,
+      examples: textToLines(document.getElementById(typeKey + '-examples').value),
+      notes: document.getElementById(typeKey + '-notes').value
+    };
+  });
+  return payload;
+}
+
+function collectBootCategories() {
+  return bootCategories.map(function (_, index) {
+    var greetings = String(document.getElementById('boot-category-' + index + '-greetings').value || '')
+      .split('\n')
+      .map(function (line) { return line.trim(); })
+      .filter(function (line) { return line && line.indexOf('|') > 0; })
+      .map(function (line) {
+        var parts = line.split('|');
+        var id = (parts.shift() || '').trim();
+        var text = parts.join('|').trim();
+        return { id: id, text: text };
+      })
+      .filter(function (item) { return item.id && item.text; });
+    return {
+      key: document.getElementById('boot-category-' + index + '-key').value,
+      label: document.getElementById('boot-category-' + index + '-label').value,
+      weight: Number(document.getElementById('boot-category-' + index + '-weight').value || 10),
+      greetings: greetings
+    };
+  });
+}
+
+function collectPayload() {
+  return {
+    enabled: document.getElementById("enabled").checked,
+    first_meaningful_interaction_only: document.getElementById("first_meaningful_interaction_only").checked,
+    mark_delivered_once_per_day: document.getElementById("mark_delivered_once_per_day").checked,
+    block_on_higher_priority_interruptions: document.getElementById("block_on_higher_priority_interruptions").checked,
+    goal: document.getElementById("goal").value,
+    trigger_conditions: textToLines(document.getElementById("trigger_conditions").value),
+    pipeline: textToLines(document.getElementById("pipeline").value),
+    greeting_structure: textToLines(document.getElementById("greeting_structure").value),
+    selection_rules: textToLines(document.getElementById("selection_rules").value),
+    design_principles: textToLines(document.getElementById("design_principles").value),
+    future_extensions: textToLines(document.getElementById("future_extensions").value),
+    state_example: {
+      date: document.getElementById("state_date").value,
+      delivered: document.getElementById("state_delivered").checked,
+      greeting_type: document.getElementById("state_greeting_type").value,
+      source_id: document.getElementById("state_source_id").value,
+      timestamp: document.getElementById("state_timestamp").value
+    },
+    greeting_types: collectGreetingTypes(),
+    boot_greeting: {
+      enabled: document.getElementById("boot_enabled").checked,
+      auto_play_after_startup: document.getElementById("boot_auto_play_after_startup").checked,
+      wait_for_network: document.getElementById("boot_wait_for_network").checked,
+      wait_for_core_services: document.getElementById("boot_wait_for_core_services").checked,
+      max_duration_seconds: Number(document.getElementById("boot_max_duration_seconds").value || 3),
+      library: {
+        categories: collectBootCategories()
+      }
+    }
+  };
+}
+
+function loadConfig() {
+  fetch("/api/greeting/config")
+    .then(function (res) {
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      return res.json();
+    })
+    .then(function (data) {
+      applyConfig(data);
+    })
+    .catch(function (err) {
+      showToast("加载失败: " + err.message, true);
+    });
+}
+
+function saveConfig() {
+  var btn = document.getElementById("save-btn");
+  btn.disabled = true;
+  btn.textContent = "保存中...";
+  fetch("/api/greeting/config", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(collectPayload())
+  })
+    .then(function (res) {
+      if (!res.ok) {
+        return res.json().catch(function () { return {}; }).then(function (body) {
+          throw new Error(body.error || ("HTTP " + res.status));
+        });
+      }
+      return res.json();
+    })
+    .then(function (data) {
+      applyConfig(data);
+      showToast("Greeting 策略已保存" + (configPath ? " · " + configPath : ""), false);
+    })
+    .catch(function (err) {
+      showToast("保存失败: " + err.message, true);
+    })
+    .finally(function () {
+      btn.disabled = false;
+      btn.textContent = "保存 Greeting 策略";
+    });
+}
+
+loadConfig();
+</script>
+<script src="/shared-nav.js"></script>
+</body>
+</html>

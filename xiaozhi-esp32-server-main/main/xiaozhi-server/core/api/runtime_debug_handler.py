@@ -70,3 +70,15 @@ class RuntimeDebugHandler(BaseHandler):
             return self._json_response({"ok": True})
         except Exception as e:
             return self._json_response({"error": str(e)}, status=500)
+
+    async def handle_live_devices(self, request):
+        if not self._authorized(request):
+            return self._json_response({"error": "unauthorized"}, status=401)
+        registry = getattr(self.server, "live_connection_registry", None) if self.server is not None else None
+        if registry is None:
+            return self._json_response({"ok": True, "devices": [], "count": 0})
+        try:
+            devices = registry.snapshot()
+            return self._json_response({"ok": True, "count": len(devices), "devices": devices})
+        except Exception as e:
+            return self._json_response({"error": str(e)}, status=500)

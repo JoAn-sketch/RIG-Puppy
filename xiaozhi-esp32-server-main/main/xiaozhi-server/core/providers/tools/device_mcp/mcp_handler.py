@@ -15,6 +15,37 @@ if TYPE_CHECKING:
 TAG = __name__
 logger = setup_logging()
 
+CAMERA_RELATED_TOOL_MARKERS = (
+    "camera",
+    "take_photo",
+    "preview",
+    "vision",
+    "face",
+    "facetrack",
+    "face_track",
+    "face_locate",
+    "eye_gaze",
+    "display_set_eye_gaze",
+)
+
+
+def is_camera_enabled(value) -> bool:
+    """Normalize camera config values from DB/env/config."""
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return False
+    if isinstance(value, (int, float)):
+        return value != 0
+    if isinstance(value, str):
+        return value.strip().lower() not in {"", "0", "false", "no", "off", "disabled"}
+    return bool(value)
+
+
+def is_camera_related_tool(tool_name: str) -> bool:
+    normalized = str(tool_name or "").lower()
+    return any(marker in normalized for marker in CAMERA_RELATED_TOOL_MARKERS)
+
 
 class MCPClient:
     """设备端MCP客户端，用于管理MCP状态和工具"""
@@ -29,6 +60,12 @@ class MCPClient:
         self._cached_available_tools = None  # Cache for get_available_tools
         self.enable_camera = False
 
+    def set_enable_camera(self, enabled):
+        normalized = is_camera_enabled(enabled)
+        if self.enable_camera != normalized:
+            self.enable_camera = normalized
+            self._cached_available_tools = None
+
     def has_tool(self, name: str) -> bool:
         return name in self.tools
 
@@ -40,7 +77,7 @@ class MCPClient:
         # If cache is not valid, regenerate the list
         result = []
         for tool_name, tool_data in self.tools.items():
-            if "take_photo" in tool_name and not self.enable_camera:
+            if not self.enable_camera and is_camera_related_tool(tool_name):
                 continue
             function_def = {
                 "name": tool_name,
@@ -217,7 +254,9 @@ async def handle_mcp_message(
 
                     # 刷新工具缓存，确保MCP工具被包含在函数列表中
                     if hasattr(conn, "func_handler") and conn.func_handler:
-                        mcp_client.enable_camera = conn.config.get("enable_camera", False)
+                        mcp_client.set_enable_camera(
+                            conn.config.get("enable_camera", False)
+                        )
                         conn.func_handler.tool_manager.refresh_tools()
                         conn.func_handler.current_support_functions()
             return
@@ -241,17 +280,21 @@ async def handle_mcp_message(
 
 async def send_mcp_initialize_message(conn: "ConnectionHandler"):
     """发送MCP初始化消息"""
-
-    vision_url = get_vision_url(conn.config)
-
-    # 密钥生成token
-    auth = AuthToken(conn.config["server"]["auth_key"])
-    token = auth.generate_token(conn.headers.get("device-id"))
-
-    vision = {
-        "url": vision_url,
-        "token": token,
+    capabilities = {
+        "roots": {"listChanged": True},
+        "sampling": {},
     }
+    if is_camera_enabled(conn.config.get("enable_camera", False)):
+        vision_url = get_vision_url(conn.config)
+
+        # 密钥生成token
+        auth = AuthToken(conn.config["server"]["auth_key"])
+        token = auth.generate_token(conn.headers.get("device-id"))
+
+        capabilities["vision"] = {
+            "url": vision_url,
+            "token": token,
+        }
 
     payload = {
         "jsonrpc": "2.0",
@@ -259,11 +302,7 @@ async def send_mcp_initialize_message(conn: "ConnectionHandler"):
         "method": "initialize",
         "params": {
             "protocolVersion": "2024-11-05",
-            "capabilities": {
-                "roots": {"listChanged": True},
-                "sampling": {},
-                "vision": vision,
-            },
+            "capabilities": capabilities,
             "clientInfo": {
                 "name": "XiaozhiClient",
                 "version": "1.0.0",
@@ -312,6 +351,9 @@ async def call_mcp_tool(
 
     if not mcp_client.has_tool(tool_name):
         raise ValueError(f"工具 {tool_name} 不存在")
+
+    if not mcp_client.enable_camera and is_camera_related_tool(tool_name):
+        raise ValueError("视觉/摄像头工具已关闭")
 
     tool_call_id = await mcp_client.get_next_id()
     result_future = asyncio.Future()

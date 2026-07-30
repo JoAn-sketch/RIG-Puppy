@@ -1,6 +1,7 @@
 package xiaozhi.modules.childprofile.dto;
 
 import java.io.Serializable;
+import java.util.List;
 
 import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.constraints.Max;
@@ -17,8 +18,7 @@ public class ChildProfileUpsertDTO implements Serializable {
     @Schema(description = "微信 openid", requiredMode = Schema.RequiredMode.REQUIRED)
     private String openid;
 
-    @NotBlank
-    @Schema(description = "设备 ID", requiredMode = Schema.RequiredMode.REQUIRED)
+    @Schema(description = "设备 ID（兼容旧客户端，当前不再用于账号绑定）")
     private String deviceId;
 
     @Min(3)
@@ -30,4 +30,11 @@ public class ChildProfileUpsertDTO implements Serializable {
     @Size(max = 32)
     @Schema(description = "孩子喜欢的称呼", requiredMode = Schema.RequiredMode.REQUIRED)
     private String nickname;
+
+    @Size(max = 32)
+    @Schema(description = "孩子希望如何称呼机器人")
+    private String robotNamePreference;
+
+    @Schema(description = "兴趣内容，最多 3 个")
+    private List<@Size(max = 32) String> interests;
 }

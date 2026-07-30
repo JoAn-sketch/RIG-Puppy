@@ -20,6 +20,7 @@ class ConversationSessionState:
         self.last_dialogue_state_result = None
         self.dialogue_state_runtime = None
         self.base_prompt = None
+        self.robot_profile_prompt_patch = ""
         self.scene_prompt_patch = ""
         self.long_term_memory_prompt_patch = ""
         self.short_term_memory_prompt_patch = ""
@@ -30,6 +31,8 @@ class ConversationSessionState:
         self.long_term_memory = None
         self.short_term_memory = None
         self.last_user_text = ""
+        self.pending_daily_greeting = None
+        self.last_applied_daily_greeting = None
 
     def reset(self):
         self.dialogue = Dialogue()
@@ -38,6 +41,7 @@ class ConversationSessionState:
         self.last_dialogue_state_result = None
         self.dialogue_state_runtime = None
         self.base_prompt = None
+        self.robot_profile_prompt_patch = ""
         self.scene_prompt_patch = ""
         self.long_term_memory_prompt_patch = ""
         self.short_term_memory_prompt_patch = ""
@@ -48,6 +52,8 @@ class ConversationSessionState:
         self.long_term_memory = None
         self.short_term_memory = None
         self.last_user_text = ""
+        self.pending_daily_greeting = None
+        self.last_applied_daily_greeting = None
 
 
 class ConversationSessionStateRegistry:
