@@ -28,6 +28,8 @@ private:
 
     void ParseServerHello(const cJSON* root);
     bool SendText(const std::string& text) override;
+    bool OpenAudioChannelInternal(bool allow_auth_retry);
+    bool RefreshAuthAndRetry();
     std::string GetHelloMessage();
 };
 

@@ -1,6 +1,7 @@
 #include "websocket_protocol.h"
 #include "application.h"
 #include "board.h"
+#include "device_auth.h"
 #include "settings.h"
 #include "system_info.h"
 
@@ -12,7 +13,6 @@
 
 #define TAG "WS"
 #define DEFAULT_WEBSOCKET_URL "ws://122.51.155.114:8000/xiaozhi/v1/"
-#define DEFAULT_WEBSOCKET_TOKEN "kPQSzgxDr_pqB3zb6H8R8EoNP_zAznExcnhAkk1K8u8.1784445309"
 
 WebsocketProtocol::WebsocketProtocol() { event_group_handle_ = xEventGroupCreate(); }
 
@@ -79,15 +79,16 @@ void WebsocketProtocol::CloseAudioChannel(bool send_goodbye) {
 }
 
 bool WebsocketProtocol::OpenAudioChannel() {
+    return OpenAudioChannelInternal(true);
+}
+
+bool WebsocketProtocol::OpenAudioChannelInternal(bool allow_auth_retry) {
     Settings settings("websocket", false);
     std::string url = settings.GetString("url");
     if (url.empty()) {
         url = DEFAULT_WEBSOCKET_URL;
     }
     std::string token = settings.GetString("token");
-    if (token.empty()) {
-        token = DEFAULT_WEBSOCKET_TOKEN;
-    }
     int version = settings.GetInt("version");
     if (version != 0) {
         version_ = version;
@@ -176,6 +177,9 @@ bool WebsocketProtocol::OpenAudioChannel() {
     ESP_LOGI(TAG, "Connecting to websocket server: %s with version: %d", url.c_str(), version_);
     if (!websocket_->Connect(url.c_str())) {
         ESP_LOGE(TAG, "Failed to connect to websocket server, code=%d", websocket_->GetLastError());
+        if (allow_auth_retry && RefreshAuthAndRetry()) {
+            return OpenAudioChannelInternal(false);
+        }
         SetError(Lang::Strings::SERVER_NOT_CONNECTED);
         return false;
     }
@@ -183,6 +187,9 @@ bool WebsocketProtocol::OpenAudioChannel() {
     // Send hello message to describe the client
     auto message = GetHelloMessage();
     if (!SendText(message)) {
+        if (allow_auth_retry && RefreshAuthAndRetry()) {
+            return OpenAudioChannelInternal(false);
+        }
         return false;
     }
 
@@ -192,6 +199,9 @@ bool WebsocketProtocol::OpenAudioChannel() {
                             pdFALSE, pdMS_TO_TICKS(10000));
     if (!(bits & WEBSOCKET_PROTOCOL_SERVER_HELLO_EVENT)) {
         ESP_LOGE(TAG, "Failed to receive server hello");
+        if (allow_auth_retry && RefreshAuthAndRetry()) {
+            return OpenAudioChannelInternal(false);
+        }
         SetError(Lang::Strings::SERVER_TIMEOUT);
         return false;
     }
@@ -200,6 +210,19 @@ bool WebsocketProtocol::OpenAudioChannel() {
         on_audio_channel_opened_();
     }
 
+    return true;
+}
+
+bool WebsocketProtocol::RefreshAuthAndRetry() {
+    websocket_.reset();
+
+    DeviceAuth auth;
+    if (!auth.RefreshWebsocketCredentials()) {
+        ESP_LOGW(TAG, "Failed to refresh websocket credentials after connection failure");
+        return false;
+    }
+
+    ESP_LOGI(TAG, "Websocket credentials refreshed, retrying connection once");
     return true;
 }
 

@@ -3,6 +3,7 @@
 #include "assets/lang_config.h"
 #include "audio_codec.h"
 #include "board.h"
+#include "device_auth.h"
 #include "display.h"
 #include "mcp_server.h"
 #include "mqtt_protocol.h"
@@ -363,6 +364,11 @@ void Application::ActivationTask() {
     // Check for new firmware version
     CheckNewVersion();
 
+    DeviceAuth auth;
+    if (!auth.EnsureWebsocketCredentials()) {
+        ESP_LOGW(TAG, "Device auth failed; websocket connection will use existing local settings if available");
+    }
+
     // Initialize the protocol
     InitializeProtocol();
 
@@ -515,10 +521,7 @@ void Application::InitializeProtocol() {
 
     if (ota_->HasMqttConfig()) {
         protocol_ = std::make_unique<MqttProtocol>();
-    } else if (ota_->HasWebsocketConfig()) {
-        protocol_ = std::make_unique<WebsocketProtocol>();
     } else {
-        ESP_LOGW(TAG, "No protocol specified in the OTA config, using WebSocket");
         protocol_ = std::make_unique<WebsocketProtocol>();
     }
 

@@ -2,9 +2,15 @@ menu "Xiaozhi Assistant"
 
 config OTA_URL
     string "Default OTA URL"
-    default "http://122.51.155.114:8888/ota/"
+    default "http://122.51.155.114:8002/xiaozhi/ota/"
     help
         The application will access this URL to check for new firmwares and server address.
+
+config AUTH_URL
+    string "Default Device Auth URL"
+    default "http://122.51.155.114:8002/xiaozhi/auth/"
+    help
+        The application will access this URL to get or refresh WebSocket credentials.
 
 choice
     prompt "Flash Assets"
