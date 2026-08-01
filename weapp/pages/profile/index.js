@@ -186,7 +186,7 @@ Page({
           errorText: "请先完成 BLE 配网并绑定 Puppy"
         });
         setTimeout(() => {
-          wx.switchTab({ url: "/pages/device-pair/index" });
+          wx.reLaunch({ url: "/pages/device-onboarding/index" });
         }, 800);
         return;
       }

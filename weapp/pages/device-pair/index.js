@@ -21,13 +21,15 @@ const {
 } = require("../../utils/storage");
 
 const BLE_WRITE_CHUNK_SIZE = 20;
-const PROVISIONING_TOTAL_TIMEOUT_MS = 75000;
+const PROVISIONING_TOTAL_TIMEOUT_MS = 120000;
 const PROVISIONING_SUCCESS_STATUSES = new Set([
   "ok",
   "success",
   "wifi_connected",
   "connected",
-  "bind_ready"
+  "bind_ready",
+  "credentials_saved",
+  "waiting_for_credentials"
 ]);
 const PROVISIONING_PENDING_STATUSES = new Set([
   "wifi_connecting",
@@ -208,6 +210,49 @@ function looksLikeFiveGHzSsid(ssid) {
   return /(^|[\s_\-])5g(hz)?($|[\s_\-])/i.test(value)
     || /5ghz/i.test(value)
     || /[\s_\-]5g$/i.test(value);
+}
+
+function pickFirstString(...values) {
+  for (let i = 0; i < values.length; i += 1) {
+    const value = String(values[i] || "").trim();
+    if (value) {
+      return value;
+    }
+  }
+  return "";
+}
+
+function extractDeviceAuthCredentials(authResult) {
+  const websocket = authResult && authResult.websocket && typeof authResult.websocket === "object"
+    ? authResult.websocket
+    : {};
+  const accessToken = pickFirstString(
+    authResult && authResult.accessToken,
+    authResult && authResult.access_token,
+    authResult && authResult.token,
+    authResult && authResult.websocketToken,
+    websocket.token
+  );
+  return {
+    accessToken,
+    refreshToken: pickFirstString(
+      authResult && authResult.refreshToken,
+      authResult && authResult.refresh_token
+    ),
+    websocketUrl: pickFirstString(
+      authResult && authResult.websocketUrl,
+      authResult && authResult.websocket_url,
+      websocket.url
+    ),
+    authUrl: pickFirstString(
+      authResult && authResult.authUrl,
+      authResult && authResult.auth_url
+    ),
+    expireSeconds: Number(
+      (authResult && (authResult.expireSeconds || authResult.expire_seconds))
+      || 0
+    )
+  };
 }
 
 function isFiveGHzWifi(item) {
@@ -563,11 +608,11 @@ Page({
 
     this.setData({ statusText: "Wi‑Fi 已发送，等待 Puppy 返回连接结果..." });
     this.appendProvisionLog("Wi‑Fi 信息已写入 BLE");
-    const notifyTimeoutMs = normalizeDeviceId(this.data.deviceKey) ? 3000 : 25000;
-    const provisioningResult = await this.resolveProvisioningResult(statusWaiter, notifyTimeoutMs);
-    const boundDeviceId = await this.completeInitializationFlow(provisioningResult);
-    this.setData({ statusText: `Puppy 初始化完成：${boundDeviceId}` });
-    return boundDeviceId;
+    const provisioningResult = await this.resolveProvisioningResult(statusWaiter, 25000);
+    const initialization = await this.completeInitializationFlow(provisioningResult);
+    await this.sendActivationCredentials(bleTarget, initialization.deviceId, initialization.authResult);
+    this.setData({ statusText: `Puppy 初始化完成：${initialization.deviceId}` });
+    return initialization.deviceId;
   },
 
   appendProvisionLog(text) {
@@ -745,6 +790,9 @@ Page({
     );
     this.appendProvisionLog("设备注册");
     const registerResult = await registerRobotDevice({
+      openid,
+      userId: openid,
+      ownerOpenid: openid,
       deviceId,
       macAddress: deviceId,
       clientId: deviceId,
@@ -753,13 +801,6 @@ Page({
       board: ""
     });
     this.appendProvisionLog(`设备状态：${(registerResult && registerResult.status) || "REGISTERED"}`);
-    this.setData({ statusText: "正在认证设备..." });
-    await authenticateRobotDevice({
-      deviceId,
-      clientId: deviceId,
-      firmwareVersion: ""
-    });
-    this.appendProvisionLog("设备认证完成");
     this.setData({ statusText: "正在绑定设备..." });
     await bindRobotDevice({
       openid,
@@ -767,9 +808,21 @@ Page({
       householdId: ""
     });
     this.appendProvisionLog("设备绑定完成");
+    this.setData({ statusText: "正在认证设备..." });
+    const authResult = await authenticateRobotDevice({
+      openid,
+      userId: openid,
+      ownerOpenid: openid,
+      deviceId,
+      clientId: deviceId,
+      firmwareVersion: ""
+    });
+    this.appendProvisionLog("设备认证完成");
     this.setData({ statusText: "正在创建家庭..." });
     const householdResult = await createHousehold({
       openid,
+      userId: openid,
+      ownerOpenid: openid,
       deviceId,
       householdName: "Puppy 家庭"
     });
@@ -778,6 +831,8 @@ Page({
     this.setData({ statusText: "正在初始化 Profile..." });
     const initResult = await initializeRobotProfile({
       openid,
+      userId: openid,
+      ownerOpenid: openid,
       deviceId
     });
     this.appendProvisionLog(`Profile 状态：${(initResult && initResult.status) || "INITIALIZED"}`);
@@ -802,19 +857,49 @@ Page({
     } catch (err) {
       // 绑定已完成；档案同步失败时下次进入“我的档案”会再同步。
     }
-    return deviceId;
+    return { deviceId, authResult };
   },
 
-  async writeProvisioningPayload(target, text) {
+  async sendActivationCredentials(target, deviceId, authResult) {
+    const credentials = extractDeviceAuthCredentials(authResult);
+    if (!credentials.accessToken) {
+      throw new Error("设备认证完成，但后端未返回 token，无法让 Puppy 上线。");
+    }
+
+    const payload = {
+      type: "activation_credentials",
+      version: 1,
+      deviceId,
+      accessToken: credentials.accessToken,
+      token: credentials.accessToken,
+      refreshToken: credentials.refreshToken,
+      websocketUrl: credentials.websocketUrl,
+      authUrl: credentials.authUrl,
+      expireSeconds: credentials.expireSeconds,
+      timestamp: Date.now()
+    };
+    this.setData({ statusText: "正在把设备凭证发送给 Puppy..." });
+    this.appendProvisionLog("发送设备凭证");
+    const statusWaiter = this.prepareProvisioningStatusWaiter(target);
+    await this.writeProvisioningPayload(target, JSON.stringify(payload) + "\n", "设备凭证");
+    const result = await this.resolveProvisioningResult(statusWaiter, 8000);
+    const status = getProvisioningStatus(result);
+    if (status && !PROVISIONING_SUCCESS_STATUSES.has(status)) {
+      throw new Error(`Puppy 保存凭证失败：${status}`);
+    }
+    this.appendProvisionLog(status ? `设备凭证已保存：${status}` : "设备凭证已写入 BLE");
+  },
+
+  async writeProvisioningPayload(target, text, label = "Wi‑Fi 数据") {
     const buffer = utf8ToArrayBuffer(text);
     const totalChunks = Math.ceil(buffer.byteLength / BLE_WRITE_CHUNK_SIZE);
-    this.appendProvisionLog(`准备写入 Wi‑Fi 数据，共 ${totalChunks} 包，方式 ${(target.writeTypes || [target.writeType]).join("/")}`);
+    this.appendProvisionLog(`准备写入 ${label}，共 ${totalChunks} 包，方式 ${(target.writeTypes || [target.writeType]).join("/")}`);
     for (let offset = 0; offset < buffer.byteLength; offset += BLE_WRITE_CHUNK_SIZE) {
       const chunk = sliceArrayBuffer(buffer, offset, Math.min(offset + BLE_WRITE_CHUNK_SIZE, buffer.byteLength));
       const chunkIndex = Math.floor(offset / BLE_WRITE_CHUNK_SIZE) + 1;
-      this.setData({ statusText: `正在发送 Wi‑Fi 配置信息... ${chunkIndex}/${totalChunks}` });
+      this.setData({ statusText: `正在发送 ${label}... ${chunkIndex}/${totalChunks}` });
       if (chunkIndex === 1 || chunkIndex === totalChunks) {
-        this.appendProvisionLog(`写入 Wi‑Fi 数据 ${chunkIndex}/${totalChunks}`);
+        this.appendProvisionLog(`写入 ${label} ${chunkIndex}/${totalChunks}`);
       }
       await this.writeBleChunkWithFallback(target, chunk, chunkIndex);
       await sleep(35);

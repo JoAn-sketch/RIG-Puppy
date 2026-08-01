@@ -3,6 +3,7 @@
     "pages/launch/index",
     "pages/my-profile/index",
     "pages/today-companion/index",
+    "pages/device-onboarding/index",
     "pages/device-pair/index",
     "pages/profile/index"
   ],

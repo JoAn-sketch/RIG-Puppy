@@ -2,6 +2,7 @@ const CHILD_PROFILE_STORAGE_KEY = "puppy_child_profile";
 const WECHAT_OPENID_STORAGE_KEY = "puppy_wechat_openid";
 const WECHAT_ACCOUNT_STORAGE_KEY = "puppy_wechat_account";
 const INITIALIZATION_STATE_STORAGE_KEY = "puppy_initialization_state";
+const STARTUP_STATE_STORAGE_KEY = "puppy_startup_state";
 
 function buildChildProfileStorageKey(openid) {
   const normalizedOpenid = String(openid || "").trim();
@@ -23,9 +24,48 @@ function clearChildProfile() {
   const account = getWechatAccount();
   const openid = account && account.openid ? account.openid : "";
   wx.removeStorageSync(buildChildProfileStorageKey(openid));
-  if (!openid) {
-    wx.removeStorageSync(CHILD_PROFILE_STORAGE_KEY);
+  wx.removeStorageSync(CHILD_PROFILE_STORAGE_KEY);
+}
+
+function clearLocalOnboardingState(openid) {
+  const normalizedOpenid = String(openid || "").trim();
+  if (normalizedOpenid) {
+    wx.removeStorageSync(buildChildProfileStorageKey(normalizedOpenid));
   }
+  wx.removeStorageSync(CHILD_PROFILE_STORAGE_KEY);
+  wx.removeStorageSync(WECHAT_OPENID_STORAGE_KEY);
+  wx.removeStorageSync(WECHAT_ACCOUNT_STORAGE_KEY);
+  wx.removeStorageSync(INITIALIZATION_STATE_STORAGE_KEY);
+  wx.removeStorageSync(STARTUP_STATE_STORAGE_KEY);
+}
+
+function getDefaultStartupState() {
+  return {
+    accessToken: "",
+    refreshToken: "",
+    profileInitialized: false
+  };
+}
+
+function getStartupState() {
+  const state = wx.getStorageSync(STARTUP_STATE_STORAGE_KEY) || {};
+  if (!state || typeof state !== "object") {
+    return getDefaultStartupState();
+  }
+  return {
+    ...getDefaultStartupState(),
+    ...state
+  };
+}
+
+function saveStartupState(state) {
+  const nextState = {
+    ...getStartupState(),
+    ...(state || {}),
+    updatedAt: Date.now()
+  };
+  wx.setStorageSync(STARTUP_STATE_STORAGE_KEY, nextState);
+  return nextState;
 }
 
 function saveInitializationState(state) {
@@ -65,13 +105,6 @@ function getChildProfile() {
   const account = getWechatAccount();
   const openid = account && account.openid ? account.openid : "";
   let profile = wx.getStorageSync(buildChildProfileStorageKey(openid)) || null;
-  if (!profile && openid) {
-    const legacyProfile = wx.getStorageSync(CHILD_PROFILE_STORAGE_KEY) || null;
-    if (legacyProfile && typeof legacyProfile === "object" && legacyProfile.openid === openid) {
-      profile = legacyProfile;
-      wx.setStorageSync(buildChildProfileStorageKey(openid), legacyProfile);
-    }
-  }
   if (!profile || typeof profile !== "object") {
     return null;
   }
@@ -154,6 +187,18 @@ function updateWechatAccountProfile(profile) {
   });
 }
 
+function markProfileInitialized(profile) {
+  const account = getWechatAccount() || {};
+  updateWechatAccountProfile({
+    ...(profile || {}),
+    openid: (profile && profile.openid) || account.openid || "",
+    profileInitialized: true
+  });
+  return saveStartupState({
+    profileInitialized: true
+  });
+}
+
 function getWechatOpenid() {
   return wx.getStorageSync(WECHAT_OPENID_STORAGE_KEY) || "";
 }
@@ -178,12 +223,22 @@ function getWechatAccount() {
 
 function hasBoundWechatAccount() {
   const account = getWechatAccount();
-  return !!(account && account.openid && account.avatarUrl);
+  return !!(account && account.openid);
+}
+
+function isWechatProfileInitialized() {
+  const startupState = getStartupState();
+  if (startupState.profileInitialized === true) {
+    return true;
+  }
+  const account = getWechatAccount();
+  return !!(account && account.openid && account.profileInitialized === true);
 }
 
 module.exports = {
   saveChildProfile,
   clearChildProfile,
+  clearLocalOnboardingState,
   getChildProfile,
   isChildProfileCompleted,
   hasCompletedChildProfile,
@@ -191,6 +246,10 @@ module.exports = {
   getInitializationState,
   clearInitializationState,
   isInitializationCompleted,
+  getStartupState,
+  saveStartupState,
+  markProfileInitialized,
+  isWechatProfileInitialized,
   saveWechatOpenid,
   clearWechatAccount,
   updateWechatAccountProfile,

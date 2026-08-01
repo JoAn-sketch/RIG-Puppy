@@ -26,15 +26,15 @@ App({
         });
         return;
       }
-      wx.switchTab({
-        url: "/pages/device-pair/index"
+      wx.reLaunch({
+        url: "/pages/device-onboarding/index"
       });
       return;
     }
 
     if (!shouldShowMyProfile && currentRoute === "pages/profile/index" && !hasInitializedDevice) {
-      wx.switchTab({
-        url: "/pages/device-pair/index"
+      wx.reLaunch({
+        url: "/pages/device-onboarding/index"
       });
     }
   }

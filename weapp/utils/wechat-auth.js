@@ -4,6 +4,10 @@ const {
   saveWechatOpenid,
   saveChildProfile,
   clearChildProfile,
+  clearLocalOnboardingState,
+  getInitializationState,
+  saveInitializationState,
+  saveStartupState,
   updateWechatAccountProfile
 } = require("./storage");
 
@@ -58,8 +62,27 @@ async function bindWechatAccount(options = {}) {
     throw new Error("后端未返回 openid");
   }
 
+  if (loginData.newAccount) {
+    clearLocalOnboardingState(openid);
+  }
   saveWechatOpenid(openid);
+  saveStartupState({
+    accessToken: loginData.accessToken || loginData.token || "",
+    refreshToken: loginData.refreshToken || ""
+  });
   return openid;
+}
+
+async function initializeWechatProfile(payload) {
+  const openid = payload && payload.openid;
+  return request({
+    url: "/profile/init",
+    method: "POST",
+    data: payload || {},
+    header: buildWechatIdentityHeaders(openid),
+    timeout: 20000,
+    timeoutMessage: "微信资料初始化超时，请稍后重试"
+  });
 }
 
 function normalizeServerProfile(serverProfile, openid) {
@@ -77,6 +100,17 @@ function normalizeServerProfile(serverProfile, openid) {
     deviceBound: !!(serverProfile && serverProfile.bound),
     openid,
     avatarUrl: ""
+  };
+}
+
+function buildWechatIdentityHeaders(openid) {
+  const normalizedOpenid = String(openid || "").trim();
+  if (!normalizedOpenid) {
+    return {};
+  }
+  return {
+    "x-wechat-openid": normalizedOpenid,
+    "x-openid": normalizedOpenid
   };
 }
 
@@ -99,75 +133,106 @@ async function syncWechatProfileFromServer(openid) {
     saveChildProfile(profile);
   } else {
     clearChildProfile();
+    const existingState = getInitializationState() || {};
+    const nextState = {
+      ...existingState,
+      openid: normalizedOpenid,
+      deviceId: profile.deviceId || existingState.deviceId || "",
+      status: existingState.status || (profile.deviceBound ? "BOUND" : ""),
+      updatedAt: Date.now()
+    };
+    if (nextState.deviceId || nextState.status) {
+      saveInitializationState(nextState);
+    }
+    updateWechatAccountProfile({
+      openid: normalizedOpenid,
+      deviceId: nextState.deviceId,
+      deviceBound: profile.deviceBound || !!nextState.deviceId,
+      initializationStatus: nextState.status || ""
+    });
   }
   return profile;
 }
 
 async function registerRobotDevice(payload) {
+  const openid = payload && (payload.openid || payload.userId || payload.ownerOpenid);
   return request({
     url: "/robot-initialization/device/register",
     method: "POST",
     data: payload || {},
+    header: buildWechatIdentityHeaders(openid),
     timeout: 20000,
     timeoutMessage: "设备注册超时，请稍后重试"
   });
 }
 
 async function authenticateRobotDevice(payload) {
+  const openid = payload && (payload.openid || payload.userId || payload.ownerOpenid);
   return request({
     url: "/robot-initialization/device/auth",
     method: "POST",
     data: payload || {},
+    header: buildWechatIdentityHeaders(openid),
     timeout: 20000,
     timeoutMessage: "设备认证超时，请稍后重试"
   });
 }
 
 async function bindRobotDevice(payload) {
+  const openid = payload && (payload.openid || payload.userId || payload.ownerOpenid);
   return request({
     url: "/robot-initialization/device/bind",
     method: "POST",
     data: payload || {},
+    header: buildWechatIdentityHeaders(openid),
     timeout: 20000,
     timeoutMessage: "设备绑定超时，请稍后重试"
   });
 }
 
 async function createHousehold(payload) {
+  const openid = payload && (payload.openid || payload.userId || payload.ownerOpenid);
   return request({
     url: "/robot-initialization/household/create",
     method: "POST",
     data: payload || {},
+    header: buildWechatIdentityHeaders(openid),
     timeout: 20000,
     timeoutMessage: "创建家庭超时，请稍后重试"
   });
 }
 
 async function initializeRobotProfile(payload) {
+  const openid = payload && (payload.openid || payload.userId || payload.ownerOpenid);
   return request({
     url: "/robot-initialization/profile/initialize",
     method: "POST",
     data: payload || {},
+    header: buildWechatIdentityHeaders(openid),
     timeout: 20000,
     timeoutMessage: "初始化 Profile 超时，请稍后重试"
   });
 }
 
 async function applyInitialRobotConfiguration(payload) {
+  const openid = payload && (payload.openid || payload.userId || payload.ownerOpenid);
   return request({
     url: "/robot-initialization/profile/apply",
     method: "POST",
     data: payload || {},
+    header: buildWechatIdentityHeaders(openid),
     timeout: 20000,
     timeoutMessage: "保存初始化配置超时，请稍后重试"
   });
 }
 
 async function notifyRobotSync(payload) {
+  const openid = payload && (payload.openid || payload.userId || payload.ownerOpenid);
   return request({
     url: "/robot-initialization/robot/sync-notify",
     method: "POST",
     data: payload || {},
+    header: buildWechatIdentityHeaders(openid),
     timeout: 20000,
     timeoutMessage: "通知机器人同步超时，请稍后重试"
   });
@@ -215,6 +280,7 @@ function maskOpenid(openid) {
 
 module.exports = {
   bindWechatAccount,
+  initializeWechatProfile,
   syncWechatProfileFromServer,
   saveWechatAvatar,
   maskOpenid,

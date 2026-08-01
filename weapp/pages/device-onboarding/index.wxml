@@ -1,0 +1,29 @@
+<view class="page">
+  <view class="blob blob-one"></view>
+  <view class="blob blob-two"></view>
+
+  <view class="card">
+    <view class="eyebrow">NEXT STEP</view>
+    <view class="title">先绑定一只 Puppy</view>
+    <view class="subtitle">
+      账号已经准备好。接下来把 Puppy 和这个微信账号绑定，之后它才能记住你的档案和陪伴记录。
+    </view>
+
+    <view class="steps">
+      <view class="step">
+        <view class="step-dot">1</view>
+        <view class="step-text">让 Puppy 进入配网模式</view>
+      </view>
+      <view class="step">
+        <view class="step-dot">2</view>
+        <view class="step-text">用蓝牙发送家里的 2.4GHz Wi-Fi</view>
+      </view>
+      <view class="step">
+        <view class="step-dot">3</view>
+        <view class="step-text">完成绑定后再填写儿童档案</view>
+      </view>
+    </view>
+
+    <button class="primary-btn" bindtap="onBindDeviceTap">绑定设备</button>
+  </view>
+</view>

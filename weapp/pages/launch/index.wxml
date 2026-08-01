@@ -21,16 +21,33 @@
 
     <view class="title">欢迎来到 Puppy</view>
     <view class="subtitle">
-      一键登录后，Puppy 会记住你的专属档案、兴趣和陪伴记忆。
+      先确认微信身份，再继续进入今天的 Puppy 体验。
     </view>
 
     <button
+      wx:if="{{!loggingIn && !needsAvatar}}"
       class="login-btn"
       bindtap="onOneTapLogin"
-      loading="{{loggingIn}}"
-      disabled="{{loggingIn || savingAvatar}}"
     >
-      {{loggingIn ? "登录中..." : "一键登录"}}
+      一键登录
+    </button>
+
+    <button
+      wx:elif="{{!loggingIn && needsAvatar}}"
+      class="login-btn"
+      open-type="chooseAvatar"
+      bindchooseavatar="onChooseAvatar"
+    >
+      使用微信头像
+    </button>
+
+    <button
+      wx:else
+      class="login-btn"
+      loading="{{true}}"
+      disabled="{{true}}"
+    >
+      登录中...
     </button>
 
     <view class="error-text" wx:if="{{errorText}}">
@@ -38,62 +55,4 @@
     </view>
   </view>
 
-  <view
-    wx:if="{{showAvatarSheet}}"
-    class="sheet-mask"
-    bindtap="onCloseAvatarSheet"
-  >
-    <view class="avatar-sheet" catchtap="noop">
-      <view class="sheet-handle"></view>
-      <view class="sheet-title">选择头像</view>
-      <view class="sheet-subtitle">首次登录需要先设置一个头像，之后会自动使用已绑定微信号登录。</view>
-
-      <view class="sheet-option-list">
-        <button
-          class="sheet-option sheet-option-primary"
-          open-type="chooseAvatar"
-          bindchooseavatar="onChooseAvatar"
-          loading="{{savingAvatar}}"
-          disabled="{{savingAvatar}}"
-        >
-          <image
-            wx:if="{{avatarUrl}}"
-            class="sheet-option-avatar"
-            src="{{avatarUrl}}"
-            mode="aspectFill"
-          />
-          <view wx:else class="sheet-option-avatar sheet-option-avatar-placeholder">微信</view>
-          <view class="sheet-option-text">用微信头像</view>
-        </button>
-
-        <button
-          class="sheet-option"
-          bindtap="onPickAlbumAvatar"
-          loading="{{savingAvatar}}"
-          disabled="{{savingAvatar}}"
-        >
-          <view class="sheet-option-icon">相</view>
-          <view class="sheet-option-text">从相册选择</view>
-        </button>
-
-        <button
-          class="sheet-option"
-          bindtap="onTakePhotoAvatar"
-          loading="{{savingAvatar}}"
-          disabled="{{savingAvatar}}"
-        >
-          <view class="sheet-option-icon">拍</view>
-          <view class="sheet-option-text">拍照</view>
-        </button>
-      </view>
-
-      <button
-        class="sheet-cancel-btn"
-        disabled="{{savingAvatar}}"
-        bindtap="onCloseAvatarSheet"
-      >
-        稍后再说
-      </button>
-    </view>
-  </view>
 </view>

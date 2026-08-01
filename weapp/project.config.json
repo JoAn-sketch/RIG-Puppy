@@ -1,7 +1,28 @@
 {
   "description": "Puppy child profile mini program MVP",
   "packOptions": {
-    "ignore": [],
+    "ignore": [
+      {
+        "type": "folder",
+        "value": "xiaozhi-server"
+      },
+      {
+        "type": "folder",
+        "value": "xiaozhi-esp32-server-main"
+      },
+      {
+        "type": "folder",
+        "value": "xiaozhi-esp32-server-main.partial.20260608_000628"
+      },
+      {
+        "type": "folder",
+        "value": "node_modules"
+      },
+      {
+        "type": "folder",
+        "value": "target"
+      }
+    ],
     "include": []
   },
   "setting": {

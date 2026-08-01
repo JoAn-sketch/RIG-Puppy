@@ -11,6 +11,7 @@ sync_from_server.py
 
 xiaozhi-esp32-server-main/.git
 xiaozhi-esp32-server-main.partial.*
+weapp_package_overflow_backup_*/
 .git-backups/
 
 kb-admin/data/files/
