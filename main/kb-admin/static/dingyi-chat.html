@@ -1,0 +1,597 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>丁一锅对话模拟 · 噜噜</title>
+<style>
+* { box-sizing: border-box; }
+body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; margin: 0; background: #f3f4f6; color: #111827; }
+header { background: #1f2937; color: #fff; padding: 14px 24px; display:flex; justify-content:space-between; align-items:center; }
+header h1 { margin: 0; font-size: 18px; font-weight: 500; }
+header a { color: #9ca3af; text-decoration: none; font-size: 13px; margin-left: 16px; }
+header a:hover { color: #fff; }
+main { max-width: 1180px; margin: 24px auto; padding: 0 16px; display:grid; grid-template-columns: 320px 1fr; gap: 20px; }
+.card { background: #fff; border-radius: 12px; box-shadow: 0 1px 3px rgba(0,0,0,.08); padding: 18px; }
+h2 { margin: 0 0 14px; font-size: 15px; color: #374151; border-left: 3px solid #10b981; padding-left: 10px; }
+.meta { display:grid; gap: 10px; }
+.meta-item { background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 8px; padding: 10px 12px; }
+.label { font-size: 12px; color: #6b7280; margin-bottom: 4px; }
+.value { font-size: 13px; color: #111827; word-break: break-all; white-space: pre-wrap; }
+.muted { color: #6b7280; font-size: 12px; }
+.chat-shell { display:flex; flex-direction:column; min-height: 72vh; }
+.chat-log { flex:1; overflow:auto; background: linear-gradient(180deg, #eefbf5 0%, #f8fafc 100%); border: 1px solid #dbeafe; border-radius: 14px; padding: 18px; }
+.msg { display:flex; margin-bottom: 12px; }
+.msg.user { justify-content:flex-end; }
+.msg-wrap { max-width: 78%; display:flex; flex-direction:column; gap: 6px; align-items:flex-start; }
+.msg.user .msg-wrap { align-items:flex-end; }
+.bubble { max-width: 78%; border-radius: 14px; padding: 12px 14px; font-size: 14px; line-height: 1.6; white-space: pre-wrap; word-break: break-word; box-shadow: 0 1px 2px rgba(0,0,0,.06); }
+.msg.user .bubble { background: #2563eb; color: #fff; border-bottom-right-radius: 4px; }
+.msg.assistant .bubble { background: #fff; color: #111827; border: 1px solid #d1fae5; border-bottom-left-radius: 4px; }
+.scene-pill { display:inline-flex; gap: 8px; align-items:center; max-width: 100%; padding: 6px 10px; border-radius: 999px; background: #eff6ff; border: 1px solid #bfdbfe; color: #1d4ed8; font-size: 12px; line-height: 1.2; white-space: normal; word-break: break-word; }
+.scene-pill .risk { color: #b45309; }
+.scene-pill .confidence { color: #475569; }
+.state-panel { max-width: 78%; background: #f8fafc; border: 1px solid #dbeafe; border-radius: 12px; padding: 12px 14px; color: #0f172a; font-size: 12px; line-height: 1.6; }
+.state-title { font-weight: 700; color: #0369a1; margin-bottom: 8px; }
+.state-grid { display:grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.state-item { background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; padding: 8px 10px; }
+.state-item .label { display:block; font-size: 11px; color: #64748b; margin-bottom: 2px; }
+.state-item .value { font-size: 12px; color: #0f172a; word-break: break-word; }
+.state-panel.plan { border-color: #c7d2fe; background: #f8faff; }
+.state-panel.plan .state-title { color: #4338ca; }
+.state-panel.rewrite { border-color: #fde68a; background: #fffbeb; }
+.state-panel.rewrite .state-title { color: #b45309; }
+.composer { margin-top: 14px; display:grid; gap: 10px; }
+textarea { width: 100%; min-height: 110px; resize: vertical; border: 1px solid #d1d5db; border-radius: 12px; padding: 12px 14px; font-size: 14px; outline: none; }
+textarea:focus { border-color: #2563eb; box-shadow: 0 0 0 3px rgba(37,99,235,.12); }
+.row { display:flex; gap: 10px; align-items:center; flex-wrap: wrap; }
+button { background: #2563eb; color:#fff; border:0; border-radius: 8px; padding: 10px 16px; font-size: 13px; cursor:pointer; }
+button:hover { background:#1d4ed8; }
+button.secondary { background:#374151; }
+button.secondary:hover { background:#1f2937; }
+button:disabled { opacity:.5; cursor:not-allowed; }
+select { width: 100%; border: 1px solid #d1d5db; border-radius: 8px; padding: 9px 10px; font-size: 13px; background: #fff; color: #111827; outline: none; }
+select:focus { border-color: #2563eb; box-shadow: 0 0 0 3px rgba(37,99,235,.12); }
+.device-picker { display:grid; gap: 8px; margin-bottom: 12px; }
+.device-picker .row { align-items: stretch; }
+.device-picker select { flex: 1 1 220px; min-width: 0; }
+.device-picker button { flex: 0 0 auto; padding: 9px 12px; }
+.device-summary { display:grid; gap: 8px; margin-bottom: 12px; }
+.tag { display:inline-flex; align-items:center; gap:4px; padding:2px 8px; border-radius:999px; font-size:11px; line-height:1.6; background:#e5e7eb; color:#4b5563; }
+.tag.ok { background:#dcfce7; color:#166534; }
+.tag.warn { background:#fef3c7; color:#92400e; }
+.tag.info { background:#dbeafe; color:#1d4ed8; }
+.chip-row { display:flex; gap:6px; flex-wrap:wrap; }
+.chip { display:inline-flex; padding:2px 7px; border-radius:999px; background:#eef2ff; color:#3730a3; font-size:11px; line-height:1.6; }
+.empty { color:#9ca3af; text-align:center; padding:80px 12px; font-size:14px; }
+#toast { position: fixed; bottom: 26px; right: 26px; background: #111827; color: #fff; padding: 10px 16px; border-radius: 8px; font-size: 13px; opacity: 0; transform: translateY(10px); transition: all .25s; pointer-events: none; z-index: 999; max-width: 520px; }
+#toast.show { opacity: 1; transform: translateY(0); }
+#toast.error { background: #dc2626; }
+@media (max-width: 920px) {
+  main { grid-template-columns: 1fr; }
+  .chat-shell { min-height: auto; }
+  .state-grid { grid-template-columns: 1fr; }
+}
+</style>
+</head>
+<body>
+<header>
+  <h1>丁一锅对话模拟</h1>
+  <div>
+    <a href="/">📚 后端</a>
+    <a href="/reminders">⏰ 提醒计划</a>
+    <a href="/monitor">📊 系统监控</a>
+    <a href="/portrait">🧑 画像</a>
+    <a href="/actions">🐕 动作</a>
+    <a href="/llm-logs" style="color:#60a5fa">🔍 LLM日志</a>
+    <a href="/debug">🔧 调试</a>
+    <a href="/settings">⚙️ 设置</a>
+    <a href="/dingyi-models" style="color:#34d399">🤖 模型切换</a>
+    <a href="/dingyi-chat" style="color:#f59e0b">💬 对话模拟</a>
+    <a href="http://122.51.155.114:8002" style="color:#fbbf24">🖥 主控台</a>
+  </div>
+</header>
+
+<main>
+  <div class="card">
+    <h2>当前配置</h2>
+    <div class="device-picker">
+      <div class="label">模拟设备</div>
+      <div class="row">
+        <select id="deviceSelect" onchange="changeDevice(this.value)" disabled>
+          <option value="">加载设备中...</option>
+        </select>
+        <button class="secondary" onclick="loadDevices()">刷新</button>
+      </div>
+    </div>
+    <div id="selectedDeviceSummary" class="device-summary"></div>
+    <div id="meta" class="meta">
+      <div class="meta-item"><div class="label">状态</div><div class="value">加载中...</div></div>
+    </div>
+  </div>
+
+  <div class="card chat-shell">
+    <h2>文字模拟</h2>
+    <div class="muted" style="margin-bottom:12px">这里会把文本直接送进机器人主链路，跳过语音识别，但复用 scene router、dialogue state、intent、memory、tools 与真实回复链。</div>
+    <div id="chatLog" class="chat-log">
+      <div class="empty">输入一句话，模拟和机器狗对话。</div>
+    </div>
+    <div class="composer">
+      <textarea id="inputText" placeholder="例如：今天有点累，你陪我聊聊天"></textarea>
+      <div class="row">
+        <button id="sendBtn" onclick="sendMessage()">发送</button>
+        <button class="secondary" onclick="clearChat()">清空上下文</button>
+        <span class="muted" id="usageText"></span>
+      </div>
+    </div>
+  </div>
+</main>
+
+<div id="toast"></div>
+
+<script>
+let history = [];
+let sending = false;
+let sessionKey = createSessionKey();
+let runtimeDeviceId = '';
+let currentRuntimeMode = '';
+let devices = [];
+let selectedDevice = null;
+let baseConfig = null;
+
+function createSessionKey() {
+  if (window.crypto && typeof window.crypto.randomUUID === 'function') {
+    return window.crypto.randomUUID();
+  }
+  return 'sess-' + Date.now() + '-' + Math.random().toString(16).slice(2);
+}
+
+function esc(s) {
+  return String(s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+function escAttr(s) {
+  return esc(s).replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+}
+
+function toast(msg, isError) {
+  const el = document.getElementById("toast");
+  el.textContent = msg;
+  el.className = (isError ? "error " : "") + "show";
+  clearTimeout(window.__toastTimer);
+  window.__toastTimer = setTimeout(() => { el.className = ""; }, 2600);
+}
+
+function renderMeta(data) {
+  baseConfig = data || baseConfig || {};
+  if (!runtimeDeviceId) {
+    runtimeDeviceId = String((data || {}).runtime_device_id || '').trim();
+  }
+  const meta = document.getElementById("meta");
+  meta.innerHTML = `
+    <div class="meta-item"><div class="label">默认 Agent 配置</div><div class="value">${esc(data.agent_name)}<br><span class="muted">${esc(data.agent_id)}</span></div></div>
+    <div class="meta-item"><div class="label">模型配置</div><div class="value">${esc(data.llm_model_name)}<br><span class="muted">${esc(data.llm_model_id)}</span></div></div>
+    <div class="meta-item"><div class="label">当前模型名</div><div class="value">${esc(data.model_name || "-")}</div></div>
+    <div class="meta-item"><div class="label">Base URL</div><div class="value">${esc(data.base_url || "-")}</div></div>
+    <div class="meta-item"><div class="label">API Key</div><div class="value">${data.has_api_key ? "已配置" : "未配置"}</div></div>
+    <div class="meta-item"><div class="label">运行链路</div><div class="value">${esc(data.runtime_mode || "-")}<br><span class="muted">${esc(data.runtime_ws_base || "-")}</span></div></div>
+    <div class="meta-item"><div class="label">目标设备</div><div class="value">${esc(runtimeDeviceId || "-")}</div></div>
+    <div class="meta-item"><div class="label">System Prompt</div><div class="value">${esc((data.system_prompt || "").slice(0, 400) || "-")}${(data.system_prompt || "").length > 400 ? "\\n..." : ""}</div></div>
+  `;
+}
+
+function normalizeId(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
+function formatTs(ts) {
+  if (!ts) return "-";
+  const d = new Date(Number(ts) * 1000);
+  if (Number.isNaN(d.getTime())) return "-";
+  return d.toLocaleString("zh-CN", { hour12: false });
+}
+
+function interestLabel(key) {
+  const labels = {
+    animals: "小动物",
+    dinosaurs: "恐龙",
+    space: "太空",
+    vehicles: "汽车和交通工具",
+    nature: "大自然",
+    sports: "运动",
+    art_and_crafts: "画画和手工",
+    music_and_dance: "音乐和跳舞",
+    stories_and_picture_books: "故事和绘本",
+    riddles_and_games: "猜谜和小游戏",
+  };
+  return labels[key] || key;
+}
+
+function normalizeRuntimeMemory(memory) {
+  if (!memory || typeof memory !== 'object') return null;
+  return {
+    nickname_preference: String(memory.nickname_preference || '').trim(),
+    age: memory.age ?? null,
+    age_group: String(memory.age_group || '').trim(),
+    robot_name_preference: String(memory.robot_name_preference || '').trim(),
+    interests: Array.isArray(memory.interests) ? memory.interests.filter(Boolean) : [],
+    favorite_dog_types: Array.isArray(memory.favorite_dog_types) ? memory.favorite_dog_types.filter(Boolean) : [],
+    desired_activities: Array.isArray(memory.desired_activities) ? memory.desired_activities.filter(Boolean) : [],
+    parent_goals: Array.isArray(memory.parent_goals) ? memory.parent_goals.filter(Boolean) : [],
+    profile_version: memory.profile_version ?? null,
+    source: 'runtime',
+  };
+}
+
+function deviceLabel(item) {
+  const alias = String(item.alias || '').trim();
+  const robotName = String(item.robot_name || '').trim();
+  const agentName = String(item.agent_name || '').trim();
+  const id = String(item.device_id || item.device_mac || '').trim();
+  return [alias || robotName || id || '未命名设备', agentName || '未绑定 Agent'].join(' / ');
+}
+
+function findSelectedDevice() {
+  const target = normalizeId(runtimeDeviceId);
+  return devices.find((item) => normalizeId(item.device_id) === target || normalizeId(item.device_mac) === target) || null;
+}
+
+function renderDeviceSelect() {
+  const select = document.getElementById('deviceSelect');
+  if (!devices.length) {
+    select.innerHTML = '<option value="">没有可选设备</option>';
+    select.disabled = true;
+    return;
+  }
+  select.disabled = false;
+  select.innerHTML = devices.map((item) => {
+    const value = escAttr(item.device_id || item.device_mac || '');
+    const status = item.source === 'runtime'
+      ? (item.conn_from_mqtt_gateway ? 'MQTT在线' : '在线')
+      : '数据库记录';
+    return `<option value="${value}">${esc(deviceLabel(item))} · ${esc(status)}</option>`;
+  }).join('');
+  select.value = runtimeDeviceId;
+}
+
+function renderSelectedDeviceSummary() {
+  selectedDevice = findSelectedDevice();
+  const el = document.getElementById('selectedDeviceSummary');
+  if (!runtimeDeviceId) {
+    el.innerHTML = '<div class="meta-item"><div class="label">设备画像</div><div class="value">未选择设备</div></div>';
+    return;
+  }
+  if (!selectedDevice) {
+    el.innerHTML = `<div class="meta-item"><div class="label">设备画像</div><div class="value">${esc(runtimeDeviceId)}<br><span class="muted">未在设备列表中找到，仍会按该 device_id 发送到 runtime。</span></div></div>`;
+    return;
+  }
+  const memory = selectedDevice.child_memory || null;
+  const interests = memory && Array.isArray(memory.interests) ? memory.interests : [];
+  const sourceTag = selectedDevice.source === 'runtime'
+    ? '<span class="tag ok">在线</span>'
+    : '<span class="tag">数据库记录</span>';
+  const routeTag = selectedDevice.conn_from_mqtt_gateway
+    ? '<span class="tag warn">MQTT</span>'
+    : (selectedDevice.source === 'runtime' ? '<span class="tag info">WebSocket</span>' : '');
+  el.innerHTML = `
+    <div class="meta-item">
+      <div class="label">选中设备</div>
+      <div class="value">
+        ${sourceTag} ${routeTag}
+        <br>${esc(selectedDevice.alias || selectedDevice.robot_name || selectedDevice.device_id || '-')}
+        <br><span class="muted">ID: ${esc(selectedDevice.device_id || '-')}</span>
+        <br><span class="muted">MAC: ${esc(selectedDevice.device_mac || '-')}</span>
+        <br><span class="muted">最近活跃: ${esc(formatTs(selectedDevice.last_activity_at || selectedDevice.last_seen_at))}</span>
+      </div>
+    </div>
+    <div class="meta-item">
+      <div class="label">设备 Agent</div>
+      <div class="value">${esc(selectedDevice.agent_name || '未绑定')}<br><span class="muted">${esc(selectedDevice.agent_id || '')}</span></div>
+    </div>
+    <div class="meta-item">
+      <div class="label">小程序画像</div>
+      <div class="value">
+        ${memory ? `
+          称呼: ${esc(memory.nickname_preference || '-')}<br>
+          年龄: ${esc(memory.age ?? '-')} · ${esc(memory.age_group || '-')}<br>
+          机器人称呼: ${esc(memory.robot_name_preference || selectedDevice.robot_name || '-')}<br>
+          <div class="chip-row">${interests.length ? interests.map((item) => `<span class="chip">${esc(interestLabel(item))}</span>`).join('') : '<span class="muted">未配置兴趣</span>'}</div>
+        ` : '<span class="muted">未配置或暂未读取到画像</span>'}
+      </div>
+    </div>
+  `;
+}
+
+async function loadDevices() {
+  const select = document.getElementById('deviceSelect');
+  try {
+    select.disabled = true;
+    const res = await fetch('/api/devices/live');
+    const data = await res.json();
+    if (!res.ok || data.error) throw new Error(data.error || ('HTTP ' + res.status));
+    devices = Array.isArray(data.devices) ? data.devices : [];
+    const savedDeviceId = String(localStorage.getItem('dingyi-chat-device-id') || '').trim();
+    const defaultDeviceId = runtimeDeviceId || String((baseConfig || {}).runtime_device_id || '').trim();
+    const candidate = [savedDeviceId, defaultDeviceId, devices[0] && devices[0].device_id]
+      .find((id) => id && devices.some((item) => normalizeId(item.device_id) === normalizeId(id) || normalizeId(item.device_mac) === normalizeId(id)));
+    runtimeDeviceId = candidate || defaultDeviceId || '';
+    selectedDevice = findSelectedDevice();
+    renderDeviceSelect();
+    renderSelectedDeviceSummary();
+    if (baseConfig) renderMeta(baseConfig);
+  } catch (e) {
+    select.innerHTML = `<option value="${escAttr(runtimeDeviceId || '')}">设备加载失败</option>`;
+    select.disabled = true;
+    renderSelectedDeviceSummary();
+    toast('设备列表加载失败: ' + e, true);
+  }
+}
+
+async function changeDevice(nextDeviceId) {
+  const next = String(nextDeviceId || '').trim();
+  if (!next || next === runtimeDeviceId) return;
+  const oldSessionKey = sessionKey;
+  const oldDeviceId = runtimeDeviceId;
+  runtimeDeviceId = next;
+  localStorage.setItem('dingyi-chat-device-id', runtimeDeviceId);
+  sessionKey = createSessionKey();
+  history = [];
+  currentRuntimeMode = '';
+  document.getElementById('usageText').textContent = '';
+  selectedDevice = findSelectedDevice();
+  renderSelectedDeviceSummary();
+  if (baseConfig) renderMeta(baseConfig);
+  renderChat();
+  try {
+    await fetch('/api/dingyi-chat/reset', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ session_key: oldSessionKey, device_id: oldDeviceId })
+    });
+  } catch (e) {
+    console.warn('reset previous device session failed', e);
+  }
+  toast('已切换到设备: ' + runtimeDeviceId, false);
+}
+
+function renderChat() {
+  const log = document.getElementById("chatLog");
+  if (!history.length) {
+    log.innerHTML = '<div class="empty">输入一句话，模拟和机器狗对话。</div>';
+    return;
+  }
+  const sceneHtml = (scene) => {
+    if (!scene || !scene.primary_scene) return '';
+    const confidence = typeof scene.confidence === 'number' ? scene.confidence.toFixed(2) : '-';
+    return `
+      <div class="scene-pill">
+        <span>${esc(scene.primary_scene)} / ${esc(scene.subscene || '-')}</span>
+        <span class="risk">risk: ${esc(scene.risk_level || '-')}</span>
+        <span class="confidence">conf: ${esc(confidence)}</span>
+      </div>
+    `;
+  };
+  const dialogueStateHtml = (dialogueState) => {
+    if (!dialogueState || !dialogueState.control) return '';
+    const control = dialogueState.control || {};
+    const debug = dialogueState.debug || {};
+    const state = dialogueState.state || {};
+    const sceneState = state.scene_state || {};
+    const phaseState = state.phase_state || {};
+    const turnState = state.turn_state || {};
+    return `
+      <div class="state-panel">
+        <div class="state-title">Dialogue State</div>
+        <div class="state-grid">
+          <div class="state-item"><span class="label">Phase</span><div class="value">${esc(control.current_phase || '-')}</div></div>
+          <div class="state-item"><span class="label">Next Action</span><div class="value">${esc(control.next_action || '-')}</div></div>
+          <div class="state-item"><span class="label">Reply Style</span><div class="value">${esc(control.reply_style || '-')}</div></div>
+          <div class="state-item"><span class="label">Rule</span><div class="value">${esc(debug.matched_rule || '-')}</div></div>
+          <div class="state-item"><span class="label">Transition</span><div class="value">${esc(debug.transition_reason || '-')}</div></div>
+          <div class="state-item"><span class="label">Close Scene</span><div class="value">${esc(String(control.should_close_scene ?? false))}</div></div>
+          <div class="state-item"><span class="label">Scene Turns</span><div class="value">${esc(sceneState.scene_turn_count ?? '-')}</div></div>
+          <div class="state-item"><span class="label">Phase Turns</span><div class="value">${esc(phaseState.phase_turn_count ?? '-')}</div></div>
+          <div class="state-item"><span class="label">Followups</span><div class="value">${esc(turnState.followup_count ?? '-')}</div></div>
+          <div class="state-item"><span class="label">Ask Followup</span><div class="value">${esc(String(control.should_ask_followup ?? false))}</div></div>
+        </div>
+      </div>
+    `;
+  };
+  const conversationOpennessHtml = (conversationOpenness) => {
+    if (!conversationOpenness) return '';
+    const level = Number(conversationOpenness.level || 3);
+    const greetingMode = level >= 4 ? 'immediate' : (level === 3 ? 'deferred' : 'skip');
+    return `
+      <div class="state-panel plan">
+        <div class="state-title">Conversation Openness</div>
+        <div class="state-grid">
+          <div class="state-item"><span class="label">Level</span><div class="value">${esc(level)}</div></div>
+          <div class="state-item"><span class="label">Reason</span><div class="value">${esc(conversationOpenness.reason || '-')}</div></div>
+          <div class="state-item"><span class="label">Daily Greeting</span><div class="value">${esc(greetingMode)}</div></div>
+        </div>
+      </div>
+    `;
+  };
+  const responsePlanHtml = (plan, source) => {
+    if (!plan) return '';
+    return `
+      <div class="state-panel plan">
+        <div class="state-title">Response Plan</div>
+        <div class="state-grid">
+          <div class="state-item"><span class="label">Source</span><div class="value">${esc(source || '-')}</div></div>
+          <div class="state-item"><span class="label">Primary Action</span><div class="value">${esc(plan.primary_action || '-')}</div></div>
+          <div class="state-item"><span class="label">Sentence Budget</span><div class="value">${esc(plan.sentence_budget ?? '-')}</div></div>
+          <div class="state-item"><span class="label">Concept Budget</span><div class="value">${esc(plan.concept_budget ?? '-')}</div></div>
+          <div class="state-item"><span class="label">Ask Followup</span><div class="value">${esc(String(plan.ask_followup ?? false))}</div></div>
+          <div class="state-item"><span class="label">Allow Summary</span><div class="value">${esc(String(plan.allow_summary ?? false))}</div></div>
+          <div class="state-item"><span class="label">Blocks</span><div class="value">${esc((plan.content_blocks || []).join(', ') || '-')}</div></div>
+          <div class="state-item"><span class="label">Style Tags</span><div class="value">${esc((plan.style_tags || []).join(', ') || '-')}</div></div>
+        </div>
+      </div>
+    `;
+  };
+  const responseRewriteHtml = (rewrite) => {
+    if (!rewrite) return '';
+    const flags = rewrite.quality_flags || {};
+    const rewriteActions = Array.isArray(rewrite.rewrite_actions) ? [...rewrite.rewrite_actions] : [];
+    if (rewrite.daily_greeting_action && !rewriteActions.includes(rewrite.daily_greeting_action)) {
+      rewriteActions.unshift(rewrite.daily_greeting_action);
+    }
+    return `
+      <div class="state-panel rewrite">
+        <div class="state-title">Response Rewrite</div>
+        <div class="state-grid">
+          <div class="state-item"><span class="label">Actions</span><div class="value">${esc(rewriteActions.join(', ') || 'none')}</div></div>
+          <div class="state-item"><span class="label">Raw Reply</span><div class="value">${esc(rewrite.raw_reply || '-')}</div></div>
+          <div class="state-item"><span class="label">too_long</span><div class="value">${esc(String(flags.too_long ?? false))}</div></div>
+          <div class="state-item"><span class="label">has_summary</span><div class="value">${esc(String(flags.has_summary ?? false))}</div></div>
+          <div class="state-item"><span class="label">has_followup</span><div class="value">${esc(String(flags.has_followup ?? false))}</div></div>
+          <div class="state-item"><span class="label">multi_concept</span><div class="value">${esc(String(flags.multi_concept ?? false))}</div></div>
+        </div>
+      </div>
+    `;
+  };
+  const dailyGreetingHtml = (dailyGreeting) => {
+    if (!dailyGreeting) return '';
+    return `
+      <div class="state-panel plan">
+        <div class="state-title">Daily Greeting</div>
+        <div class="state-grid">
+          <div class="state-item"><span class="label">Action</span><div class="value">${esc(dailyGreeting.action || '-')}</div></div>
+          <div class="state-item"><span class="label">Greeting Type</span><div class="value">${esc(dailyGreeting.greeting_type || '-')}</div></div>
+          <div class="state-item"><span class="label">Source ID</span><div class="value">${esc(dailyGreeting.source_id || '-')}</div></div>
+          <div class="state-item"><span class="label">Text</span><div class="value">${esc(dailyGreeting.text || '-')}</div></div>
+        </div>
+      </div>
+    `;
+  };
+  log.innerHTML = history.map(item => `
+    <div class="msg ${item.role}">
+      <div class="msg-wrap">
+        ${item.role === 'user' ? sceneHtml(item.scene) : ''}
+        ${item.role === 'user' ? conversationOpennessHtml(item.conversation_openness) : ''}
+        ${item.role === 'user' ? dialogueStateHtml(item.dialogue_state) : ''}
+        ${item.role === 'user' ? responsePlanHtml(item.response_plan, item.debug_source) : ''}
+        ${item.role === 'assistant' ? dailyGreetingHtml(item.daily_greeting) : ''}
+        ${item.role === 'assistant' ? responseRewriteHtml(item.response_rewrite) : ''}
+        <div class="bubble">${esc(item.content)}</div>
+      </div>
+    </div>
+  `).join("");
+  log.scrollTop = log.scrollHeight;
+}
+
+async function loadConfig() {
+  try {
+    const res = await fetch('/api/dingyi-chat/config');
+    const data = await res.json();
+    if (!res.ok || data.error) throw new Error(data.error || ('HTTP ' + res.status));
+    renderMeta(data);
+  } catch (e) {
+    document.getElementById('meta').innerHTML = `<div class="meta-item"><div class="label">错误</div><div class="value">${esc(String(e))}</div></div>`;
+    toast('加载配置失败: ' + e, true);
+  }
+}
+
+async function clearChat() {
+  const oldSessionKey = sessionKey;
+  sessionKey = createSessionKey();
+  history = [];
+  document.getElementById('usageText').textContent = '';
+  renderChat();
+  try {
+    await fetch('/api/dingyi-chat/reset', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ session_key: oldSessionKey, device_id: runtimeDeviceId })
+    });
+  } catch (e) {
+    console.warn('reset session failed', e);
+  }
+}
+
+async function sendMessage() {
+  if (sending) return;
+  if (!runtimeDeviceId) {
+    toast('请先选择模拟设备', true);
+    return;
+  }
+  const input = document.getElementById('inputText');
+  const text = input.value.trim();
+  if (!text) return;
+  sending = true;
+  document.getElementById('sendBtn').disabled = true;
+
+  history.push({ role: 'user', content: text });
+  renderChat();
+  input.value = '';
+
+  try {
+    const res = await fetch('/api/dingyi-chat/send', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text, history: history.slice(0, -1), session_key: sessionKey, device_id: runtimeDeviceId })
+    });
+    const data = await res.json();
+    if (!res.ok || data.error) throw new Error(data.error || ('HTTP ' + res.status));
+    history[history.length - 1].scene = data.scene || null;
+    history[history.length - 1].dialogue_state = data.dialogue_state || null;
+    history[history.length - 1].response_plan = data.response_plan || null;
+    history[history.length - 1].conversation_openness = data.conversation_openness || null;
+    history[history.length - 1].debug_source = data.debug_source || null;
+    currentRuntimeMode = String(data.runtime_mode || '').trim();
+    if (data.long_term_memory) {
+      selectedDevice = findSelectedDevice();
+      if (selectedDevice) {
+        selectedDevice.child_memory = normalizeRuntimeMemory(data.long_term_memory);
+        renderSelectedDeviceSummary();
+      }
+    }
+    history.push({
+      role: 'assistant',
+      content: data.reply || '(空回复)',
+      daily_greeting: data.daily_greeting || null,
+      response_rewrite: data.response_rewrite
+        ? {
+            ...data.response_rewrite,
+            daily_greeting_action: data.daily_greeting?.action || null,
+          }
+        : (data.daily_greeting
+            ? {
+                quality_flags: {},
+                raw_reply: '',
+                rewrite_actions: [],
+                rewritten_reply: data.reply || '(空回复)',
+                daily_greeting_action: data.daily_greeting.action || null,
+              }
+            : null)
+    });
+    document.getElementById('usageText').textContent =
+      `设备: ${data.runtime_device_id || runtimeDeviceId || '-'} · 链路: ${data.model || '-'} · mode: ${currentRuntimeMode || '-'} · debug: ${data.debug_source || '-'}${data.usage && data.usage.total_tokens ? ' · total_tokens: ' + data.usage.total_tokens : ''}`;
+    renderChat();
+    toast(
+      currentRuntimeMode === 'live'
+        ? '当前使用机器人在线 live runtime'
+        : '机器人离线，已降级到 text-only runtime',
+      false
+    );
+  } catch (e) {
+    history.push({ role: 'assistant', content: '请求失败：' + String(e) });
+    renderChat();
+    toast('发送失败: ' + e, true);
+  } finally {
+    sending = false;
+    document.getElementById('sendBtn').disabled = false;
+  }
+}
+
+document.getElementById('inputText').addEventListener('keydown', (e) => {
+  if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') sendMessage();
+});
+
+loadConfig().then(loadDevices);
+renderChat();
+</script>
+<script src="/shared-nav.js"></script>
+</body>
+</html>

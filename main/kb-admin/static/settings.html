@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>系统设置 - kb-admin</title>
+<style>
+* { box-sizing: border-box; }
+body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; margin: 0; background: #f5f6f8; color: #222; }
+header { background: #1f2937; color: #fff; padding: 14px 24px; display:flex; justify-content:space-between; align-items:center; }
+header h1 { margin: 0; font-size: 18px; font-weight: 500; }
+header a { color: #9ca3af; text-decoration: none; font-size: 13px; margin-left: 16px; }
+header a:hover { color: #fff; }
+main { max-width: 1200px; margin: 24px auto; padding: 0 16px; }
+.card { background: #fff; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,.08); padding: 20px; margin-bottom: 20px; }
+h2 { margin: 0 0 14px; font-size: 15px; color: #374151; border-left: 3px solid #3b82f6; padding-left: 10px; }
+button { background: #3b82f6; color: #fff; border: 0; padding: 7px 14px; border-radius: 5px; cursor: pointer; font-size: 13px; }
+button:hover { background: #2563eb; }
+button:disabled { background: #93c5fd; cursor: not-allowed; }
+.muted { color: #9ca3af; font-size: 12px; }
+.tag { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; }
+.tag.on { background: #dcfce7; color: #166534; }
+.tag.off { background: #fee2e2; color: #991b1b; }
+.toggle-switch { position: relative; display: inline-block; width: 44px; height: 24px; cursor: pointer; }
+.toggle-switch input { opacity: 0; width: 0; height: 0; }
+.toggle-switch .slider { position: absolute; inset: 0; background: #d1d5db; border-radius: 12px; transition: .2s; }
+.toggle-switch .slider:before { content: ""; position: absolute; height: 18px; width: 18px; left: 3px; bottom: 3px; background: #fff; border-radius: 50%; transition: .2s; }
+.toggle-switch input:checked + .slider { background: #10b981; }
+.toggle-switch input:checked + .slider:before { transform: translateX(20px); }
+.toggle-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+@media (max-width: 640px) { .toggle-grid { grid-template-columns: 1fr; } }
+.toggle-item { display: flex; align-items: center; justify-content: space-between; padding: 12px 14px; background: #f9fafb; border-radius: 6px; border: 1px solid #e5e7eb; }
+.toggle-item-label { flex: 1; margin-right: 12px; }
+.toggle-item-label .label-text { font-size: 13px; font-weight: 500; color: #374151; }
+.toggle-item-label .label-desc { font-size: 11px; color: #9ca3af; margin-top: 2px; }
+.param-list { display: flex; flex-direction: column; gap: 16px; }
+.param-item { padding: 14px 16px; background: #f9fafb; border-radius: 6px; border: 1px solid #e5e7eb; }
+.param-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+.param-label { font-size: 13px; font-weight: 500; color: #374151; }
+.param-value-display { font-size: 13px; font-weight: 600; color: #3b82f6; min-width: 60px; text-align: right; }
+.param-desc { font-size: 11px; color: #9ca3af; margin-bottom: 8px; }
+.param-row { display: flex; align-items: center; gap: 10px; }
+input[type=range] { flex: 1; accent-color: #3b82f6; cursor: pointer; }
+input[type=number] { width: 80px; padding: 4px 8px; border: 1px solid #d1d5db; border-radius: 4px; font-size: 13px; text-align: center; }
+.param-range-labels { display: flex; justify-content: space-between; font-size: 10px; color: #9ca3af; margin-top: 4px; }
+.save-row { display: flex; align-items: center; gap: 12px; margin-top: 16px; }
+#toast { position: fixed; bottom: 28px; right: 28px; background: #10b981; color: #fff; padding: 10px 20px; border-radius: 8px; font-size: 13px; font-weight: 500; box-shadow: 0 4px 12px rgba(0,0,0,.15); opacity: 0; transform: translateY(10px); transition: opacity .25s, transform .25s; pointer-events: none; z-index: 9999; }
+#toast.show { opacity: 1; transform: translateY(0); }
+#toast.error { background: #ef4444; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>⚙️ 系统设置</h1>
+  <div>
+    <a href="/">📚 后端</a>
+    <a href="/reminders">⏰ 提醒计划</a>
+    <a href="/monitor">📊 系统监控</a>
+    <a href="/portrait">🧑 画像</a>
+    <a href="/actions">🐕 动作</a>
+    <a href="/llm-logs" style="color:#60a5fa">🔍 LLM日志</a>
+    <a href="/debug">🔧 调试</a>
+    <a href="/settings">⚙️ 设置</a>
+    <a href="/dingyi-models" style="color:#34d399">🤖 模型切换</a>
+    <a href="/dingyi-chat" style="color:#f59e0b">💬 对话模拟</a>
+    <a href="http://122.51.155.114:8002" style="color:#fbbf24">🖥 主控台</a>
+  </div>
+</header>
+
+<main>
+
+  <div class="card">
+    <h2>功能开关</h2>
+    <div class="toggle-grid" id="toggle-grid">
+      <div class="muted">加载中...</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>参数调节</h2>
+    <div class="param-list" id="param-list">
+      <div class="muted">加载中...</div>
+    </div>
+    <div class="save-row">
+      <button onclick="saveParams()">保存参数</button>
+      <span class="muted">保存后将同步应用到运行配置</span>
+    </div>
+  </div>
+
+</main>
+
+<div id="toast"></div>
+
+<script>
+var TOGGLE_KEYS = [
+  { key: "strategy_enabled",       label: "每日陪伴策略", desc: "启用每日陪伴策略注入 prompt" },
+  { key: "strategy_auto_generate", label: "自动生成策略", desc: "每日自动生成策略 (cron)" },
+  { key: "reminder_enabled",       label: "提醒推送",     desc: "启用提醒推送" },
+  { key: "end_prompt_enabled",     label: "自动道别",     desc: "启用自动道别（无语音超时后）" },
+];
+
+var PARAM_KEYS = [
+  {
+    key: "asr_max_sentence_silence",
+    label: "ASR 断句静音阈値",
+    desc: "单位：毫秒。控制 ASR 判断句子结束的静音时长",
+    min: 200, max: 6000, step: 100, unit: "ms",
+    applyConfig: true
+  },
+  {
+    key: "close_connection_timeout",
+    label: "无语音断开超时",
+    desc: "单位：秒。无语音输入后自动断开连接的等待时间",
+    min: 30, max: 600, step: 10, unit: "s",
+    applyConfig: true
+  }
+];
+
+var configMap = {};
+var toastTimer = null;
+
+function showToast(msg, isError) {
+  var t = document.getElementById("toast");
+  t.textContent = (isError ? "✗ " : "✓ ") + msg;
+  t.className = "show" + (isError ? " error" : "");
+  if (toastTimer) clearTimeout(toastTimer);
+  toastTimer = setTimeout(function() { t.className = ""; }, 2500);
+}
+
+function loadSettings() {
+  fetch("/api/settings")
+    .then(function(res) {
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      return res.json();
+    })
+    .then(function(rows) {
+      rows.forEach(function(r) { configMap[r.config_key] = r.config_value; });
+      renderToggles();
+      renderParams();
+    })
+    .catch(function(e) { showToast("加载失败: " + e.message, true); });
+}
+
+function renderToggles() {
+  var grid = document.getElementById("toggle-grid");
+  grid.innerHTML = "";
+  TOGGLE_KEYS.forEach(function(cfg) {
+    var val = configMap[cfg.key];
+    var isOn = (val === "1" || val === "true" || val === "on");
+    var item = document.createElement("div");
+    item.className = "toggle-item";
+    item.innerHTML =
+      '<div class="toggle-item-label">' +
+        '<div class="label-text">' + cfg.label + '</div>' +
+        '<div class="label-desc">' + cfg.desc + '</div>' +
+      '</div>' +
+      '<label class="toggle-switch">' +
+        '<input type="checkbox" id="toggle-' + cfg.key + '" ' + (isOn ? "checked" : "") + ' onchange="onToggleChange(this, &quot;' + cfg.key + '&quot;)">' +
+        '<span class="slider"></span>' +
+      '</label>';
+    grid.appendChild(item);
+  });
+}
+
+function onToggleChange(el, key) {
+  var newVal = el.checked ? "1" : "0";
+  fetch("/api/settings/" + key, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ value: newVal })
+  })
+  .then(function(res) {
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    configMap[key] = newVal;
+    showToast("已保存");
+  })
+  .catch(function(e) {
+    el.checked = !el.checked;
+    showToast("保存失败: " + e.message, true);
+  });
+}
+
+function renderParams() {
+  var list = document.getElementById("param-list");
+  list.innerHTML = "";
+  PARAM_KEYS.forEach(function(cfg) {
+    var raw = configMap[cfg.key];
+    var val = (raw !== undefined) ? Number(raw) : cfg.min;
+    var item = document.createElement("div");
+    item.className = "param-item";
+    item.innerHTML =
+      '<div class="param-header">' +
+        '<span class="param-label">' + cfg.label + '</span>' +
+        '<span class="param-value-display" id="disp-' + cfg.key + '">' + val + ' ' + cfg.unit + '</span>' +
+      '</div>' +
+      '<div class="param-desc">' + cfg.desc + '</div>' +
+      '<div class="param-row">' +
+        '<input type="range" id="range-' + cfg.key + '" min="' + cfg.min + '" max="' + cfg.max + '" step="' + cfg.step + '" value="' + val + '" oninput="syncParam(this, &quot;' + cfg.key + '&quot;, &quot;' + cfg.unit + '&quot;)">' +
+        '<input type="number" id="num-' + cfg.key + '" min="' + cfg.min + '" max="' + cfg.max + '" step="' + cfg.step + '" value="' + val + '" oninput="syncParamFromNum(this, &quot;' + cfg.key + '&quot;, &quot;' + cfg.unit + '&quot;)">' +
+      '</div>' +
+      '<div class="param-range-labels"><span>' + cfg.min + ' ' + cfg.unit + '</span><span>' + cfg.max + ' ' + cfg.unit + '</span></div>';
+    list.appendChild(item);
+  });
+}
+
+function syncParam(el, key, unit) {
+  document.getElementById("num-" + key).value = el.value;
+  document.getElementById("disp-" + key).textContent = el.value + " " + unit;
+}
+
+function syncParamFromNum(el, key, unit) {
+  var cfg = PARAM_KEYS.filter(function(p) { return p.key === key; })[0];
+  var n = Number(el.value);
+  if (isNaN(n)) return;
+  n = Math.max(cfg.min, Math.min(cfg.max, n));
+  document.getElementById("range-" + key).value = n;
+  document.getElementById("disp-" + key).textContent = n + " " + unit;
+}
+
+function saveParams() {
+  var btn = document.querySelector(".save-row button");
+  btn.disabled = true;
+  btn.textContent = "保存中...";
+
+  var needApply = false;
+  var promises = [];
+
+  PARAM_KEYS.forEach(function(cfg) {
+    var val = String(document.getElementById("range-" + cfg.key).value);
+    var p = fetch("/api/settings/" + cfg.key, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ value: val })
+    }).then(function(r) {
+      if (!r.ok) throw new Error(cfg.key + " HTTP " + r.status);
+      configMap[cfg.key] = val;
+      if (cfg.applyConfig) needApply = true;
+    });
+    promises.push(p);
+  });
+
+  Promise.all(promises)
+    .then(function() {
+      if (!needApply) return Promise.resolve();
+      return fetch("/api/settings/apply-config", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({})
+      }).then(function(r) {
+        if (!r.ok) return r.text().then(function(t) { throw new Error("apply-config: " + t); });
+      });
+    })
+    .then(function() {
+      showToast("已保存并应用");
+    })
+    .catch(function(e) {
+      showToast("保存失败: " + e.message, true);
+    })
+    .finally(function() {
+      btn.disabled = false;
+      btn.textContent = "保存参数";
+    });
+}
+
+loadSettings();
+</script>
+<script src="/shared-nav.js"></script>
+</body>
+</html>
