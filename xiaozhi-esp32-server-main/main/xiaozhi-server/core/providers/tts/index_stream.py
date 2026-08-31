@@ -30,7 +30,7 @@ class TTSProvider(TTSProviderBase):
 
         # 创建Opus编码器 需注意接口返回的采样率为24000
         self.opus_encoder = opus_encoder_utils.OpusEncoderUtils(
-            sample_rate=24000, channels=1, frame_size_ms=60
+            opus_sample_rate=24000, channels=1, frame_size_ms=60
         )
 
         # PCM缓冲区

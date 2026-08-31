@@ -86,12 +86,12 @@ class TTSProvider(TTSProviderBase):
         self.pcm_buffer = bytearray()
 
     async def open_audio_channels(self, conn):
-        """初始化音频通道,并根据conn.sample_rate更新配置"""
+        """初始化音频通道,并根据conn.downlink_opus_sample_rate更新配置"""
         # 调用父类方法
         await super().open_audio_channels(conn)
 
-        # 更新audio_setting中的采样率为实际的conn.sample_rate
-        self.audio_setting["sample_rate"] = conn.sample_rate
+        # 更新audio_setting中的采样率为实际的下行Opus采样率
+        self.audio_setting["sample_rate"] = conn.downlink_opus_sample_rate
 
     def tts_text_priority_thread(self):
         """流式文本处理线程"""

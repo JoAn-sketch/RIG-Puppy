@@ -141,7 +141,7 @@ class TTSProviderBase(ABC):
                             file_type=self.audio_file_type,
                             is_opus=True,
                             callback=opus_handler,
-                            sample_rate=self.conn.sample_rate,
+                            sample_rate=self.conn.downlink_opus_sample_rate,
                             opus_encoder=self.opus_encoder,
                         )
                         break
@@ -209,7 +209,7 @@ class TTSProviderBase(ABC):
                             file_type=self.audio_file_type,
                             is_opus=True,
                             callback=lambda data: audio_datas.append(data),
-                            sample_rate=self.conn.sample_rate,
+                            sample_rate=self.conn.downlink_opus_sample_rate,
                         )
                         return audio_datas
                     else:
@@ -265,13 +265,25 @@ class TTSProviderBase(ABC):
         self, audio_file_path, callback: Callable[[Any], Any] = None
     ):
         """音频文件转换为PCM编码"""
-        return audio_to_data_stream(audio_file_path, is_opus=False, callback=callback, sample_rate=self.conn.sample_rate, opus_encoder=None)
+        return audio_to_data_stream(
+            audio_file_path,
+            is_opus=False,
+            callback=callback,
+            sample_rate=self.conn.downlink_opus_sample_rate,
+            opus_encoder=None,
+        )
 
     def audio_to_opus_data_stream(
         self, audio_file_path, callback: Callable[[Any], Any] = None
     ):
         """音频文件转换为Opus编码"""
-        return audio_to_data_stream(audio_file_path, is_opus=True, callback=callback, sample_rate=self.conn.sample_rate, opus_encoder=self.opus_encoder)
+        return audio_to_data_stream(
+            audio_file_path,
+            is_opus=True,
+            callback=callback,
+            sample_rate=self.conn.downlink_opus_sample_rate,
+            opus_encoder=self.opus_encoder,
+        )
 
     def tts_one_sentence(
         self,
@@ -304,10 +316,10 @@ class TTSProviderBase(ABC):
     async def open_audio_channels(self, conn):
         self.conn = conn
 
-        # 根据conn的sample_rate创建编码器，如果子类已经创建则不覆盖（IndexTTS接口返回为24kHZ-待重采样处理）
+        # 根据conn的下行Opus采样率创建编码器，如果子类已经创建则不覆盖（IndexTTS接口返回为24kHZ-待重采样处理）
         if not hasattr(self, 'opus_encoder') or self.opus_encoder is None:
             self.opus_encoder = opus_encoder_utils.OpusEncoderUtils(
-                sample_rate=conn.sample_rate, channels=1, frame_size_ms=60
+                opus_sample_rate=conn.downlink_opus_sample_rate, channels=1, frame_size_ms=60
             )
 
         # tts 消化线程

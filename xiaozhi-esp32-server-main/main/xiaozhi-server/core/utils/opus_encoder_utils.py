@@ -13,20 +13,20 @@ from typing import Optional, Callable, Any
 class OpusEncoderUtils:
     """PCM到Opus的编码器"""
 
-    def __init__(self, sample_rate: int, channels: int, frame_size_ms: int):
+    def __init__(self, opus_sample_rate: int, channels: int, frame_size_ms: int):
         """
         初始化Opus编码器
 
         Args:
-            sample_rate: 采样率 (Hz)
+            opus_sample_rate: Opus采样率 (Hz)
             channels: 通道数 (1=单声道, 2=立体声)
             frame_size_ms: 帧大小 (毫秒)
         """
-        self.sample_rate = sample_rate
+        self.opus_sample_rate = opus_sample_rate
         self.channels = channels
         self.frame_size_ms = frame_size_ms
         # 计算每帧样本数 = 采样率 * 帧大小(毫秒) / 1000
-        self.frame_size = (sample_rate * frame_size_ms) // 1000
+        self.frame_size = (opus_sample_rate * frame_size_ms) // 1000
         # 总帧大小 = 每帧样本数 * 通道数
         self.total_frame_size = self.frame_size * channels
 
@@ -40,7 +40,7 @@ class OpusEncoderUtils:
         try:
             # 创建Opus编码器
             self.encoder = Encoder(
-                sample_rate, channels, constants.APPLICATION_AUDIO  # 音频优化模式
+                opus_sample_rate, channels, constants.APPLICATION_AUDIO  # 音频优化模式
             )
             self.encoder.bitrate = self.bitrate
             self.encoder.complexity = self.complexity

@@ -260,7 +260,7 @@ class TTSProvider(TTSProviderBase):
                         "text_type": "PlainText",
                         "voice": self.voice,
                         "format": self.format,
-                        "sample_rate": self.conn.sample_rate,
+                        "sample_rate": self.conn.downlink_opus_sample_rate,
                         "volume": self.volume,
                         "rate": self.rate,
                         "pitch": self.pitch,
@@ -414,7 +414,7 @@ class TTSProvider(TTSProviderBase):
             audio_file_path,
             is_opus=True,
             callback=callback,
-            sample_rate=self.conn.sample_rate,
+            sample_rate=self.conn.downlink_opus_sample_rate,
             opus_encoder=None,
         )
 
@@ -457,7 +457,7 @@ class TTSProvider(TTSProviderBase):
                                 "text_type": "PlainText",
                                 "voice": self.voice,
                                 "format": self.format,
-                                "sample_rate": self.conn.sample_rate,
+                                "sample_rate": self.conn.downlink_opus_sample_rate,
                                 "volume": self.volume,
                                 "rate": self.rate,
                                 "pitch": self.pitch,

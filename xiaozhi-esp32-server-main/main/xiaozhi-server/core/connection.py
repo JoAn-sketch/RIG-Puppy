@@ -130,7 +130,7 @@ class ConnectionHandler:
         self.max_output_size = 0
         self.chat_history_conf = 0
         self.audio_format = "opus"
-        self.sample_rate = 24000  # 默认采样率，从客户端 hello 消息中动态更新
+        self.downlink_opus_sample_rate = 24000  # 默认下行Opus采样率，从客户端 hello 消息中动态更新
 
         # 客户端状态相关
         self.client_abort = False
@@ -421,8 +421,10 @@ class ConnectionHandler:
             self.welcome_msg["session_id"] = self.session_id
 
             # 从配置中读取采样率
-            self.sample_rate = self.welcome_msg["audio_params"]["sample_rate"]
-            self.logger.bind(tag=TAG).info(f"配置输出音频采样率为: {self.sample_rate}")
+            self.downlink_opus_sample_rate = self.welcome_msg["audio_params"]["sample_rate"]
+            self.logger.bind(tag=TAG).info(
+                f"配置下行Opus音频采样率为: {self.downlink_opus_sample_rate}"
+            )
 
             # 在后台初始化配置和组件（完全不阻塞主循环）
             asyncio.create_task(self._background_initialize())

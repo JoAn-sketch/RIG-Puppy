@@ -518,7 +518,7 @@ class TTSProvider(TTSProviderBase):
             audio_file_path,
             is_opus=True,
             callback=callback,
-            sample_rate=self.conn.sample_rate,
+            sample_rate=self.conn.downlink_opus_sample_rate,
             opus_encoder=None,
         )
 
@@ -547,7 +547,7 @@ class TTSProvider(TTSProviderBase):
                     "rhy": 0,
                     "audio": {
                         "encoding": self.format,
-                        "sample_rate": self.conn.sample_rate,
+                        "sample_rate": self.conn.downlink_opus_sample_rate,
                         "channels": 1,
                         "bit_depth": 16,
                         "frame_size": 0
