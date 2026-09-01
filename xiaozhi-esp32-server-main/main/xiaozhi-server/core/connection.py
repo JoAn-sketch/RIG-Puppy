@@ -1519,6 +1519,34 @@ class ConnectionHandler:
             self._refresh_runtime_prompt()
         self.last_activity_time = time.time() * 1000
 
+    def end_current_conversation_context(self, reason: str = ""):
+        """End only the current short-lived conversation/topic context."""
+        self.reset_audio_states()
+        self.client_abort = False
+        self.client_is_speaking = False
+        self.client_have_voice = False
+        self.client_voice_stop = False
+        self.sentence_id = None
+        self.last_scene_output = None
+        self.last_dialogue_state_result = None
+        self.dialogue_state_runtime = None
+        self.scene_prompt_patch = ""
+        self.short_term_memory_prompt_patch = ""
+        self.dialogue_state_prompt_patch = ""
+        self.response_plan_prompt_patch = ""
+        self.last_response_plan = None
+        self.last_response_rewrite = None
+        self.last_user_text = ""
+        self.dialogue = Dialogue()
+        if hasattr(self.session_state, "mark_idle"):
+            self.session_state.mark_idle(reason or "conversation_context_ended")
+        if self.base_prompt:
+            self._refresh_runtime_prompt()
+        self.last_activity_time = time.time() * 1000
+        self.logger.bind(tag=TAG).info(
+            f"当前 conversation context 已结束，等待下一次新 interaction: {reason or 'idle'}"
+        )
+
     def _refresh_response_plan(self):
         if self.last_scene_output is None or self.last_dialogue_state_result is None:
             self.last_response_plan = None
