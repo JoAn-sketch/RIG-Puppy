@@ -93,6 +93,48 @@ DIRECT_ANSWER_TOOL = {
     },
 }
 
+ROBOT_PROFILE_VOICE_VALUES = {
+    "zf_xiaoxiao",
+    "zm_yunyang",
+    "zf_xiaoyi",
+    "zm_yunjian",
+    "zm_yunxi",
+    "zm_yunxia",
+    "zf_xiaobei",
+    "zf_xiaoni",
+    "mandarin_female",
+    "mandarin_male",
+    "cute_female",
+    "strong_male",
+    "young_male",
+    "boy_male",
+    "liaoning_female",
+    "shaanxi_female",
+    # legacy values for already-saved profiles
+    "zh-CN-XiaoxiaoNeural",
+    "zh-CN-YunyangNeural",
+    "zh-CN-XiaoyiNeural",
+    "zh-CN-YunjianNeural",
+    "zh-CN-YunxiNeural",
+    "zh-CN-YunxiaNeural",
+    "zh-CN-liaoning-XiaobeiNeural",
+    "zh-CN-shaanxi-XiaoniNeural",
+    "zh-HK-HiuGaaiNeural",
+    "zh-HK-HiuMaanNeural",
+    "zh-HK-WanLungNeural",
+    "TTS_EdgeTTS0001",
+    "TTS_EdgeTTS0002",
+    "TTS_EdgeTTS0003",
+    "TTS_EdgeTTS0004",
+    "TTS_EdgeTTS0005",
+    "TTS_EdgeTTS0006",
+    "TTS_EdgeTTS0007",
+    "TTS_EdgeTTS0008",
+    "TTS_EdgeTTS0009",
+    "TTS_EdgeTTS0010",
+    "TTS_EdgeTTS0011",
+}
+
 
 class ConnectionHandler:
     def __init__(
@@ -1249,6 +1291,36 @@ class ConnectionHandler:
             self.long_term_memory
         )
         self._refresh_runtime_prompt()
+
+    def _apply_robot_profile_voice(self, force_log=False):
+        if self.tts is None or not hasattr(self.tts, "voice"):
+            return
+        config_path = os.path.join(os.path.dirname(__file__), "..", "data", "robot_profile.json")
+        try:
+            with open(config_path, "r", encoding="utf-8") as f:
+                payload = json.load(f)
+        except Exception:
+            return
+        if not isinstance(payload, dict):
+            return
+        voice_config = payload.get("voice") or {}
+        if not isinstance(voice_config, dict):
+            return
+        voice = str(voice_config.get("voice") or voice_config.get("voice_id") or "").strip()
+        if voice not in ROBOT_PROFILE_VOICE_VALUES:
+            return
+        applied_voice = voice
+        if hasattr(self.tts, "_normalize_voice"):
+            applied_voice = self.tts._normalize_voice(voice)
+        previous_voice = getattr(self.tts, "voice", None)
+        if previous_voice != applied_voice:
+            self.tts.voice = applied_voice
+        if force_log or previous_voice != applied_voice:
+            self.logger.bind(tag=TAG).info(
+                "robot profile voice applied: "
+                f"{voice_config.get('label') or voice}, voice={voice}, "
+                f"applied_voice={applied_voice}, previous_voice={previous_voice}"
+            )
 
     def _build_robot_profile_prompt_patch(
             self, long_term_memory: RuntimeLongTermMemory | None = None
