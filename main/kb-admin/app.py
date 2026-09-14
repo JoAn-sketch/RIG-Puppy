@@ -5353,11 +5353,10 @@ def api_main_prompt_put():
 
     try:
         saved_paths, configured_paths = _save_main_prompt(prompt)
-        if configured_paths:
-            runtime_reloaded, runtime_reload_error = _reload_runtime_service()
-        else:
-            runtime_reloaded = False
-            runtime_reload_error = "未找到 runtime 配置文件，需手动重启服务"
+        # The template is cached at process scope.  Reload on every successful
+        # save, including edits after prompt_template has already been switched
+        # to the mounted data file.
+        runtime_reloaded, runtime_reload_error = _reload_runtime_service()
         _, active_path, updated_at = _load_main_prompt()
         return jsonify({
             "ok": True,
