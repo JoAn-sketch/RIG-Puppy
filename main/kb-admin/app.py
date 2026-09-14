@@ -5345,8 +5345,8 @@ def api_main_prompt_put():
     if not isinstance(prompt, str):
         return jsonify({"error": "prompt 必须是文本"}), 400
 
-    prompt = prompt.replace("\r\n", "\n").replace("\r", "\n").strip()
-    if not prompt:
+    prompt = prompt.replace("\r\n", "\n").replace("\r", "\n")
+    if not prompt.strip():
         return jsonify({"error": "主 Prompt 不能为空"}), 400
     if len(prompt) > 200000:
         return jsonify({"error": "主 Prompt 不能超过 200000 个字符"}), 400
