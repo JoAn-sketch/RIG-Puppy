@@ -1,0 +1,387 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Robot Profile - kb-admin</title>
+<style>
+* { box-sizing: border-box; }
+body { margin: 0; font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; background: #f5f7fb; color: #172033; }
+header { background: #0f172a; color: #fff; padding: 14px 24px; display: flex; justify-content: space-between; align-items: center; }
+header h1 { margin: 0; font-size: 18px; font-weight: 600; }
+header a { color: #94a3b8; text-decoration: none; font-size: 13px; margin-left: 16px; }
+header a:hover { color: #fff; }
+main { max-width: 1260px; margin: 24px auto; padding: 0 16px 40px; }
+.hero, .card { background: #fff; border-radius: 14px; border: 1px solid #dbe6f4; box-shadow: 0 10px 28px rgba(15, 23, 42, 0.06); }
+.hero { padding: 22px 24px; margin-bottom: 18px; background: linear-gradient(135deg, #fef3c7 0%, #fff7ed 48%, #eff6ff 100%); border-color: #fdba74; }
+.hero h2 { margin: 0 0 8px; font-size: 20px; }
+.hero p { margin: 0; color: #475569; line-height: 1.7; font-size: 13px; }
+.stack { display: grid; gap: 18px; }
+.grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
+.card { padding: 20px; }
+.card h3 { margin: 0 0 8px; font-size: 16px; color: #0f172a; }
+.card p { margin: 0 0 14px; color: #64748b; font-size: 12px; line-height: 1.7; }
+.field-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.field { margin-bottom: 12px; }
+.field label { display: block; margin-bottom: 6px; font-size: 12px; font-weight: 600; color: #334155; }
+.field input, .field textarea, .field select { width: 100%; padding: 9px 10px; border: 1px solid #cbd5e1; border-radius: 10px; font-size: 13px; color: #0f172a; background: #fff; }
+.field textarea { min-height: 96px; resize: vertical; line-height: 1.6; }
+.field input:focus, .field textarea:focus, .field select:focus { outline: none; border-color: #38bdf8; box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.16); }
+.main-prompt-card { border-color: #93c5fd; background: linear-gradient(180deg, #eff6ff 0%, #fff 34%); }
+.main-prompt-card h3 { display: flex; align-items: center; gap: 8px; }
+.main-prompt-card textarea { min-height: 320px; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace; font-size: 12px; line-height: 1.65; white-space: pre-wrap; }
+.prompt-meta { display: flex; flex-wrap: wrap; gap: 8px 18px; margin-top: 8px; color: #64748b; font-size: 12px; line-height: 1.6; }
+.prompt-meta code { color: #334155; word-break: break-all; }
+.actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 18px; }
+button { border: 0; border-radius: 10px; cursor: pointer; padding: 10px 16px; font-size: 13px; font-weight: 700; color: #fff; background: linear-gradient(135deg, #f97316 0%, #ea580c 100%); }
+button:hover { filter: brightness(.97); }
+button:disabled { opacity: .55; cursor: not-allowed; }
+.hint { color: #94a3b8; font-size: 12px; }
+.field-note { margin-top: 6px; color: #64748b; font-size: 12px; line-height: 1.6; }
+#toast { position: fixed; right: 28px; bottom: 28px; background: #10b981; color: #fff; padding: 10px 18px; border-radius: 10px; font-size: 13px; box-shadow: 0 10px 24px rgba(0,0,0,.18); opacity: 0; transform: translateY(12px); transition: opacity .25s, transform .25s; pointer-events: none; z-index: 1000; }
+#toast.show { opacity: 1; transform: translateY(0); }
+#toast.error { background: #ef4444; }
+@media (max-width: 980px) {
+  .grid, .field-grid { grid-template-columns: 1fr; }
+}
+</style>
+</head>
+<body>
+<header>
+  <h1>🦘 Robot Profile</h1>
+  <div>
+    <a href="/">📚 后端</a>
+    <a href="/greeting">🌅 Greeting</a>
+    <a href="/robot-profile">🦘 Robot Profile</a>
+  </div>
+</header>
+
+<main>
+  <section class="card main-prompt-card">
+    <h3>🧭 主 Prompt（全局系统提示词）</h3>
+    <p>这里控制所有 Agent 的共同底线和基础行为，例如“丁一锅面向小朋友交流”。Agent 人设、scene 场景策略、记忆和本轮回复计划会在运行时继续叠加到它后面。支持 Jinja 模板变量，请保留现有的占位符。</p>
+    <div class="field">
+      <label for="main-prompt">主 Prompt 模板</label>
+      <textarea id="main-prompt" spellcheck="false" placeholder="正在加载主 Prompt..."></textarea>
+      <div class="prompt-meta">
+        <span>当前读取：<code id="main-prompt-path">-</code></span>
+        <span>字符数：<code id="main-prompt-length">0</code></span>
+        <span>更新时间：<code id="main-prompt-updated">-</code></span>
+      </div>
+    </div>
+    <div class="actions">
+      <span class="hint">保存后写入管理端和 runtime 挂载目录，并尝试重启 runtime 使新 Prompt 生效。</span>
+      <button id="main-prompt-save-btn" type="button" onclick="saveMainPrompt()">保存主 Prompt</button>
+    </div>
+  </section>
+
+  <section class="hero">
+    <h2>Stable Profile</h2>
+    <p>Stable Profile 定义 Quokka 的长期身份、性格、说话方式和价值观。它会在每次对话开始时注入到系统 prompt，位置早于任何动态记忆和状态。</p>
+  </section>
+
+  <section class="stack">
+    <div class="grid">
+	      <article class="card">
+	        <h3>Identity</h3>
+	        <p>回答 “Who am I?” 的稳定身份信息。</p>
+        <div class="field-grid">
+          <div class="field">
+            <label for="identity-name">name</label>
+            <input id="identity-name" type="text">
+            <div id="identity-name-note" class="field-note"></div>
+          </div>
+          <div class="field">
+            <label for="identity-species">species</label>
+            <input id="identity-species" type="text">
+          </div>
+          <div class="field">
+            <label for="identity-ageDescription">ageDescription</label>
+            <input id="identity-ageDescription" type="text">
+          </div>
+          <div class="field">
+            <label for="identity-home">home</label>
+            <input id="identity-home" type="text">
+          </div>
+        </div>
+        <div class="field">
+          <label for="identity-mission">mission</label>
+          <textarea id="identity-mission"></textarea>
+        </div>
+      </article>
+
+      <article class="card">
+        <h3>Voice</h3>
+        <p>配置机器人对话时使用的 TTS 音色。当前运行时使用 Kokoro，保存后新连接会使用所选原生音色。</p>
+        <div class="field">
+          <label for="voice-select">voice</label>
+          <select id="voice-select"></select>
+          <div id="voice-note" class="field-note"></div>
+        </div>
+      </article>
+
+    </div>
+
+    <div class="grid">
+      <article class="card">
+        <h3>Personality</h3>
+        <p>长期稳定的行为倾向、优点和弱点。</p>
+        <div class="field">
+          <label for="personality-coreTraits">coreTraits</label>
+          <textarea id="personality-coreTraits"></textarea>
+        </div>
+        <div class="field">
+          <label for="personality-strengths">strengths</label>
+          <textarea id="personality-strengths"></textarea>
+        </div>
+        <div class="field">
+          <label for="personality-weaknesses">weaknesses</label>
+          <textarea id="personality-weaknesses"></textarea>
+        </div>
+      </article>
+
+      <article class="card">
+        <h3>Values</h3>
+        <p>没有明显标准答案时，这部分会约束 Quokka 的决策方向。</p>
+        <div class="field">
+          <label for="values-beliefs">beliefs</label>
+          <textarea id="values-beliefs"></textarea>
+        </div>
+        <div class="field">
+          <label for="values-priorities">priorities</label>
+          <textarea id="values-priorities"></textarea>
+        </div>
+      </article>
+    </div>
+
+    <article class="card">
+      <div class="actions">
+        <span class="hint">保存后会同步写到 kb-admin 本地配置和 runtime data，运行时会在每次对话开始前读取。</span>
+        <button id="save-btn" type="button" onclick="saveConfig()">保存 Robot Profile</button>
+      </div>
+    </article>
+  </section>
+</main>
+
+<div id="toast"></div>
+
+<script>
+var toastTimer = null;
+var voiceOptions = [];
+
+function showToast(msg, isError) {
+  var t = document.getElementById("toast");
+  t.textContent = (isError ? "✗ " : "✓ ") + msg;
+  t.className = "show" + (isError ? " error" : "");
+  if (toastTimer) clearTimeout(toastTimer);
+  toastTimer = setTimeout(function () { t.className = ""; }, 2600);
+}
+
+function linesToText(lines) {
+  return Array.isArray(lines) ? lines.join("\n") : "";
+}
+
+function textToLines(text) {
+  return String(text || "")
+    .split("\n")
+    .map(function (line) { return line.trim(); })
+    .filter(function (line) { return line; });
+}
+
+function renderVoiceOptions(options, selectedVoiceId) {
+  voiceOptions = Array.isArray(options) ? options : [];
+  var select = document.getElementById("voice-select");
+  select.innerHTML = "";
+  voiceOptions.forEach(function (option) {
+    var opt = document.createElement("option");
+    opt.value = option.voice_id || "";
+    opt.textContent = option.label || option.voice || option.voice_id || "";
+    select.appendChild(opt);
+  });
+  if (selectedVoiceId) {
+    select.value = selectedVoiceId;
+  }
+  updateVoiceNote();
+}
+
+function selectedVoiceOption() {
+  var voiceId = document.getElementById("voice-select").value;
+  for (var i = 0; i < voiceOptions.length; i += 1) {
+    if (voiceOptions[i].voice_id === voiceId) {
+      return voiceOptions[i];
+    }
+  }
+  return null;
+}
+
+function updateVoiceNote() {
+  var option = selectedVoiceOption();
+  var note = document.getElementById("voice-note");
+  if (!option) {
+    note.textContent = "";
+    return;
+  }
+  note.textContent = (option.description || "") + " / " + (option.voice || "");
+}
+
+function applyMainPrompt(data) {
+  var prompt = String((data && data.prompt) || "");
+  document.getElementById("main-prompt").value = prompt;
+  document.getElementById("main-prompt-path").textContent = (data && data.active_path) || "未找到运行时模板";
+  document.getElementById("main-prompt-length").textContent = String((data && data.length) || prompt.length);
+  document.getElementById("main-prompt-updated").textContent = (data && data.updated_at) || "-";
+}
+
+function loadMainPrompt() {
+  fetch("/api/main-prompt")
+    .then(function (res) {
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      return res.json();
+    })
+    .then(function (data) {
+      applyMainPrompt(data);
+    })
+    .catch(function (err) {
+      showToast("主 Prompt 加载失败: " + err.message, true);
+    });
+}
+
+function saveMainPrompt() {
+  var btn = document.getElementById("main-prompt-save-btn");
+  btn.disabled = true;
+  btn.textContent = "保存中...";
+  fetch("/api/main-prompt", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ prompt: document.getElementById("main-prompt").value })
+  })
+    .then(function (res) {
+      if (!res.ok) {
+        return res.json().catch(function () { return {}; }).then(function (body) {
+          throw new Error(body.error || ("HTTP " + res.status));
+        });
+      }
+      return res.json();
+    })
+    .then(function (data) {
+      applyMainPrompt(data);
+      if (data.runtime_reload_error) {
+        showToast("主 Prompt 已保存，但 runtime 未重载", true);
+      } else {
+        showToast("主 Prompt 已保存，runtime 已重载", false);
+      }
+    })
+    .catch(function (err) {
+      showToast("主 Prompt 保存失败: " + err.message, true);
+    })
+    .finally(function () {
+      btn.disabled = false;
+      btn.textContent = "保存主 Prompt";
+    });
+}
+
+function applyConfig(data) {
+  var identity = data.identity || {};
+  var personality = data.personality || {};
+  var values = data.values || {};
+  var voice = data.voice || {};
+  var effectiveIdentityName = data.effective_identity_name || identity.name || "";
+  var configuredIdentityName = data.configured_identity_name || "";
+
+  document.getElementById("identity-name").value = effectiveIdentityName;
+  document.getElementById("identity-species").value = identity.species || "";
+  document.getElementById("identity-ageDescription").value = identity.ageDescription || "";
+  document.getElementById("identity-home").value = identity.home || "";
+  document.getElementById("identity-mission").value = identity.mission || "";
+
+  var identityNameNote = document.getElementById("identity-name-note");
+  if (data.effective_identity_name) {
+    identityNameNote.textContent = "当前生效名称来自微信小程序配置的机器人称呼。默认配置值: " + (configuredIdentityName || "-");
+  } else {
+    identityNameNote.textContent = "当前未读取到微信小程序里的机器人称呼，暂时使用默认配置值。";
+  }
+
+  document.getElementById("personality-coreTraits").value = linesToText(personality.coreTraits);
+  document.getElementById("personality-strengths").value = linesToText(personality.strengths);
+  document.getElementById("personality-weaknesses").value = linesToText(personality.weaknesses);
+
+  document.getElementById("values-beliefs").value = linesToText(values.beliefs);
+  document.getElementById("values-priorities").value = linesToText(values.priorities);
+  renderVoiceOptions(data.voice_options || [], voice.voice_id || "");
+}
+
+function collectPayload() {
+  return {
+    identity: {
+      name: document.getElementById("identity-name").value,
+      species: document.getElementById("identity-species").value,
+      ageDescription: document.getElementById("identity-ageDescription").value,
+      home: document.getElementById("identity-home").value,
+      mission: document.getElementById("identity-mission").value
+    },
+    personality: {
+      coreTraits: textToLines(document.getElementById("personality-coreTraits").value),
+      strengths: textToLines(document.getElementById("personality-strengths").value),
+      weaknesses: textToLines(document.getElementById("personality-weaknesses").value)
+    },
+    values: {
+      beliefs: textToLines(document.getElementById("values-beliefs").value),
+      priorities: textToLines(document.getElementById("values-priorities").value)
+    },
+    voice: {
+      voice_id: document.getElementById("voice-select").value
+    }
+  };
+}
+
+function loadConfig() {
+  fetch("/api/robot-profile")
+    .then(function (res) {
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      return res.json();
+    })
+    .then(function (data) {
+      applyConfig(data);
+    })
+    .catch(function (err) {
+      showToast("加载失败: " + err.message, true);
+    });
+}
+
+function saveConfig() {
+  var btn = document.getElementById("save-btn");
+  btn.disabled = true;
+  btn.textContent = "保存中...";
+  fetch("/api/robot-profile", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(collectPayload())
+  })
+    .then(function (res) {
+      if (!res.ok) {
+        return res.json().catch(function () { return {}; }).then(function (body) {
+          throw new Error(body.error || ("HTTP " + res.status));
+        });
+      }
+      return res.json();
+    })
+    .then(function (data) {
+      applyConfig(data);
+      showToast("Robot Profile 已保存", false);
+    })
+    .catch(function (err) {
+      showToast("保存失败: " + err.message, true);
+    })
+    .finally(function () {
+      btn.disabled = false;
+      btn.textContent = "保存 Robot Profile";
+    });
+}
+
+loadMainPrompt();
+loadConfig();
+document.getElementById("voice-select").addEventListener("change", updateVoiceNote);
+</script>
+<script src="/shared-nav.js"></script>
+</body>
+</html>

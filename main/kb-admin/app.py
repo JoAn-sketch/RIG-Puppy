@@ -14,11 +14,32 @@ import yaml
 import hashlib
 import hmac
 import base64
+import re
 from functools import wraps
 from datetime import datetime, timedelta
+from urllib.parse import urlparse
 from flask import Flask, request, jsonify, send_from_directory, send_file, Response
 import requests
 from app_messaging_patch import register_messaging_routes
+
+
+def _load_local_env_file():
+    env_path = os.path.join(os.path.dirname(__file__), ".env")
+    if not os.path.exists(env_path):
+        return
+    with open(env_path, "r", encoding="utf-8") as f:
+        for raw_line in f:
+            line = raw_line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            key = key.strip()
+            value = value.strip().strip('"').strip("'")
+            if key and key not in os.environ:
+                os.environ[key] = value
+
+
+_load_local_env_file()
 
 ZHIPU_API_KEY = os.environ.get("ZHIPU_API_KEY", "")
 ZHIPU_BASE = "https://open.bigmodel.cn/api/paas/v4"
@@ -46,6 +67,10 @@ XIAOZHI_DEBUG_DEVICE_NAME = os.environ.get("XIAOZHI_DEBUG_DEVICE_NAME", "kb-admi
 ROBOT_DEBUG_SESSION_TTL_SECONDS = 1800
 ROBOT_DEBUG_SESSIONS = {}
 ROBOT_DEBUG_SESSIONS_LOCK = threading.Lock()
+RUNTIME_DEVICE_STATUS_CACHE_TTL_SECONDS = 3
+RUNTIME_DEVICE_STATUS_CACHE = {}
+RUNTIME_DEVICE_STATUS_CACHE_LOCK = threading.Lock()
+OTA_JOB_TIMEOUT_SECONDS = max(60, int(os.environ.get("OTA_JOB_TIMEOUT_SECONDS", "900")))
 
 GREETING_CANDIDATE_TYPE_PRIORITY = {
     "knowledge_fact": 1,
@@ -96,6 +121,21 @@ RUNTIME_SOURCE_ROOT = os.path.join(
     "xiaozhi-esp32-server-main",
     "main",
     "xiaozhi-server",
+)
+MAIN_PROMPT_CONFIG_PATH = os.path.join(DATA_DIR, "main_prompt.txt")
+RUNTIME_MAIN_PROMPT_DATA_PATH = os.path.join(
+    RUNTIME_DATA_DIR, ".agent-base-prompt.txt"
+)
+RUNTIME_SOURCE_MAIN_PROMPT_DATA_PATH = os.path.join(
+    RUNTIME_SOURCE_ROOT, "data", ".agent-base-prompt.txt"
+)
+RUNTIME_SOURCE_MAIN_PROMPT_PATH = os.path.join(
+    RUNTIME_SOURCE_ROOT, "agent-base-prompt.txt"
+)
+RUNTIME_SOURCE_ROBOT_PROFILE_CONFIG_PATH = os.path.join(
+    RUNTIME_SOURCE_ROOT,
+    "data",
+    "robot_profile.json",
 )
 RUNTIME_DEFAULT_CONFIG_PATH = os.path.join(RUNTIME_SOURCE_ROOT, "config.yaml")
 RUNTIME_CUSTOM_CONFIG_PATH = os.path.join(RUNTIME_SOURCE_ROOT, "data", ".config.yaml")
@@ -453,6 +493,100 @@ DEFAULT_ROBOT_PROFILE_CONFIG = {
         ],
         "priorities": ["Safety", "Kindness", "Honesty", "Curiosity"],
     },
+    "voice": {
+        "provider": "Kokoro",
+        "voice_id": "zf_xiaoxiao",
+        "voice": "zf_xiaoxiao",
+        "label": "普通话女声",
+    },
+}
+
+ROBOT_PROFILE_VOICE_OPTIONS = [
+    {
+        "voice_id": "zf_xiaoxiao",
+        "label": "普通话女声",
+        "provider": "Kokoro",
+        "voice": "zf_xiaoxiao",
+        "description": "Kokoro 原生默认女声",
+    },
+    {
+        "voice_id": "zm_yunyang",
+        "label": "普通话男声",
+        "provider": "Kokoro",
+        "voice": "zm_yunyang",
+        "description": "Kokoro 原生男声",
+    },
+    {
+        "voice_id": "zf_xiaoyi",
+        "label": "可爱女声",
+        "provider": "Kokoro",
+        "voice": "zf_xiaoyi",
+        "description": "Kokoro 原生轻快女声",
+    },
+    {
+        "voice_id": "zm_yunjian",
+        "label": "阳刚男声",
+        "provider": "Kokoro",
+        "voice": "zm_yunjian",
+        "description": "Kokoro 原生稳重男声",
+    },
+    {
+        "voice_id": "zm_yunxi",
+        "label": "年轻男声",
+        "provider": "Kokoro",
+        "voice": "zm_yunxi",
+        "description": "Kokoro 原生年轻男声",
+    },
+    {
+        "voice_id": "zm_yunxia",
+        "label": "少年男声",
+        "provider": "Kokoro",
+        "voice": "zm_yunxia",
+        "description": "Kokoro 原生少年男声",
+    },
+    {
+        "voice_id": "zf_xiaobei",
+        "label": "东北话",
+        "provider": "Kokoro",
+        "voice": "zf_xiaobei",
+        "description": "Kokoro 原生东北音色",
+    },
+    {
+        "voice_id": "zf_xiaoni",
+        "label": "陕西话",
+        "provider": "Kokoro",
+        "voice": "zf_xiaoni",
+        "description": "Kokoro 原生陕西音色",
+    },
+]
+ROBOT_PROFILE_VOICE_BY_ID = {
+    option["voice_id"]: option for option in ROBOT_PROFILE_VOICE_OPTIONS
+}
+ROBOT_PROFILE_VOICE_BY_VALUE = {
+    option["voice"]: option for option in ROBOT_PROFILE_VOICE_OPTIONS
+}
+ROBOT_PROFILE_VOICE_COMPAT_BY_ID = {
+    "mandarin_female": ROBOT_PROFILE_VOICE_BY_ID["zf_xiaoxiao"],
+    "mandarin_male": ROBOT_PROFILE_VOICE_BY_ID["zm_yunyang"],
+    "cute_female": ROBOT_PROFILE_VOICE_BY_ID["zf_xiaoyi"],
+    "strong_male": ROBOT_PROFILE_VOICE_BY_ID["zm_yunjian"],
+    "young_male": ROBOT_PROFILE_VOICE_BY_ID["zm_yunxi"],
+    "boy_male": ROBOT_PROFILE_VOICE_BY_ID["zm_yunxia"],
+    "liaoning_female": ROBOT_PROFILE_VOICE_BY_ID["zf_xiaobei"],
+    "shaanxi_female": ROBOT_PROFILE_VOICE_BY_ID["zf_xiaoni"],
+}
+ROBOT_PROFILE_VOICE_COMPAT_BY_VALUE = {
+    "zh-CN-XiaoxiaoNeural": ROBOT_PROFILE_VOICE_BY_ID["zf_xiaoxiao"],
+    "zh-CN-YunyangNeural": ROBOT_PROFILE_VOICE_BY_ID["zm_yunyang"],
+    "zh-CN-XiaoyiNeural": ROBOT_PROFILE_VOICE_BY_ID["zf_xiaoyi"],
+    "zh-CN-YunjianNeural": ROBOT_PROFILE_VOICE_BY_ID["zm_yunjian"],
+    "zh-CN-YunxiNeural": ROBOT_PROFILE_VOICE_BY_ID["zm_yunxi"],
+    "zh-CN-YunxiaNeural": ROBOT_PROFILE_VOICE_BY_ID["zm_yunxia"],
+    "zh-CN-liaoning-XiaobeiNeural": ROBOT_PROFILE_VOICE_BY_ID["zf_xiaobei"],
+    "zh-CN-shaanxi-XiaoniNeural": ROBOT_PROFILE_VOICE_BY_ID["zf_xiaoni"],
+    "zh-HK-HiuGaaiNeural": ROBOT_PROFILE_VOICE_BY_ID["zf_xiaoxiao"],
+    "zh-HK-HiuMaanNeural": ROBOT_PROFILE_VOICE_BY_ID["zf_xiaoyi"],
+    "zh-HK-WanLungNeural": ROBOT_PROFILE_VOICE_BY_ID["zm_yunyang"],
 }
 
 DEFAULT_INTEREST_ADAPTER = {
@@ -1233,6 +1367,195 @@ def _normalize_robot_profile_list(value):
     return _normalize_daily_text_list(value)
 
 
+def _normalize_robot_profile_voice(value):
+    default_voice = dict(DEFAULT_ROBOT_PROFILE_CONFIG["voice"])
+    if not isinstance(value, dict):
+        return default_voice
+    voice_id = str(value.get("voice_id") or "").strip()
+    raw_voice = str(value.get("voice") or "").strip()
+    option = (
+        ROBOT_PROFILE_VOICE_BY_ID.get(voice_id)
+        or ROBOT_PROFILE_VOICE_COMPAT_BY_ID.get(voice_id)
+        or ROBOT_PROFILE_VOICE_BY_VALUE.get(raw_voice)
+        or ROBOT_PROFILE_VOICE_COMPAT_BY_VALUE.get(raw_voice)
+    )
+    if option is None:
+        return default_voice
+    return {
+        "provider": option["provider"],
+        "voice_id": option["voice_id"],
+        "voice": option["voice"],
+        "label": option["label"],
+    }
+
+
+def _main_prompt_candidate_paths():
+    """Return the prompt locations used by the admin and runtime layouts.
+
+    Production keeps the runtime's custom prompt in the mounted ``data``
+    directory.  The source tree prompt is also included so the page remains
+    useful when kb-admin is run directly from a checkout.
+    """
+    repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+    candidates = [
+        RUNTIME_SOURCE_MAIN_PROMPT_DATA_PATH,
+        RUNTIME_MAIN_PROMPT_DATA_PATH,
+        os.path.join(RUNTIME_DATA_DIR, "agent-base-prompt.txt"),
+        RUNTIME_SOURCE_MAIN_PROMPT_PATH,
+        MAIN_PROMPT_CONFIG_PATH,
+        os.path.join(
+            repo_root,
+            "xiaozhi-server",
+            "data",
+            ".agent-base-prompt.txt",
+        ),
+        os.path.join(
+            repo_root,
+            "xiaozhi-server",
+            "data",
+            "agent-base-prompt.txt",
+        ),
+        os.path.join(
+            repo_root,
+            "xiaozhi-esp32-server-main",
+            "main",
+            "xiaozhi-server",
+            "data",
+            ".agent-base-prompt.txt",
+        ),
+        os.path.join(
+            repo_root,
+            "xiaozhi-esp32-server-main",
+            "main",
+            "xiaozhi-server",
+            "agent-base-prompt.txt",
+        ),
+    ]
+    unique = []
+    seen = set()
+    for path in candidates:
+        normalized = os.path.abspath(path)
+        if normalized not in seen:
+            seen.add(normalized)
+            unique.append(normalized)
+    return unique
+
+
+def _load_main_prompt():
+    for path in _main_prompt_candidate_paths():
+        if not os.path.isfile(path):
+            continue
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                prompt = f.read()
+            stat = os.stat(path)
+            return prompt, path, datetime.fromtimestamp(stat.st_mtime).isoformat(timespec="seconds")
+        except (OSError, UnicodeError):
+            continue
+    return "", "", ""
+
+
+def _write_text_atomically(path, content):
+    parent = os.path.dirname(path)
+    if not parent or not os.path.isdir(parent):
+        return False
+    temporary_path = f"{path}.tmp-{uuid.uuid4().hex}"
+    try:
+        with open(temporary_path, "w", encoding="utf-8", newline="") as f:
+            f.write(content)
+        os.replace(temporary_path, path)
+        return True
+    except (OSError, UnicodeError):
+        try:
+            if os.path.exists(temporary_path):
+                os.remove(temporary_path)
+        except OSError:
+            pass
+        return False
+
+
+def _runtime_prompt_config_candidate_paths():
+    repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+    candidates = [
+        os.path.join(RUNTIME_SOURCE_ROOT, "data", ".config.yaml"),
+        os.path.join(RUNTIME_DATA_DIR, ".config.yaml"),
+        RUNTIME_CUSTOM_CONFIG_PATH,
+        os.path.join(repo_root, "xiaozhi-server", "data", ".config.yaml"),
+        os.path.join(
+            repo_root,
+            "xiaozhi-esp32-server-main",
+            "main",
+            "xiaozhi-server",
+            "data",
+            ".config.yaml",
+        ),
+    ]
+    unique = []
+    seen = set()
+    for path in candidates:
+        normalized = os.path.abspath(path)
+        if normalized not in seen:
+            seen.add(normalized)
+            unique.append(normalized)
+    return unique
+
+
+def _ensure_runtime_prompt_template():
+    """Make the Docker runtime read the mounted editable prompt file."""
+    desired = "data/.agent-base-prompt.txt"
+    configured_paths = []
+    pattern = re.compile(r"^(\s*prompt_template\s*:\s*).*$", re.MULTILINE)
+    for path in _runtime_prompt_config_candidate_paths():
+        if not os.path.isfile(path):
+            continue
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                raw = f.read()
+        except (OSError, UnicodeError):
+            continue
+
+        if pattern.search(raw):
+            updated = pattern.sub(lambda match: f"{match.group(1)}{desired}", raw, count=1)
+        else:
+            updated = raw.rstrip("\n") + f"\nprompt_template: {desired}\n"
+        if updated != raw and _write_text_atomically(path, updated):
+            configured_paths.append(path)
+    return configured_paths
+
+
+def _save_main_prompt(prompt):
+    """Persist the prompt for both kb-admin and the mounted runtime data."""
+    paths = [MAIN_PROMPT_CONFIG_PATH]
+    for path in _main_prompt_candidate_paths():
+        if path not in paths:
+            paths.append(path)
+
+    saved_paths = []
+    for path in paths:
+        if _write_text_atomically(path, prompt):
+            saved_paths.append(path)
+    if not saved_paths:
+        raise OSError("没有可写入的主 Prompt 配置路径")
+    configured_paths = _ensure_runtime_prompt_template()
+    return saved_paths, configured_paths
+
+
+def _reload_runtime_service():
+    """Reload xiaozhi so its process-level prompt/config cache is refreshed."""
+    try:
+        result = subprocess.run(
+            ["docker", "restart", "xiaozhi-esp32-server"],
+            capture_output=True,
+            text=True,
+            timeout=90,
+        )
+        if result.returncode == 0:
+            return True, ""
+        return False, "docker restart 返回非零状态"
+    except Exception as e:
+        return False, type(e).__name__
+
+
 def _load_robot_profile_config():
     config = json.loads(json.dumps(DEFAULT_ROBOT_PROFILE_CONFIG, ensure_ascii=False))
     if not os.path.exists(ROBOT_PROFILE_CONFIG_PATH):
@@ -1264,6 +1587,7 @@ def _load_robot_profile_config():
                     section[key] = text
         config[section_name] = section
 
+    config["voice"] = _normalize_robot_profile_voice(raw.get("voice"))
     return config
 
 
@@ -1272,6 +1596,10 @@ def _save_robot_profile_config(config):
         json.dump(config, f, ensure_ascii=False, indent=2)
     with open(RUNTIME_ROBOT_PROFILE_CONFIG_PATH, "w", encoding="utf-8") as f:
         json.dump(config, f, ensure_ascii=False, indent=2)
+    runtime_source_dir = os.path.dirname(RUNTIME_SOURCE_ROBOT_PROFILE_CONFIG_PATH)
+    if os.path.isdir(runtime_source_dir):
+        with open(RUNTIME_SOURCE_ROBOT_PROFILE_CONFIG_PATH, "w", encoding="utf-8") as f:
+            json.dump(config, f, ensure_ascii=False, indent=2)
 
 
 def _load_runtime_manage_api_config():
@@ -1302,6 +1630,150 @@ def _extract_robot_name_preference(payload):
     data = payload.get("data") if isinstance(payload.get("data"), dict) else payload
     long_term_memory = data.get("longTermMemory") if isinstance(data.get("longTermMemory"), dict) else data
     return str(long_term_memory.get("robotNamePreference") or "").strip()
+
+
+def _parse_json_like_value(value):
+    if isinstance(value, (dict, list)):
+        return value
+    if value in (None, "", "NULL"):
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    try:
+        return json.loads(text)
+    except Exception:
+        return None
+
+
+def _normalize_profile_list_value(value):
+    if isinstance(value, list):
+        return [str(item or "").strip() for item in value if str(item or "").strip()]
+    if isinstance(value, str):
+        stripped = value.strip()
+        if not stripped:
+            return []
+        parsed = _parse_json_like_value(stripped)
+        if isinstance(parsed, list):
+            return [str(item or "").strip() for item in parsed if str(item or "").strip()]
+        return [item.strip() for item in stripped.split(",") if item.strip()]
+    return []
+
+
+def _normalize_child_memory_record(record, source=""):
+    if not isinstance(record, dict):
+        return None
+
+    profile_json = _parse_json_like_value(record.get("profile_json")) or {}
+    if not isinstance(profile_json, dict):
+        profile_json = {}
+
+    def pick(*keys):
+        for key in keys:
+            value = record.get(key)
+            if value not in (None, "", "NULL"):
+                return value
+        for key in keys:
+            value = profile_json.get(key)
+            if value not in (None, "", "NULL"):
+                return value
+        return None
+
+    age = pick("age")
+    try:
+        age = int(age) if age not in (None, "") else None
+    except (TypeError, ValueError):
+        age = None
+
+    profile_version = pick("profile_version", "profileVersion")
+    try:
+        profile_version = int(profile_version) if profile_version not in (None, "") else None
+    except (TypeError, ValueError):
+        profile_version = None
+
+    interests = _normalize_profile_list_value(
+        pick("interests", "interests_json")
+    )
+    if not interests:
+        interests = _normalize_profile_list_value(
+            profile_json.get("interests")
+            or profile_json.get("favoriteThings")
+            or profile_json.get("favorite_things")
+        )
+
+    summary = {
+        "nickname_preference": str(pick("nickname_preference", "nicknamePreference", "nickname") or "").strip(),
+        "age": age,
+        "age_group": str(pick("age_group", "ageGroup") or "").strip(),
+        "robot_name_preference": str(
+            pick("robot_name_preference", "robotNamePreference", "robot_name")
+            or ""
+        ).strip(),
+        "interests": interests,
+        "favorite_dog_types": _normalize_profile_list_value(
+            pick("favorite_dog_types", "favoriteDogTypes")
+        ),
+        "desired_activities": _normalize_profile_list_value(
+            pick("desired_activities", "desiredActivities")
+        ),
+        "parent_goals": _normalize_profile_list_value(
+            pick("parent_goals", "parentGoals")
+        ),
+        "profile_version": profile_version,
+        "status": str(pick("status") or "").strip(),
+        "device_id": str(pick("device_id") or "").strip(),
+        "openid": str(pick("openid") or "").strip(),
+        "updated_at": str(pick("updated_at") or "").strip(),
+        "source": source,
+    }
+    if any(value for key, value in summary.items() if key != "source"):
+        return summary
+    return None
+
+
+def _load_child_memory_summary_from_openid(openid=None, device_id=None):
+    normalized_openid = str(openid or "").strip()
+    normalized_device_id = str(device_id or "").strip()
+
+    record = None
+    if normalized_openid:
+        rows = mysql_query(
+            "SELECT openid, nickname_preference, age, age_group, profile_version, profile_json, updated_at "
+            "FROM child_long_term_memory "
+            f"WHERE openid='{_sql_safe(normalized_openid)}' LIMIT 1"
+        )
+        if rows:
+            record = dict(rows[0])
+            record["source"] = "child_long_term_memory"
+    if record is None and normalized_openid:
+        rows = mysql_query(
+            "SELECT openid, nickname, age, age_group, interests_json AS interests, status, "
+            "NULL AS profile_version, NULL AS profile_json, updated_at "
+            "FROM child_profile "
+            f"WHERE openid='{_sql_safe(normalized_openid)}' LIMIT 1"
+        )
+        if rows:
+            record = dict(rows[0])
+            record["source"] = "child_profile"
+
+    if record is None:
+        return None
+
+    summary = _normalize_child_memory_record(record, source=record.get("source") or "")
+    if not summary:
+        return None
+    if normalized_device_id and not summary.get("device_id"):
+        summary["device_id"] = normalized_device_id
+    if normalized_openid and not summary.get("openid"):
+        summary["openid"] = normalized_openid
+    if not summary.get("status") and normalized_openid:
+        rows = mysql_query(
+            "SELECT status FROM child_profile "
+            f"WHERE openid='{_sql_safe(normalized_openid)}' LIMIT 1"
+        )
+        if rows:
+            summary["status"] = str(rows[0].get("status") or "").strip()
+    return summary
 
 
 def _normalize_child_memory_payload(payload, source=""):
@@ -1366,11 +1838,37 @@ def _normalize_child_memory_payload(payload, source=""):
 
 
 def _load_child_memory_summary(device_id=None):
-    return None
+    active_openid = _load_active_binding_openid_for_device(device_id)
+    if not active_openid:
+        return None
+    return _load_child_memory_summary_by_openid(active_openid, device_id)
 
 
 def _load_child_memory_summaries(device_ids):
-    return {}
+    result = {}
+    if not device_ids:
+        return result
+
+    openids_by_device = _load_active_openids_by_device(device_ids)
+    for device_id in device_ids:
+        if not device_id:
+            continue
+        summary = _load_child_memory_summary_by_openid(
+            _resolve_active_openid_for_device(openids_by_device, device_id),
+            device_id,
+        )
+        if not summary:
+            continue
+        for key in _device_binding_lookup_keys(device_id):
+            result[key] = summary
+    return result
+
+
+def _load_child_memory_summary_by_openid(openid, device_id=None):
+    summary = _load_child_memory_summary_from_openid(openid=openid, device_id=device_id)
+    if summary:
+        return summary
+    return None
 
 
 def _device_binding_lookup_keys(value):
@@ -1509,6 +2007,471 @@ def _post_runtime_factory_reset_command(device_id):
             "acknowledged": False,
             "message": f"runtime reset command unavailable: {exc}",
         }
+
+
+def _split_version_parts(version):
+    parts = []
+    for token in str(version or "").strip().split("."):
+        match = re.match(r"(\d+)", token.strip())
+        parts.append(int(match.group(1)) if match else 0)
+    while parts and parts[-1] == 0:
+        parts.pop()
+    return parts
+
+
+def _compare_versions(version_a, version_b):
+    left = _split_version_parts(version_a)
+    right = _split_version_parts(version_b)
+    max_len = max(len(left), len(right))
+    for index in range(max_len):
+        l_val = left[index] if index < len(left) else 0
+        r_val = right[index] if index < len(right) else 0
+        if l_val > r_val:
+            return 1
+        if l_val < r_val:
+            return -1
+    return 0
+
+
+def _load_latest_ota_for_board(board):
+    board = str(board or "").strip()
+    if not board:
+        return None
+    rows = mysql_query(
+        "SELECT id, firmware_name, type, version, size, remark, firmware_path, sort, update_date "
+        "FROM ai_ota "
+        f"WHERE type='{_sql_safe(board)}' "
+        "ORDER BY update_date DESC, sort DESC LIMIT 1"
+    )
+    return rows[0] if rows else None
+
+
+def _build_public_firmware_url(firmware_path):
+    path = str(firmware_path or "").strip()
+    if not path:
+        return ""
+    if path.startswith("http://") or path.startswith("https://"):
+        return path
+    filename = os.path.basename(path)
+    if not filename:
+        return ""
+    return f"http://122.51.155.114:8002/firmware/{filename}"
+
+
+def _load_device_for_ota(device_id):
+    keys = _device_lookup_keys_for_reset(device_id)
+    if not keys:
+        return None
+    condition = _device_lookup_sql_condition(["id", "mac_address"], keys)
+    rows = mysql_query(
+        "SELECT id, mac_address, lifecycle_status, agent_id, alias, app_version, board "
+        f"FROM ai_device WHERE {condition} LIMIT 1"
+    )
+    return rows[0] if rows else None
+
+
+def _load_active_binding_openid_for_device(device_id):
+    keys = _device_lookup_keys_for_reset(device_id)
+    if not keys:
+        return ""
+    condition = _device_lookup_sql_condition(["device_id"], keys)
+    rows = mysql_query(
+        "SELECT openid, owner_openid "
+        "FROM device_child_binding "
+        f"WHERE is_active=1 AND {condition} LIMIT 1"
+    )
+    if not rows:
+        return ""
+    row = rows[0]
+    return str(row.get("openid") or row.get("owner_openid") or "").strip()
+
+
+def _build_device_ota_status(device_id, openid):
+    device = _load_device_for_ota(device_id)
+    if not device:
+        return None
+
+    active_openid = _load_active_binding_openid_for_device(device_id)
+    normalized_openid = str(openid or "").strip()
+    if not active_openid or (normalized_openid and active_openid != normalized_openid):
+        return {
+            "deviceId": str(device.get("id") or "").strip(),
+            "board": str(device.get("board") or "").strip(),
+            "currentVersion": str(device.get("app_version") or "").strip(),
+            "latestVersion": "",
+            "updateAvailable": False,
+            "firmwareUrl": "",
+            "otaJob": None,
+            "message": "unauthorized",
+        }
+
+    board = str(device.get("board") or "").strip()
+    current_version = str(device.get("app_version") or "").strip() or "0.0.0"
+    latest_ota = _load_latest_ota_for_board(board)
+    latest_version = str(latest_ota.get("version") or "").strip() if latest_ota else ""
+    update_available = bool(latest_ota and latest_version and _compare_versions(latest_version, current_version) > 0)
+    return {
+        "deviceId": str(device.get("id") or "").strip(),
+        "board": board,
+        "currentVersion": current_version,
+        "latestVersion": latest_version,
+        "updateAvailable": update_available,
+        "firmwareName": str((latest_ota or {}).get("firmware_name") or "").strip(),
+        "firmwareUrl": _build_public_firmware_url((latest_ota or {}).get("firmware_path") or ""),
+        "otaJob": _public_device_ota_job(
+            _load_latest_device_ota_job(str(device.get("id") or "").strip())
+        ),
+        "message": "" if latest_ota else "暂无可用版本",
+    }
+
+
+def _decode_runtime_json_payload(response):
+    raw_text = (response.text or "").strip()
+    if not raw_text:
+        return {}
+    try:
+        return response.json()
+    except ValueError:
+        pass
+
+    decoder = json.JSONDecoder()
+    payloads = []
+    index = 0
+    while index < len(raw_text):
+        while index < len(raw_text) and raw_text[index].isspace():
+            index += 1
+        if index >= len(raw_text):
+            break
+        try:
+            payload, next_index = decoder.raw_decode(raw_text, index)
+        except ValueError:
+            next_starts = [
+                pos for pos in (raw_text.find("{", index + 1), raw_text.find("[", index + 1))
+                if pos >= 0
+            ]
+            if not next_starts:
+                break
+            index = min(next_starts)
+            continue
+        if isinstance(payload, dict):
+            payloads.append(payload)
+        index = next_index
+
+    if payloads:
+        for payload in reversed(payloads):
+            if any(key in payload for key in ("ok", "error", "message")):
+                return payload
+        return payloads[-1]
+    raise ValueError(f"non-json runtime response: {raw_text[:200]}")
+
+
+def _post_runtime_upgrade_firmware_command(device_id, firmware_url):
+    try:
+        response = requests.post(
+            f"{XIAOZHI_DEBUG_HTTP_BASE.rstrip('/')}/debug/runtime/device/upgrade-firmware",
+            json={"device_id": device_id, "url": firmware_url},
+            headers={"x-debug-token": XIAOZHI_DEBUG_AUTH_SECRET},
+            timeout=70,
+        )
+    except requests.RequestException as exc:
+        return {
+            "attempted": False,
+            "pushed": False,
+            "acknowledged": False,
+            "message": f"runtime upgrade command unavailable: {exc}",
+        }
+
+    try:
+        payload = _decode_runtime_json_payload(response)
+    except ValueError as exc:
+        return {
+            "attempted": True,
+            "pushed": False,
+            "acknowledged": False,
+            "message": f"runtime returned invalid response HTTP {response.status_code}: {exc}",
+        }
+
+    if response.status_code < 400 and payload.get("ok"):
+        return {
+            "attempted": True,
+            "pushed": bool(payload.get("pushed")),
+            "acknowledged": bool(payload.get("acknowledged")),
+            "message": payload.get("message") or "",
+        }
+    return {
+        "attempted": True,
+        "pushed": bool(payload.get("pushed")),
+        "acknowledged": bool(payload.get("acknowledged")),
+        "message": payload.get("error") or payload.get("message") or f"runtime returned HTTP {response.status_code}",
+    }
+
+
+def _expire_stale_device_ota_jobs(device_id):
+    normalized_device_id = str(device_id or "").strip()
+    if not normalized_device_id:
+        return
+    mysql_exec(
+        "UPDATE ai_device_ota_job "
+        "SET status='failed', "
+        "failure_reason='device did not report the target firmware version before timeout', "
+        "completed_at=NOW(), update_date=NOW() "
+        f"WHERE device_id='{_sql_safe(normalized_device_id)}' "
+        "AND status='upgrading' "
+        f"AND requested_at < DATE_SUB(NOW(), INTERVAL {OTA_JOB_TIMEOUT_SECONDS} SECOND)"
+    )
+
+
+def _load_latest_device_ota_job(device_id):
+    normalized_device_id = str(device_id or "").strip()
+    if not normalized_device_id:
+        return None
+    _expire_stale_device_ota_jobs(normalized_device_id)
+    rows = mysql_query(
+        "SELECT id, device_id, from_version, target_version, status, requested_at, "
+        "acknowledged_at, completed_at, last_reported_version, failure_reason "
+        "FROM ai_device_ota_job "
+        f"WHERE device_id='{_sql_safe(normalized_device_id)}' "
+        "ORDER BY requested_at DESC LIMIT 1"
+    )
+    return rows[0] if rows else None
+
+
+def _create_device_ota_job(device_id, from_version, target_version, firmware_url):
+    normalized_device_id = str(device_id or "").strip()
+    normalized_target_version = str(target_version or "").strip()
+    if not normalized_device_id or not normalized_target_version:
+        raise ValueError("device_id and target_version are required")
+
+    # A new accepted command supersedes any older in-progress request for the device.
+    mysql_exec(
+        "UPDATE ai_device_ota_job "
+        "SET status='failed', failure_reason='superseded by a newer OTA request', "
+        "completed_at=NOW(), update_date=NOW() "
+        f"WHERE device_id='{_sql_safe(normalized_device_id)}' AND status='upgrading'"
+    )
+    job_id = uuid.uuid4().hex
+    mysql_exec(
+        "INSERT INTO ai_device_ota_job "
+        "(id, device_id, from_version, target_version, firmware_url, status, "
+        "requested_at, acknowledged_at, create_date, update_date) VALUES "
+        f"('{job_id}', '{_sql_safe(normalized_device_id)}', "
+        f"'{_sql_safe(str(from_version or '').strip())}', "
+        f"'{_sql_safe(normalized_target_version)}', "
+        f"'{_sql_safe(str(firmware_url or '').strip())}', "
+        "'upgrading', NOW(), NOW(), NOW(), NOW())"
+    )
+    return _load_latest_device_ota_job(normalized_device_id)
+
+
+def _public_device_ota_job(job):
+    if not isinstance(job, dict):
+        return None
+    return {
+        "id": str(job.get("id") or "").strip(),
+        "status": str(job.get("status") or "").strip(),
+        "fromVersion": str(job.get("from_version") or "").strip(),
+        "targetVersion": str(job.get("target_version") or "").strip(),
+        "lastReportedVersion": str(job.get("last_reported_version") or "").strip(),
+        "requestedAt": str(job.get("requested_at") or "").strip(),
+        "acknowledgedAt": str(job.get("acknowledged_at") or "").strip(),
+        "completedAt": str(job.get("completed_at") or "").strip(),
+        "failureReason": str(job.get("failure_reason") or "").strip(),
+    }
+
+
+def _first_present(mapping, keys):
+    if not isinstance(mapping, dict):
+        return None
+    for key in keys:
+        if key in mapping and mapping.get(key) not in (None, ""):
+            return mapping.get(key)
+    return None
+
+
+def _parse_optional_bool(value):
+    if value is None or value == "":
+        return None
+    if isinstance(value, bool):
+        return value
+    text = str(value).strip().lower()
+    if text in {"true", "1", "yes", "y", "charging", "charge", "on"}:
+        return True
+    if text in {"false", "0", "no", "n", "discharging", "not_charging", "off"}:
+        return False
+    return None
+
+
+def _parse_optional_int(value):
+    if value is None or value == "":
+        return None
+    try:
+        return int(float(str(value).strip().replace("%", "")))
+    except Exception:
+        return None
+
+
+def _extract_runtime_power_status(entry):
+    entry = entry if isinstance(entry, dict) else {}
+    battery_obj = entry.get("battery") if isinstance(entry.get("battery"), dict) else {}
+    power_obj = entry.get("power") if isinstance(entry.get("power"), dict) else {}
+
+    level_value = _first_present(entry, ["battery_level", "batteryLevel", "battery_percent", "batteryPercent", "power_level"])
+    if level_value is None:
+        level_value = _first_present(battery_obj, ["level", "percent", "percentage", "battery_level"])
+    if level_value is None:
+        level_value = _first_present(power_obj, ["level", "percent", "percentage", "battery_level"])
+
+    level = _parse_optional_int(level_value)
+    if level is not None:
+        level = max(0, min(100, level))
+
+    charging = _parse_optional_bool(
+        _first_present(entry, ["charging", "is_charging", "isCharging", "charge_status", "chargeStatus"])
+        if _first_present(entry, ["charging", "is_charging", "isCharging", "charge_status", "chargeStatus"]) is not None
+        else (
+            _first_present(battery_obj, ["charging", "is_charging", "isCharging", "status"])
+            if _first_present(battery_obj, ["charging", "is_charging", "isCharging", "status"]) is not None
+            else _first_present(power_obj, ["charging", "is_charging", "isCharging", "status"])
+        )
+    )
+
+    return {
+        "batteryLevel": level,
+        "batteryText": f"{level}%" if level is not None else "未知",
+        "charging": charging,
+        "chargingText": "充电中" if charging is True else ("未充电" if charging is False else "未知"),
+    }
+
+
+def _extract_runtime_state(entry):
+    entry = entry if isinstance(entry, dict) else {}
+    status_obj = entry.get("status") if isinstance(entry.get("status"), dict) else {}
+    value = (
+        _first_present(entry, ["runtime_state", "runtimeState", "runtime_status", "runtimeStatus"])
+        or _first_present(status_obj, ["runtime_state", "runtimeState", "runtime_status", "runtimeStatus"])
+    )
+    return str(value or "").strip()
+
+
+def _fetch_runtime_device_status(device_id, timeout_seconds=6):
+    cache_key = str(device_id or "").strip().lower()
+    now = time.monotonic()
+    if cache_key:
+        with RUNTIME_DEVICE_STATUS_CACHE_LOCK:
+            cached = RUNTIME_DEVICE_STATUS_CACHE.get(cache_key)
+            if cached and now - cached["updated_at"] < RUNTIME_DEVICE_STATUS_CACHE_TTL_SECONDS:
+                return cached["status"]
+
+    try:
+        bounded_tool_timeout = max(1, min(float(timeout_seconds or 6), 6))
+        response = requests.get(
+            f"{XIAOZHI_DEBUG_HTTP_BASE.rstrip('/')}/debug/runtime/device/status",
+            headers={"x-debug-token": XIAOZHI_DEBUG_AUTH_SECRET},
+            params={"device_id": device_id, "timeout_seconds": bounded_tool_timeout},
+            timeout=bounded_tool_timeout + 2,
+        )
+        payload = response.json() if response.content else {}
+        if response.status_code < 400 and isinstance(payload, dict) and payload.get("ok"):
+            data = payload.get("status") if isinstance(payload.get("status"), dict) else {}
+            power = _extract_runtime_power_status(data)
+            result = {
+                "online": bool(payload.get("online")),
+                "onlineText": "在线" if payload.get("online") else "离线",
+                "sessionStatus": "ONLINE" if payload.get("online") else "OFFLINE",
+                "runtimeState": _extract_runtime_state(data),
+                "lastSeenAt": "",
+                **power,
+            }
+            if cache_key:
+                with RUNTIME_DEVICE_STATUS_CACHE_LOCK:
+                    RUNTIME_DEVICE_STATUS_CACHE[cache_key] = {
+                        "updated_at": now,
+                        "status": result,
+                    }
+            return result
+    except Exception:
+        pass
+    return None
+
+
+def _hydrate_live_device_runtime_states(live_devices):
+    for entry in live_devices:
+        if not isinstance(entry, dict) or _extract_runtime_state(entry):
+            continue
+        device_id = str(entry.get("device_id") or "").strip()
+        if not device_id:
+            continue
+        status = _fetch_runtime_device_status(device_id, timeout_seconds=3)
+        runtime_state = str((status or {}).get("runtimeState") or "").strip()
+        if runtime_state:
+            entry["runtime_state"] = runtime_state
+
+
+def _runtime_entry_matches_device(entry, device_id):
+    for value in (entry.get("device_id"), entry.get("device_mac"), entry.get("mac_address")):
+        if any(key in _device_binding_lookup_keys(value) for key in _device_binding_lookup_keys(device_id)):
+            return True
+    return False
+
+
+def _load_device_runtime_status(device_id, openid):
+    device = _load_device_for_ota(device_id)
+    if not device:
+        return None
+
+    active_openid = _load_active_binding_openid_for_device(device_id)
+    normalized_openid = str(openid or "").strip()
+    if not active_openid or (normalized_openid and active_openid != normalized_openid):
+        return {
+            "deviceId": str(device.get("id") or "").strip(),
+            "message": "unauthorized",
+        }
+
+    result = {
+        "deviceId": str(device.get("id") or "").strip(),
+        "online": False,
+        "onlineText": "离线",
+        "sessionStatus": "OFFLINE",
+        "lastSeenAt": "",
+        **_extract_runtime_power_status({}),
+    }
+
+    device_status = _fetch_runtime_device_status(device_id)
+    if device_status:
+        return {
+            **result,
+            **device_status,
+        }
+
+    try:
+        response = requests.get(
+            f"{XIAOZHI_DEBUG_HTTP_BASE.rstrip('/')}/debug/runtime/live-devices",
+            headers={"x-debug-token": XIAOZHI_DEBUG_AUTH_SECRET},
+            timeout=5,
+        )
+        payload = response.json() if response.content else {}
+        if response.status_code >= 400:
+            return result
+        live_devices = payload.get("devices") or []
+        entry = next((item for item in live_devices if isinstance(item, dict) and _runtime_entry_matches_device(item, device_id)), None)
+        if not entry:
+            return result
+
+        online = bool(entry.get("connection_alive"))
+        session_status = str(entry.get("session_status") or ("ONLINE" if online else "OFFLINE")).strip().upper()
+        if session_status == "ONLINE":
+            online = True
+        power = _extract_runtime_power_status(entry)
+        return {
+            **result,
+            **power,
+            "online": online,
+            "onlineText": "在线" if online else "离线",
+            "sessionStatus": session_status,
+            "lastSeenAt": entry.get("last_seen_at") or entry.get("last_activity_at") or entry.get("connected_at") or "",
+        }
+    except Exception:
+        return result
 
 
 def _full_factory_reset_device(device_id):
@@ -2179,7 +3142,10 @@ def greeting_sources_page():
 @app.route("/robot-profile")
 @requires_auth
 def robot_profile_page():
-    return send_from_directory("static", "robot-profile.html")
+    response = send_from_directory("static", "robot-profile.html")
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    response.headers["Pragma"] = "no-cache"
+    return response
 
 
 @app.route("/devices")
@@ -2267,6 +3233,18 @@ def ota_for_device():
     device_id = str(request.headers.get("Device-Id") or "").strip()
     client_id = str(request.headers.get("Client-Id") or "").strip()
     token = _generate_device_auth_token(client_id, device_id)
+    normalized_device_id = device_id.lower().replace(":", "").replace("-", "")
+    target_ota_device_id = "001a2b3c4d5e"
+    firmware = {
+        "version": device_version,
+        "url": "",
+    }
+    if normalized_device_id == target_ota_device_id:
+        firmware = {
+            "version": "2.4.0",
+            "url": "http://122.51.155.114:8002/firmware/xiaozhi-2.4.0-hot-activation.bin",
+            "force": 1,
+        }
 
     return jsonify(
         {
@@ -2274,10 +3252,7 @@ def ota_for_device():
                 "timestamp": int(round(time.time() * 1000)),
                 "timezone_offset": 8 * 60,
             },
-            "firmware": {
-                "version": device_version,
-                "url": "",
-            },
+            "firmware": firmware,
             "websocket": {
                 "url": websocket_url,
                 "token": token,
@@ -2733,6 +3708,118 @@ def api_debug_prompt_log_detail(log_id):
     return jsonify({}), 404
 
 
+@app.route("/api/debug/chat-history/devices")
+@requires_auth
+def api_debug_chat_history_devices():
+    rows = mysql_query(
+        "SELECT "
+        "d.id AS device_id, "
+        "d.mac_address, "
+        "COALESCE(d.alias, '') AS alias, "
+        "d.lifecycle_status, "
+        "COALESCE(d.last_connected_at, '') AS last_connected_at, "
+        "COUNT(h.id) AS message_count, "
+        "COUNT(DISTINCT h.session_id) AS session_count, "
+        "COALESCE(MAX(h.created_at), '') AS last_chat_at "
+        "FROM ai_device d "
+        "LEFT JOIN ai_agent_chat_history h "
+        "ON LOWER(h.mac_address)=LOWER(d.mac_address) "
+        "GROUP BY d.id, d.mac_address, d.alias, d.lifecycle_status, d.last_connected_at "
+        "ORDER BY COALESCE(MAX(h.created_at), d.last_connected_at) DESC, d.id"
+    )
+    return jsonify(rows)
+
+
+@app.route("/api/debug/chat-history/sessions")
+@requires_auth
+def api_debug_chat_history_sessions():
+    device_id = str(request.args.get("device_id") or "").strip()
+    limit_raw = request.args.get("limit", "500")
+    try:
+        limit = max(1, min(1000, int(limit_raw)))
+    except (TypeError, ValueError):
+        limit = 500
+
+    device_filter = ""
+    if device_id:
+        safe_device_id = _sql_safe(device_id)
+        device_filter = (
+            " AND (LOWER(h.mac_address)=LOWER('{safe}') "
+            "OR LOWER(COALESCE(d.id,''))=LOWER('{safe}'))"
+        ).format(safe=safe_device_id)
+
+    rows = mysql_query(
+        "SELECT "
+        "h.session_id, "
+        "LOWER(h.mac_address) AS mac_address, "
+        "COALESCE(d.id, '') AS device_id, "
+        "COALESCE(d.alias, '') AS device_alias, "
+        "COALESCE(d.lifecycle_status, '') AS device_status, "
+        "COALESCE(t.title, '') AS title, "
+        "MIN(h.created_at) AS started_at, "
+        "MAX(h.created_at) AS last_at, "
+        "COUNT(*) AS message_count, "
+        "SUM(CASE WHEN h.chat_type=1 THEN 1 ELSE 0 END) AS user_count, "
+        "SUM(CASE WHEN h.chat_type=2 THEN 1 ELSE 0 END) AS assistant_count "
+        "FROM ai_agent_chat_history h "
+        "LEFT JOIN ai_device d ON LOWER(h.mac_address)=LOWER(d.mac_address) "
+        "LEFT JOIN (SELECT session_id, MAX(title) AS title FROM ai_agent_chat_title GROUP BY session_id) t "
+        "ON t.session_id=h.session_id "
+        f"WHERE 1=1{device_filter} "
+        "GROUP BY h.session_id, h.mac_address, d.id, d.alias, d.lifecycle_status, t.title "
+        "ORDER BY last_at DESC, started_at DESC "
+        f"LIMIT {limit}"
+    )
+    return jsonify(rows)
+
+
+@app.route("/api/debug/chat-history/sessions/<session_id>")
+@requires_auth
+def api_debug_chat_history_session_detail(session_id):
+    normalized_session_id = str(session_id or "").strip()
+    if not normalized_session_id:
+        return jsonify({"error": "session_id required"}), 400
+    safe_session_id = _sql_safe(normalized_session_id)
+    session_rows = mysql_query(
+        "SELECT "
+        "h.session_id, "
+        "LOWER(h.mac_address) AS mac_address, "
+        "COALESCE(d.id, '') AS device_id, "
+        "COALESCE(d.alias, '') AS device_alias, "
+        "COALESCE(d.lifecycle_status, '') AS device_status, "
+        "COALESCE(t.title, '') AS title, "
+        "MIN(h.created_at) AS started_at, "
+        "MAX(h.created_at) AS last_at, "
+        "COUNT(*) AS message_count, "
+        "SUM(CASE WHEN h.chat_type=1 THEN 1 ELSE 0 END) AS user_count, "
+        "SUM(CASE WHEN h.chat_type=2 THEN 1 ELSE 0 END) AS assistant_count "
+        "FROM ai_agent_chat_history h "
+        "LEFT JOIN ai_device d ON LOWER(h.mac_address)=LOWER(d.mac_address) "
+        "LEFT JOIN (SELECT session_id, MAX(title) AS title FROM ai_agent_chat_title GROUP BY session_id) t "
+        "ON t.session_id=h.session_id "
+        f"WHERE h.session_id='{safe_session_id}' "
+        "GROUP BY h.session_id, h.mac_address, d.id, d.alias, d.lifecycle_status, t.title "
+        "LIMIT 1"
+    )
+    message_rows = mysql_query(
+        "SELECT "
+        "h.chat_type, "
+        "h.content, "
+        "h.created_at, "
+        "h.audio_id, "
+        "LOWER(h.mac_address) AS mac_address, "
+        "COALESCE(d.id, '') AS device_id, "
+        "COALESCE(d.alias, '') AS device_alias "
+        "FROM ai_agent_chat_history h "
+        "LEFT JOIN ai_device d ON LOWER(h.mac_address)=LOWER(d.mac_address) "
+        f"WHERE h.session_id='{safe_session_id}' "
+        "ORDER BY h.created_at ASC, h.id ASC"
+    )
+    if not session_rows:
+        return jsonify({"error": "session not found"}), 404
+    return jsonify({"session": session_rows[0], "messages": message_rows})
+
+
 @app.route("/api/debug/chat-history")
 @requires_auth
 def api_debug_chat_history():
@@ -2892,6 +3979,7 @@ def api_settings_put(config_key):
         "strategy_enabled", "strategy_auto_generate",
         "reminder_enabled", "end_prompt_enabled",
         "asr_max_sentence_silence", "close_connection_timeout",
+        "vad_threshold", "vad_threshold_low", "vad_min_silence_duration_ms",
         "voiceprint_enabled", "voiceprint_threshold", "voiceprint_reject_text",
         "kid_mode_enabled", "kid_default_age_band",
     }
@@ -2919,7 +4007,8 @@ def api_settings_apply_config():
     try:
         rows = mysql_query(
             "SELECT config_key, config_value FROM rl_system_config "
-            "WHERE config_key IN ('asr_max_sentence_silence', 'close_connection_timeout', 'end_prompt_enabled')"
+            "WHERE config_key IN ('asr_max_sentence_silence', 'close_connection_timeout', 'end_prompt_enabled', "
+            "'vad_threshold', 'vad_threshold_low', 'vad_min_silence_duration_ms')"
         )
         kv = {r["config_key"]: r["config_value"] for r in rows}
         applied = []
@@ -2942,6 +4031,29 @@ def api_settings_apply_config():
                 "text = re.sub(r'(close_connection_no_voice_time:\s*)\d+', r'\g<1>" + str(val) + "', text)"
             )
             applied.append("close_connection_timeout=" + str(val))
+
+        if "vad_threshold" in kv:
+            val = max(0.0, min(1.0, float(kv["vad_threshold"])))
+            val_text = ("%s" % val).rstrip("0").rstrip(".")
+            script_lines.append(
+                "text = re.sub(r'(^\\s*threshold:\\s*)[0-9.]+', r'\\g<1>" + val_text + "', text, flags=re.M)"
+            )
+            applied.append("vad_threshold=" + val_text)
+
+        if "vad_threshold_low" in kv:
+            val = max(0.0, min(1.0, float(kv["vad_threshold_low"])))
+            val_text = ("%s" % val).rstrip("0").rstrip(".")
+            script_lines.append(
+                "text = re.sub(r'(^\\s*threshold_low:\\s*)[0-9.]+', r'\\g<1>" + val_text + "', text, flags=re.M)"
+            )
+            applied.append("vad_threshold_low=" + val_text)
+
+        if "vad_min_silence_duration_ms" in kv:
+            val = max(100, min(6000, int(kv["vad_min_silence_duration_ms"])))
+            script_lines.append(
+                "text = re.sub(r'(^\\s*min_silence_duration_ms:\\s*)\\d+', r'\\g<1>" + str(val) + "', text, flags=re.M)"
+            )
+            applied.append("vad_min_silence_duration_ms=" + str(val))
 
         if "end_prompt_enabled" in kv:
             enable_val = "true" if kv["end_prompt_enabled"] == "1" else "false"
@@ -2985,9 +4097,14 @@ def api_devices_live():
     def build_database_fallback_response():
         rows = mysql_query(
             "SELECT d.id, d.mac_address, d.alias, d.board, d.app_version, d.agent_id, "
-            "d.lifecycle_status, d.last_connected_at, d.update_date, a.agent_name "
+            "d.lifecycle_status, d.last_connected_at, d.update_date, a.agent_name, "
+            "a.asr_model_id, asr.model_name AS asr_model_name, "
+            "a.tts_model_id, tts.model_name AS tts_model_name, "
+            "(SELECT COUNT(*) FROM ai_device d2 WHERE d2.agent_id=d.agent_id) AS agent_device_count "
             "FROM ai_device d "
             "LEFT JOIN ai_agent a ON d.agent_id = a.id "
+            "LEFT JOIN ai_model_config asr ON a.asr_model_id = asr.id "
+            "LEFT JOIN ai_model_config tts ON a.tts_model_id = tts.id "
             "ORDER BY COALESCE(d.last_connected_at, d.update_date) DESC "
             "LIMIT 200"
         )
@@ -3024,6 +4141,11 @@ def api_devices_live():
                     "device_mac": device_mac,
                     "agent_id": str(row.get("agent_id") or "").strip(),
                     "agent_name": str(row.get("agent_name") or "").strip(),
+                    "asr_model_id": str(row.get("asr_model_id") or "").strip(),
+                    "asr_model_name": str(row.get("asr_model_name") or "").strip(),
+                    "tts_model_id": str(row.get("tts_model_id") or "").strip(),
+                    "tts_model_name": str(row.get("tts_model_name") or "").strip(),
+                    "agent_device_count": str(row.get("agent_device_count") or "0").strip(),
                     "robot_name": robot_name,
                     "wechat_openid": wechat_openid,
                     "child_memory": child_memory,
@@ -3031,6 +4153,7 @@ def api_devices_live():
                     "board": str(row.get("board") or "").strip(),
                     "app_version": str(row.get("app_version") or "").strip(),
                     "lifecycle_status": _effective_device_lifecycle_status(row.get("lifecycle_status"), wechat_openid),
+                    "runtime_state": "",
                     "client_id": "",
                     "client_ip": "",
                     "connected_at": last_connected_at,
@@ -3071,10 +4194,17 @@ def api_devices_live():
         if not runtime_ok:
             return jsonify(build_database_fallback_response())
 
+        _hydrate_live_device_runtime_states(live_devices)
+
         sql = (
-            "SELECT d.id, d.mac_address, d.alias, d.board, d.app_version, d.lifecycle_status, d.agent_id, a.agent_name "
+            "SELECT d.id, d.mac_address, d.alias, d.board, d.app_version, d.lifecycle_status, "
+            "d.agent_id, a.agent_name, a.asr_model_id, asr.model_name AS asr_model_name, "
+            "a.tts_model_id, tts.model_name AS tts_model_name, "
+            "(SELECT COUNT(*) FROM ai_device d2 WHERE d2.agent_id=d.agent_id) AS agent_device_count "
             "FROM ai_device d "
-            "LEFT JOIN ai_agent a ON d.agent_id = a.id"
+            "LEFT JOIN ai_agent a ON d.agent_id = a.id "
+            "LEFT JOIN ai_model_config asr ON a.asr_model_id = asr.id "
+            "LEFT JOIN ai_model_config tts ON a.tts_model_id = tts.id"
         )
         rows = mysql_query(sql)
         device_meta = {}
@@ -3097,6 +4227,11 @@ def api_devices_live():
                 "lifecycle_status": lifecycle_status,
                 "agent_id": agent_id,
                 "agent_name": agent_name,
+                "asr_model_id": str(row.get("asr_model_id") or "").strip(),
+                "asr_model_name": str(row.get("asr_model_name") or "").strip(),
+                "tts_model_id": str(row.get("tts_model_id") or "").strip(),
+                "tts_model_name": str(row.get("tts_model_name") or "").strip(),
+                "agent_device_count": str(row.get("agent_device_count") or "0").strip(),
             }
             db_devices.append(meta)
             for key in (device_id.lower(), mac_address.lower()):
@@ -3158,6 +4293,11 @@ def api_devices_live():
                     "device_mac": resolved_device_mac,
                     "agent_id": meta.get("agent_id") or "",
                     "agent_name": meta.get("agent_name") or "",
+                    "asr_model_id": meta.get("asr_model_id") or "",
+                    "asr_model_name": meta.get("asr_model_name") or "",
+                    "tts_model_id": meta.get("tts_model_id") or "",
+                    "tts_model_name": meta.get("tts_model_name") or "",
+                    "agent_device_count": meta.get("agent_device_count") or "0",
                     "robot_name": robot_name,
                     "wechat_openid": wechat_openid,
                     "child_memory": child_memory,
@@ -3165,6 +4305,7 @@ def api_devices_live():
                     "board": meta.get("board") or "",
                     "app_version": meta.get("app_version") or "",
                     "lifecycle_status": _effective_device_lifecycle_status(meta.get("lifecycle_status"), wechat_openid),
+                    "runtime_state": _extract_runtime_state(entry),
                     "client_id": str(entry.get("client_id") or ""),
                     "client_ip": str(entry.get("client_ip") or ""),
                     "connected_at": entry.get("connected_at"),
@@ -3196,6 +4337,11 @@ def api_devices_live():
                     "device_mac": meta.get("mac_address") or normalized_device_id,
                     "agent_id": meta.get("agent_id") or "",
                     "agent_name": meta.get("agent_name") or "",
+                    "asr_model_id": meta.get("asr_model_id") or "",
+                    "asr_model_name": meta.get("asr_model_name") or "",
+                    "tts_model_id": meta.get("tts_model_id") or "",
+                    "tts_model_name": meta.get("tts_model_name") or "",
+                    "agent_device_count": meta.get("agent_device_count") or "0",
                     "robot_name": robot_name,
                     "wechat_openid": wechat_openid,
                     "child_memory": child_memory,
@@ -3203,6 +4349,7 @@ def api_devices_live():
                     "board": meta.get("board") or "",
                     "app_version": meta.get("app_version") or "",
                     "lifecycle_status": _effective_device_lifecycle_status(meta.get("lifecycle_status"), wechat_openid),
+                    "runtime_state": _extract_runtime_state(entry),
                     "client_id": str(entry.get("client_id") or ""),
                     "client_ip": str(entry.get("client_ip") or ""),
                     "connected_at": entry.get("connected_at"),
@@ -3228,6 +4375,336 @@ def api_devices_live():
         return jsonify({"error": str(e)}), 500
 
 
+@app.route("/api/devices/asr-models", methods=["GET"])
+@requires_auth
+def api_devices_asr_models():
+    try:
+        rows = mysql_query(
+            "SELECT id, model_code, model_name, is_default "
+            "FROM ai_model_config "
+            "WHERE model_type='ASR' AND is_enabled=1 "
+            "AND id IN ('ASR_FunASRServer') "
+            "ORDER BY FIELD(id, 'ASR_FunASRServer')"
+        )
+        return jsonify(
+            {
+                "ok": True,
+                "models": [
+                    {
+                        "id": str(row.get("id") or "").strip(),
+                        "model_code": str(row.get("model_code") or "").strip(),
+                        "model_name": str(row.get("model_name") or "").strip(),
+                        "is_default": str(row.get("is_default") or "0") == "1",
+                    }
+                    for row in rows
+                    if str(row.get("id") or "").strip()
+                ],
+            }
+        )
+    except Exception as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 500
+
+
+@app.route("/api/devices/tts-models", methods=["GET"])
+@requires_auth
+def api_devices_tts_models():
+    try:
+        rows = mysql_query(
+            "SELECT id, model_code, model_name, is_default "
+            "FROM ai_model_config "
+            "WHERE model_type='TTS' AND is_enabled=1 "
+            "AND id IN ('TTS_KokoroHttpTTS') "
+            "ORDER BY FIELD(id, 'TTS_KokoroHttpTTS')"
+        )
+        return jsonify(
+            {
+                "ok": True,
+                "models": [
+                    {
+                        "id": str(row.get("id") or "").strip(),
+                        "model_code": str(row.get("model_code") or "").strip(),
+                        "model_name": str(row.get("model_name") or "").strip(),
+                        "is_default": str(row.get("is_default") or "0") == "1",
+                    }
+                    for row in rows
+                    if str(row.get("id") or "").strip()
+                ],
+            }
+        )
+    except Exception as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 500
+
+
+def _agent_model_field(model_type):
+    normalized = str(model_type or "").strip().upper()
+    if normalized == "ASR":
+        return "asr_model_id"
+    if normalized == "TTS":
+        return "tts_model_id"
+    raise ValueError("unsupported_agent_model_type")
+
+
+def _ensure_dedicated_agent_for_device_model(device, model_type, model_id):
+    field = _agent_model_field(model_type)
+    normalized_model_id = str(model_id or "").strip()
+    device_id = str(device.get("id") or "").strip()
+    device_mac = str(device.get("mac_address") or "").strip()
+    agent_id = str(device.get("agent_id") or "").strip()
+    if not agent_id:
+        raise ValueError("device_has_no_agent")
+
+    count_rows = mysql_query(
+        "SELECT COUNT(*) AS count FROM ai_device "
+        f"WHERE agent_id='{_sql_safe(agent_id)}'"
+    )
+    device_count = int(str((count_rows[0] if count_rows else {}).get("count") or "0"))
+    if device_count <= 1:
+        assignments = [
+            f"{field}='{_sql_safe(normalized_model_id)}'",
+            "updated_at=NOW()",
+        ]
+        if field == "tts_model_id" and normalized_model_id == "TTS_KokoroHttpTTS":
+            assignments.insert(1, "tts_voice_id='TTS_Kokoro0001'")
+        mysql_exec(
+            "UPDATE ai_agent "
+            f"SET {', '.join(assignments)} "
+            f"WHERE id='{_sql_safe(agent_id)}' LIMIT 1"
+        )
+        return {
+            "agent_id": agent_id,
+            "previous_agent_id": agent_id,
+            "agent_cloned": False,
+            "agent_device_count_before": device_count,
+        }
+
+    new_agent_id = uuid.uuid4().hex
+    new_agent_code = str(uuid.uuid4())
+    suffix = (device_mac or device_id or new_agent_id)[:17]
+    asr_model_select = (
+        f"'{_sql_safe(normalized_model_id)}'" if field == "asr_model_id" else "asr_model_id"
+    )
+    tts_model_select = (
+        f"'{_sql_safe(normalized_model_id)}'" if field == "tts_model_id" else "tts_model_id"
+    )
+    tts_voice_select = (
+        "'TTS_Kokoro0001'"
+        if field == "tts_model_id" and normalized_model_id == "TTS_KokoroHttpTTS"
+        else "tts_voice_id"
+    )
+    mysql_exec(
+        "INSERT INTO ai_agent ("
+        "id, user_id, agent_code, agent_name, asr_model_id, vad_model_id, "
+        "llm_model_id, slm_model_id, vllm_model_id, tts_model_id, tts_voice_id, "
+        "tts_language, tts_volume, tts_rate, tts_pitch, mem_model_id, "
+        "intent_model_id, system_prompt, summary_memory, chat_history_conf, "
+        "lang_code, language, sort, creator, created_at, updater, updated_at, "
+        "enable_camera"
+        ") "
+        "SELECT "
+        f"'{_sql_safe(new_agent_id)}', user_id, '{_sql_safe(new_agent_code)}', "
+        f"CONCAT(COALESCE(agent_name, 'Agent'), '-{_sql_safe(suffix)}'), "
+        f"{asr_model_select}, vad_model_id, llm_model_id, slm_model_id, "
+        f"vllm_model_id, {tts_model_select}, {tts_voice_select}, tts_language, tts_volume, "
+        "tts_rate, tts_pitch, mem_model_id, intent_model_id, system_prompt, "
+        "summary_memory, chat_history_conf, lang_code, language, sort, creator, "
+        "NOW(), updater, NOW(), enable_camera "
+        "FROM ai_agent "
+        f"WHERE id='{_sql_safe(agent_id)}' LIMIT 1"
+    )
+    mysql_exec(
+        "UPDATE ai_device "
+        f"SET agent_id='{_sql_safe(new_agent_id)}', update_date=NOW() "
+        f"WHERE id='{_sql_safe(device_id)}' LIMIT 1"
+    )
+    return {
+        "agent_id": new_agent_id,
+        "previous_agent_id": agent_id,
+        "agent_cloned": True,
+        "agent_device_count_before": device_count,
+    }
+
+
+def _ensure_dedicated_agent_for_device(device, asr_model_id):
+    return _ensure_dedicated_agent_for_device_model(device, "ASR", asr_model_id)
+
+
+def _ensure_dedicated_tts_agent_for_device(device, tts_model_id):
+    return _ensure_dedicated_agent_for_device_model(device, "TTS", tts_model_id)
+
+
+def _is_runtime_tcp_open(host, port, timeout_seconds=2):
+    safe_host = str(host or "").strip()
+    try:
+        safe_port = int(port)
+    except (TypeError, ValueError):
+        return False
+    if not safe_host or safe_port <= 0:
+        return False
+    check_script = (
+        "import socket,sys;"
+        "s=socket.socket();"
+        f"s.settimeout({float(timeout_seconds)});"
+        f"s.connect(({safe_host!r},{safe_port}));"
+        "s.close()"
+    )
+    cmd = [
+        "docker",
+        "exec",
+        "xiaozhi-esp32-server",
+        "python",
+        "-c",
+        check_script,
+    ]
+    try:
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=max(3, timeout_seconds + 2),
+        )
+        return result.returncode == 0
+    except Exception:
+        return False
+
+
+def _is_runtime_http_target_reachable(api_url, timeout_seconds=2):
+    parsed = urlparse(str(api_url or "").strip())
+    if not parsed.hostname:
+        return False
+    port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    return _is_runtime_tcp_open(parsed.hostname, port, timeout_seconds=timeout_seconds)
+
+
+@app.route("/api/devices/<path:device_id>/asr-model", methods=["PUT"])
+@requires_auth
+def api_device_asr_model_update(device_id):
+    try:
+        payload = request.get_json(silent=True) or {}
+        model_id = str(payload.get("asr_model_id") or payload.get("modelId") or "").strip()
+        if not model_id:
+            return jsonify({"ok": False, "error": "missing_asr_model_id"}), 400
+
+        model_rows = mysql_query(
+            "SELECT id, model_name, config_json FROM ai_model_config "
+            f"WHERE id='{_sql_safe(model_id)}' "
+            "AND id IN ('ASR_FunASRServer') "
+            "AND model_type='ASR' AND is_enabled=1 "
+            "LIMIT 1"
+        )
+        if not model_rows:
+            return jsonify({"ok": False, "error": "invalid_asr_model_id"}), 400
+        model_config = _parse_json_like_value(model_rows[0].get("config_json")) or {}
+        if model_id == "ASR_FunASRServer":
+            funasr_host = str(model_config.get("host") or "127.0.0.1").strip()
+            funasr_port = model_config.get("port") or 10095
+            if not _is_runtime_tcp_open(funasr_host, funasr_port):
+                return jsonify(
+                    {
+                        "ok": False,
+                        "error": "funasr_stream_unavailable",
+                        "message": f"FunASR流式服务不可用: {funasr_host}:{funasr_port}",
+                    }
+                ), 409
+
+        keys = _device_lookup_keys_for_reset(device_id)
+        if not keys:
+            return jsonify({"ok": False, "error": "missing_device_id"}), 400
+        condition = _device_lookup_sql_condition(["id", "mac_address"], keys)
+        device_rows = mysql_query(
+            "SELECT id, mac_address, agent_id FROM ai_device "
+            f"WHERE {condition} LIMIT 1"
+        )
+        if not device_rows:
+            return jsonify({"ok": False, "error": "device_not_found"}), 404
+        device = device_rows[0]
+        try:
+            agent_result = _ensure_dedicated_agent_for_device(device, model_id)
+        except ValueError as exc:
+            return jsonify({"ok": False, "error": str(exc)}), 400
+        return jsonify(
+            {
+                "ok": True,
+                "device_id": str(device.get("id") or "").strip(),
+                "device_mac": str(device.get("mac_address") or "").strip(),
+                "agent_id": agent_result["agent_id"],
+                "previous_agent_id": agent_result["previous_agent_id"],
+                "agent_cloned": agent_result["agent_cloned"],
+                "agent_device_count_before": agent_result["agent_device_count_before"],
+                "asr_model_id": model_id,
+                "asr_model_name": str(model_rows[0].get("model_name") or "").strip(),
+                "note": "设备下次重新连接语音服务时生效。",
+            }
+        )
+    except Exception as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 500
+
+
+@app.route("/api/devices/<path:device_id>/tts-model", methods=["PUT"])
+@requires_auth
+def api_device_tts_model_update(device_id):
+    try:
+        payload = request.get_json(silent=True) or {}
+        model_id = str(payload.get("tts_model_id") or payload.get("modelId") or "").strip()
+        if not model_id:
+            return jsonify({"ok": False, "error": "missing_tts_model_id"}), 400
+
+        model_rows = mysql_query(
+            "SELECT id, model_name, config_json FROM ai_model_config "
+            f"WHERE id='{_sql_safe(model_id)}' "
+            "AND id IN ('TTS_KokoroHttpTTS') "
+            "AND model_type='TTS' AND is_enabled=1 "
+            "LIMIT 1"
+        )
+        if not model_rows:
+            return jsonify({"ok": False, "error": "invalid_tts_model_id"}), 400
+
+        model_config = _parse_json_like_value(model_rows[0].get("config_json")) or {}
+        if model_id == "TTS_KokoroHttpTTS":
+            kokoro_api_url = str(
+                model_config.get("api_url") or "http://127.0.0.1:8880/v1/audio/speech"
+            ).strip()
+            if not _is_runtime_http_target_reachable(kokoro_api_url):
+                return jsonify(
+                    {
+                        "ok": False,
+                        "error": "kokoro_tts_unavailable",
+                        "message": f"Kokoro TTS服务不可用: {kokoro_api_url}",
+                    }
+                ), 409
+
+        keys = _device_lookup_keys_for_reset(device_id)
+        if not keys:
+            return jsonify({"ok": False, "error": "missing_device_id"}), 400
+        condition = _device_lookup_sql_condition(["id", "mac_address"], keys)
+        device_rows = mysql_query(
+            "SELECT id, mac_address, agent_id FROM ai_device "
+            f"WHERE {condition} LIMIT 1"
+        )
+        if not device_rows:
+            return jsonify({"ok": False, "error": "device_not_found"}), 404
+        device = device_rows[0]
+        try:
+            agent_result = _ensure_dedicated_tts_agent_for_device(device, model_id)
+        except ValueError as exc:
+            return jsonify({"ok": False, "error": str(exc)}), 400
+        return jsonify(
+            {
+                "ok": True,
+                "device_id": str(device.get("id") or "").strip(),
+                "device_mac": str(device.get("mac_address") or "").strip(),
+                "agent_id": agent_result["agent_id"],
+                "previous_agent_id": agent_result["previous_agent_id"],
+                "agent_cloned": agent_result["agent_cloned"],
+                "agent_device_count_before": agent_result["agent_device_count_before"],
+                "tts_model_id": model_id,
+                "tts_model_name": str(model_rows[0].get("model_name") or "").strip(),
+                "note": "设备下次重新连接语音服务时生效。",
+            }
+        )
+    except Exception as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 500
+
+
 @app.route("/api/devices/<path:device_id>/factory-reset", methods=["POST"])
 @app.route("/device/<path:device_id>/factory-reset", methods=["POST"])
 @requires_auth
@@ -3240,6 +4717,103 @@ def api_device_factory_reset(device_id):
         return jsonify({"success": False, "error": str(exc)}), 500
     except Exception as exc:
         return jsonify({"success": False, "error": str(exc)}), 500
+
+
+@app.route("/api/weapp/devices/<path:device_id>/ota", methods=["GET"])
+def api_weapp_device_ota_status(device_id):
+    openid = str(request.args.get("openid") or request.headers.get("x-wechat-openid") or request.headers.get("x-openid") or "").strip()
+    if not openid:
+        return jsonify({"code": 1, "msg": "missing_openid"}), 400
+
+    status = _build_device_ota_status(device_id, openid)
+    if not status:
+        return jsonify({"code": 1, "msg": "device_not_found"}), 404
+    if status.get("message") == "unauthorized":
+        return jsonify({"code": 1, "msg": "unauthorized"}), 403
+    public_status = dict(status)
+    public_status.pop("firmwareUrl", None)
+    return jsonify({"code": 0, "data": public_status})
+
+
+@app.route("/api/weapp/devices/<path:device_id>/ota/update", methods=["POST"])
+def api_weapp_device_ota_update(device_id):
+    payload = request.get_json(silent=True) or {}
+    openid = str(
+        payload.get("openid")
+        or request.args.get("openid")
+        or request.headers.get("x-wechat-openid")
+        or request.headers.get("x-openid")
+        or ""
+    ).strip()
+    if not openid:
+        return jsonify({"code": 1, "msg": "missing_openid"}), 400
+
+    status = _build_device_ota_status(device_id, openid)
+    if not status:
+        return jsonify({"code": 1, "msg": "device_not_found"}), 404
+    if status.get("message") == "unauthorized":
+        return jsonify({"code": 1, "msg": "unauthorized"}), 403
+    if not status.get("updateAvailable"):
+        return jsonify({"code": 1, "msg": "no_update_available"}), 409
+
+    firmware_url = str(status.get("firmwareUrl") or "").strip()
+    if not firmware_url:
+        return jsonify({"code": 1, "msg": "firmware_url_missing"}), 500
+
+    runtime_result = _post_runtime_upgrade_firmware_command(
+        str(status.get("deviceId") or device_id).strip(),
+        firmware_url,
+    )
+    if not runtime_result.get("attempted"):
+        return jsonify({"code": 1, "msg": runtime_result.get("message") or "runtime_unavailable"}), 503
+    if not runtime_result.get("pushed"):
+        return jsonify({"code": 1, "msg": runtime_result.get("message") or "device_offline"}), 409
+    if not runtime_result.get("acknowledged"):
+        return jsonify({
+            "code": 1,
+            "msg": runtime_result.get("message") or "ota_command_not_acknowledged",
+        }), 409
+
+    try:
+        ota_job = _create_device_ota_job(
+            str(status.get("deviceId") or device_id).strip(),
+            status.get("currentVersion") or "",
+            status.get("latestVersion") or "",
+            firmware_url,
+        )
+    except Exception as exc:
+        logger.exception("Failed to create OTA job for %s", device_id)
+        return jsonify({"code": 1, "msg": f"ota_job_create_failed: {exc}"}), 500
+
+    return jsonify({
+        "code": 0,
+        "data": {
+            "deviceId": status.get("deviceId") or "",
+            "board": status.get("board") or "",
+            # ACK means only that the device accepted the command. The actual
+            # version changes after the rebooted firmware reconnects and reports it.
+            "currentVersion": status.get("currentVersion") or "",
+            "latestVersion": status.get("latestVersion") or "",
+            "pushed": True,
+            "acknowledged": True,
+            "otaJob": _public_device_ota_job(ota_job),
+            "message": runtime_result.get("message") or "update_pushed",
+        }
+    })
+
+
+@app.route("/api/weapp/devices/<path:device_id>/runtime", methods=["GET"])
+def api_weapp_device_runtime_status(device_id):
+    openid = str(request.args.get("openid") or request.headers.get("x-wechat-openid") or request.headers.get("x-openid") or "").strip()
+    if not openid:
+        return jsonify({"code": 1, "msg": "missing_openid"}), 400
+
+    status = _load_device_runtime_status(device_id, openid)
+    if not status:
+        return jsonify({"code": 1, "msg": "device_not_found"}), 404
+    if status.get("message") == "unauthorized":
+        return jsonify({"code": 1, "msg": "unauthorized"}), 403
+    return jsonify({"code": 0, "data": status})
 
 
 @app.route("/api/age-profiles", methods=["GET"])
@@ -3697,6 +5271,7 @@ def api_robot_profile_get():
         return jsonify({
             "ok": True,
             **payload,
+            "voice_options": ROBOT_PROFILE_VOICE_OPTIONS,
             "configured_identity_name": str(config.get("identity", {}).get("name") or "").strip(),
             "effective_identity_name": effective_identity_name,
             "runtime_device_id": XIAOZHI_DEBUG_DEVICE_ID,
@@ -3729,12 +5304,73 @@ def api_robot_profile_put():
                     if text:
                         section[key] = text
             config[section_name] = section
+        config["voice"] = _normalize_robot_profile_voice(data.get("voice"))
 
         _save_robot_profile_config(config)
         return jsonify({
             "ok": True,
             **config,
+            "voice_options": ROBOT_PROFILE_VOICE_OPTIONS,
             "config_path": ROBOT_PROFILE_CONFIG_PATH,
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/main-prompt", methods=["GET"])
+@requires_auth
+def api_main_prompt_get():
+    try:
+        prompt, active_path, updated_at = _load_main_prompt()
+        response = jsonify({
+            "ok": True,
+            "prompt": prompt,
+            "length": len(prompt),
+            "active_path": active_path,
+            "updated_at": updated_at,
+            "config_path": MAIN_PROMPT_CONFIG_PATH,
+            "runtime_path": RUNTIME_SOURCE_MAIN_PROMPT_DATA_PATH,
+        })
+        response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+        return response
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/main-prompt", methods=["PUT"])
+@requires_auth
+def api_main_prompt_put():
+    data = request.get_json(silent=True) or {}
+    prompt = data.get("prompt", data.get("main_prompt"))
+    if not isinstance(prompt, str):
+        return jsonify({"error": "prompt 必须是文本"}), 400
+
+    prompt = prompt.replace("\r\n", "\n").replace("\r", "\n").strip()
+    if not prompt:
+        return jsonify({"error": "主 Prompt 不能为空"}), 400
+    if len(prompt) > 200000:
+        return jsonify({"error": "主 Prompt 不能超过 200000 个字符"}), 400
+
+    try:
+        saved_paths, configured_paths = _save_main_prompt(prompt)
+        if configured_paths:
+            runtime_reloaded, runtime_reload_error = _reload_runtime_service()
+        else:
+            runtime_reloaded = False
+            runtime_reload_error = "未找到 runtime 配置文件，需手动重启服务"
+        _, active_path, updated_at = _load_main_prompt()
+        return jsonify({
+            "ok": True,
+            "prompt": prompt,
+            "length": len(prompt),
+            "active_path": active_path,
+            "updated_at": updated_at,
+            "saved_paths": saved_paths,
+            "runtime_configured_paths": configured_paths,
+            "runtime_reloaded": runtime_reloaded,
+            "runtime_reload_error": runtime_reload_error,
+            "config_path": MAIN_PROMPT_CONFIG_PATH,
+            "runtime_path": RUNTIME_SOURCE_MAIN_PROMPT_DATA_PATH,
         })
     except Exception as e:
         return jsonify({"error": str(e)}), 500
