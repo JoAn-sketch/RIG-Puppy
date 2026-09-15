@@ -2140,6 +2140,16 @@ class ConnectionHandler:
                 for future, tool_call_data, tool_input in futures_with_data:
                     try:
                         result = future.result(timeout=tool_call_timeout)
+                        # A plugin failure must be represented as an
+                        # ActionResponse.  Older/third-party executors can
+                        # accidentally return None; letting that through
+                        # causes _handle_function_result to dereference
+                        # result.response and abort the whole turn without TTS.
+                        if result is None:
+                            result = ActionResponse(
+                                action=Action.ERROR,
+                                response="工具暂时没有返回结果，请稍后再试。",
+                            )
                         tool_results.append((result, tool_call_data))
                         # 使用公共方法上报工具调用结果
                         enqueue_tool_report(self, tool_call_data['name'], tool_input, str(result.result) if result.result else None, report_tool_call=False)
