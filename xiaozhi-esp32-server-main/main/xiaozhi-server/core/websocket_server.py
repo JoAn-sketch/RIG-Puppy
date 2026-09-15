@@ -60,7 +60,10 @@ class WebSocketServer:
             False,
         )
         self._vad = modules["vad"] if "vad" in modules else None
-        self._asr = None
+        # Keep the startup ASR instance and share local models between
+        # connections.  Initializing FunASR once per board connection can add
+        # another 900MB+ model before the previous connection is collected.
+        self._asr = modules["asr"] if "asr" in modules else None
         self._llm = None
         self._intent = None
         self._memory = None

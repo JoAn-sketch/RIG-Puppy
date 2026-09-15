@@ -192,8 +192,17 @@ class ConnectionHandler:
         self.report_tts_enable = self.read_config_from_api
 
         # 依赖的组件
-        self.vad = None
-        self.asr = None
+        # VAD and local ASR are ready on the WebSocketServer before a device
+        # connects.  Attach them immediately so the first audio turn is not
+        # discarded while the per-device LLM/TTS configuration is loading.
+        self.vad = _vad
+        self.asr = (
+            _asr
+            if _asr is not None
+            and getattr(_asr, "interface_type", None) == InterfaceType.LOCAL
+            else None
+        )
+        self._asr_channel_provider = None
         self.tts = None
         self._asr = _asr
         self._vad = _vad
@@ -458,6 +467,11 @@ class ConnectionHandler:
 
             # 启动超时检查任务
             self.timeout_task = asyncio.create_task(self._check_timeout())
+
+            # Start consuming audio before the slower private configuration
+            # request.  This closes the startup window in which listen/stop
+            # used to arrive while conn.asr was still None.
+            self._open_asr_audio_channels()
 
             self.welcome_msg = self.config["xiaozhi"]
             self.welcome_msg["session_id"] = self.session_id
@@ -746,10 +760,8 @@ class ConnectionHandler:
 
             # 初始化声纹识别
             self._initialize_voiceprint()
-            # 打开语音识别通道
-            asyncio.run_coroutine_threadsafe(
-                self.asr.open_audio_channels(self), self.loop
-            )
+            # 打开语音识别通道（对共享本地 ASR 及连接级 ASR 都幂等）
+            self._open_asr_audio_channels()
 
             self._ensure_runtime_backends()
             """加载记忆"""
@@ -951,6 +963,15 @@ class ConnectionHandler:
 
         return asr
 
+    def _open_asr_audio_channels(self):
+        """Start this connection's ASR queue worker once."""
+        if self.asr is None or self._asr_channel_provider is self.asr:
+            return
+        asyncio.run_coroutine_threadsafe(
+            self.asr.open_audio_channels(self), self.loop
+        )
+        self._asr_channel_provider = self.asr
+
     def _ensure_runtime_backends(self):
         if self.llm is None:
             select_llm_module = self.config["selected_module"]["LLM"]
@@ -1071,7 +1092,13 @@ class ConnectionHandler:
             and self._asr is not None
             and getattr(self._asr, "interface_type", None) == InterfaceType.LOCAL
         ):
-            init_asr = False
+            # Reuse the startup model only when the device still selects the
+            # same ASR provider.  A genuinely different per-device provider
+            # must be initialized instead of silently receiving FunASR audio.
+            common_asr_name = self.common_config.get("selected_module", {}).get("ASR")
+            private_asr_name = private_config.get("selected_module", {}).get("ASR")
+            if private_asr_name == common_asr_name:
+                init_asr = False
 
         if init_vad:
             self.config["VAD"] = private_config["VAD"]
