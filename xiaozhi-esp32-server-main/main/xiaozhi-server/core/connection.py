@@ -1062,6 +1062,17 @@ class ConnectionHandler:
         init_vad = check_vad_update(self.common_config, private_config)
         init_asr = check_asr_update(self.common_config, private_config)
 
+        # A local ASR model is initialized once by WebSocketServer and shared by
+        # connections.  Do not create another FunASR model while applying a
+        # per-device config; a second 900MB+ model can exhaust the host when a
+        # board reconnects repeatedly.
+        if (
+            init_asr
+            and self._asr is not None
+            and getattr(self._asr, "interface_type", None) == InterfaceType.LOCAL
+        ):
+            init_asr = False
+
         if init_vad:
             self.config["VAD"] = private_config["VAD"]
             self.config["selected_module"]["VAD"] = private_config["selected_module"][
