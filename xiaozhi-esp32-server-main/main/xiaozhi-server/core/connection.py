@@ -1097,7 +1097,14 @@ class ConnectionHandler:
             # must be initialized instead of silently receiving FunASR audio.
             common_asr_name = self.common_config.get("selected_module", {}).get("ASR")
             private_asr_name = private_config.get("selected_module", {}).get("ASR")
-            if private_asr_name == common_asr_name:
+            common_asr_config = self.common_config.get("ASR", {}).get(common_asr_name, {})
+            private_asr_config = private_config.get("ASR", {}).get(private_asr_name, {})
+            common_asr_type = common_asr_config.get("type", common_asr_name)
+            private_asr_type = private_asr_config.get("type", private_asr_name)
+            if (
+                private_asr_name == common_asr_name
+                and private_asr_type == common_asr_type
+            ):
                 init_asr = False
 
         if init_vad:
