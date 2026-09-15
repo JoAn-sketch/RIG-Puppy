@@ -53,7 +53,7 @@ class WebSocketServer:
             self.logger,
             self.config,
             "VAD" in self.config["selected_module"],
-            False,
+            "ASR" in self.config["selected_module"],
             False,
             False,
             False,
