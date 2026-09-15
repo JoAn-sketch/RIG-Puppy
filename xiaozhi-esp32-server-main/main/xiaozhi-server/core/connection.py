@@ -1944,7 +1944,30 @@ class ConnectionHandler:
                     ),
                 )
         except Exception as e:
-            self.logger.bind(tag=TAG).error(f"LLM 处理出错 {query}: {e}")
+            self.logger.bind(tag=TAG).error(
+                f"LLM 处理出错 {query}: {e}", exc_info=True
+            )
+            # Never leave the device waiting after an LLM/configuration
+            # failure.  Emit the normal error prompt and close the sentence
+            # so the firmware can resume listening instead of appearing hung.
+            error_text = get_system_error_response(self.config)
+            if self.tts is not None:
+                self.tts.tts_text_queue.put(
+                    TTSMessageDTO(
+                        sentence_id=current_sentence_id,
+                        sentence_type=SentenceType.MIDDLE,
+                        content_type=ContentType.TEXT,
+                        content_detail=error_text,
+                    )
+                )
+                if depth == 0:
+                    self.tts.tts_text_queue.put(
+                        TTSMessageDTO(
+                            sentence_id=current_sentence_id,
+                            sentence_type=SentenceType.LAST,
+                            content_type=ContentType.ACTION,
+                        )
+                    )
             return None
 
         # 处理流式响应
