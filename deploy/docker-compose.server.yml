@@ -1,0 +1,70 @@
+services:
+  xiaozhi-esp32-server:
+    build:
+      context: /home/ubuntu/RIG-Puppy/xiaozhi-esp32-server-main
+      dockerfile: Dockerfile-server
+    image: rig-puppy-server:main
+    container_name: xiaozhi-esp32-server
+    restart: always
+    security_opt:
+      - seccomp:unconfined
+    environment:
+      TZ: Asia/Shanghai
+    ports:
+      - "8000:8000"
+      - "8003:8003"
+    volumes:
+      - /home/ubuntu/rig-puppy-runtime/data:/opt/xiaozhi-esp32-server/data
+      - /home/ubuntu/rig-puppy-runtime/models/SenseVoiceSmall:/opt/xiaozhi-esp32-server/models/SenseVoiceSmall
+
+  xiaozhi-esp32-server-web:
+    image: ghcr.nju.edu.cn/xinnan-tech/xiaozhi-esp32-server:web_latest
+    container_name: xiaozhi-esp32-server-web
+    restart: always
+    depends_on:
+      xiaozhi-esp32-server-db:
+        condition: service_healthy
+      xiaozhi-esp32-server-redis:
+        condition: service_healthy
+    ports:
+      - "8002:8002"
+    environment:
+      TZ: Asia/Shanghai
+      SPRING_DATASOURCE_DRUID_URL: jdbc:mysql://xiaozhi-esp32-server-db:3306/xiaozhi_esp32_server?useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Shanghai&nullCatalogMeansCurrent=true&connectTimeout=30000&socketTimeout=30000&autoReconnect=true&failOverReadOnly=false&maxReconnects=10
+      SPRING_DATASOURCE_DRUID_USERNAME: root
+      SPRING_DATASOURCE_DRUID_PASSWORD: ${MYSQL_ROOT_PASSWORD:?MYSQL_ROOT_PASSWORD is required}
+      SPRING_DATA_REDIS_HOST: xiaozhi-esp32-server-redis
+      SPRING_DATA_REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+      SPRING_DATA_REDIS_PORT: 6379
+    volumes:
+      - /home/ubuntu/rig-puppy-runtime/uploadfile:/uploadfile
+
+  xiaozhi-esp32-server-db:
+    image: mysql:latest
+    container_name: xiaozhi-esp32-server-db
+    restart: always
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      timeout: 45s
+      interval: 10s
+      retries: 10
+    expose:
+      - "3306"
+    volumes:
+      - /home/ubuntu/rig-puppy-runtime/mysql:/var/lib/mysql
+    environment:
+      TZ: Asia/Shanghai
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?MYSQL_ROOT_PASSWORD is required}
+      MYSQL_DATABASE: xiaozhi_esp32_server
+      MYSQL_INITDB_ARGS: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
+
+  xiaozhi-esp32-server-redis:
+    image: redis:8.0
+    container_name: xiaozhi-esp32-server-redis
+    restart: always
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
