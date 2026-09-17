@@ -6,13 +6,37 @@ from core.providers.tts.base import TTSProviderBase
 
 
 class TTSProvider(TTSProviderBase):
+    VOICE_ALIASES = {
+        "zf_xiaoxiao": "zh-CN-XiaoxiaoNeural",
+        "zm_yunyang": "zh-CN-YunyangNeural",
+        "zf_xiaoyi": "zh-CN-XiaoyiNeural",
+        "zm_yunjian": "zh-CN-YunjianNeural",
+        "zm_yunxi": "zh-CN-YunxiNeural",
+        "zm_yunxia": "zh-CN-YunxiaNeural",
+        "zf_xiaobei": "zh-CN-liaoning-XiaobeiNeural",
+        "zf_xiaoni": "zh-CN-shaanxi-XiaoniNeural",
+        "mandarin_female": "zh-CN-XiaoxiaoNeural",
+        "mandarin_male": "zh-CN-YunyangNeural",
+        "cute_female": "zh-CN-XiaoyiNeural",
+        "strong_male": "zh-CN-YunjianNeural",
+        "young_male": "zh-CN-YunxiNeural",
+        "boy_male": "zh-CN-YunxiaNeural",
+        "liaoning_female": "zh-CN-liaoning-XiaobeiNeural",
+        "shaanxi_female": "zh-CN-shaanxi-XiaoniNeural",
+    }
+
     def __init__(self, config, delete_audio_file):
         super().__init__(config, delete_audio_file)
         if config.get("private_voice"):
-            self.voice = config.get("private_voice")
+            configured_voice = config.get("private_voice")
         else:
-            self.voice = config.get("voice")
+            configured_voice = config.get("voice")
+        self.voice = self._normalize_voice(configured_voice)
         self.audio_file_type = config.get("format", "mp3")
+
+    def _normalize_voice(self, voice):
+        raw_voice = str(voice or "").strip()
+        return self.VOICE_ALIASES.get(raw_voice, raw_voice or "zh-CN-XiaoxiaoNeural")
 
     def generate_filename(self, extension=".mp3"):
         return os.path.join(

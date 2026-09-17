@@ -1,0 +1,303 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Greeting Sources - kb-admin</title>
+<style>
+* { box-sizing: border-box; }
+body { margin: 0; font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; color: #172033; background: linear-gradient(180deg, #f6fbff 0%, #f5f7fb 100%); }
+header { background: #0f172a; color: #fff; padding: 14px 24px; display: flex; justify-content: space-between; align-items: center; }
+header h1 { margin: 0; font-size: 18px; font-weight: 600; }
+header a { color: #94a3b8; text-decoration: none; font-size: 13px; margin-left: 16px; }
+header a:hover { color: #fff; }
+main { max-width: 1280px; margin: 24px auto; padding: 0 16px 42px; }
+.hero, .card { background: #fff; border: 1px solid #dbe6f4; border-radius: 18px; box-shadow: 0 10px 28px rgba(15, 23, 42, .06); }
+.hero { padding: 24px 26px; margin-bottom: 18px; background: linear-gradient(135deg, #ecfeff 0%, #eff6ff 45%, #fff7ed 100%); border-color: #bae6fd; }
+.hero h2 { margin: 0 0 10px; font-size: 22px; color: #0f172a; }
+.hero p { margin: 0; color: #475569; font-size: 13px; line-height: 1.8; max-width: 980px; }
+.toolbar { display: grid; grid-template-columns: 220px 1fr auto; gap: 12px; align-items: end; margin-bottom: 18px; }
+.field label { display: block; margin-bottom: 7px; color: #475569; font-size: 12px; font-weight: 700; }
+.field input, .field select { width: 100%; height: 40px; padding: 8px 10px; border: 1px solid #cbd5e1; border-radius: 10px; background: #fff; color: #0f172a; font-size: 13px; }
+.field input:focus, .field select:focus { outline: none; border-color: #38bdf8; box-shadow: 0 0 0 3px rgba(56, 189, 248, .16); }
+button { border: 0; border-radius: 10px; height: 40px; padding: 0 16px; cursor: pointer; color: #fff; font-weight: 700; background: linear-gradient(135deg, #0ea5e9 0%, #2563eb 100%); }
+button:disabled { opacity: .55; cursor: not-allowed; }
+.grid { display: grid; grid-template-columns: .8fr 1.2fr; gap: 18px; }
+.card { padding: 20px; }
+.card h3 { margin: 0 0 8px; font-size: 16px; color: #0f172a; }
+.card p { margin: 0 0 14px; color: #64748b; font-size: 12px; line-height: 1.7; }
+.stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-bottom: 14px; }
+.stat { border: 1px solid #e2e8f0; background: #f8fafc; border-radius: 13px; padding: 12px; }
+.stat .label { color: #64748b; font-size: 12px; margin-bottom: 5px; }
+.stat .value { color: #0f172a; font-size: 18px; font-weight: 800; word-break: break-word; }
+.selected-box { border: 1px solid #c7d2fe; background: linear-gradient(180deg, #eef2ff 0%, #fff 100%); border-radius: 14px; padding: 14px; }
+.kv { display: grid; grid-template-columns: 130px 1fr; gap: 8px 12px; font-size: 13px; line-height: 1.6; }
+.kv .key { color: #64748b; }
+.kv .value { color: #0f172a; word-break: break-word; }
+.candidate-list { display: grid; gap: 12px; }
+.candidate { border: 1px solid #dbeafe; background: #ffffff; border-radius: 15px; padding: 15px; }
+.candidate.selected { border-color: #22c55e; box-shadow: 0 0 0 3px rgba(34,197,94,.12); }
+.candidate-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; margin-bottom: 10px; }
+.candidate-title { font-weight: 800; color: #0f172a; font-size: 15px; }
+.pill { display: inline-flex; align-items: center; white-space: nowrap; border-radius: 999px; padding: 4px 9px; font-size: 11px; font-weight: 800; background: #e0f2fe; color: #0369a1; border: 1px solid #bae6fd; }
+.pill.selected { background: #dcfce7; color: #166534; border-color: #86efac; }
+.pill.priority { background: #fef3c7; color: #92400e; border-color: #fde68a; }
+.pill.score { background: #ede9fe; color: #5b21b6; border-color: #ddd6fe; }
+.hint-text { font-size: 17px; line-height: 1.7; color: #111827; padding: 12px 14px; border-radius: 12px; background: #f8fafc; border: 1px solid #e2e8f0; margin: 10px 0; }
+.meta { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-top: 10px; }
+.meta-item { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px; padding: 9px 10px; }
+.meta-item .label { color: #64748b; font-size: 11px; margin-bottom: 4px; }
+.meta-item .value { color: #0f172a; font-size: 12px; word-break: break-word; line-height: 1.5; }
+.empty { padding: 58px 12px; text-align: center; color: #94a3b8; border: 1px dashed #cbd5e1; border-radius: 14px; background: #f8fafc; }
+#toast { position: fixed; right: 28px; bottom: 28px; background: #10b981; color: #fff; padding: 10px 18px; border-radius: 10px; font-size: 13px; box-shadow: 0 10px 24px rgba(0,0,0,.18); opacity: 0; transform: translateY(12px); transition: opacity .25s, transform .25s; pointer-events: none; z-index: 1000; }
+#toast.show { opacity: 1; transform: translateY(0); }
+#toast.error { background: #ef4444; }
+@media (max-width: 960px) {
+  .toolbar, .grid, .stats, .meta { grid-template-columns: 1fr; }
+  .kv { grid-template-columns: 1fr; }
+}
+</style>
+</head>
+<body>
+<header>
+  <h1>🌅 Greeting Sources</h1>
+  <div>
+    <a href="/">📚 后端</a>
+    <a href="/greeting">🌅 Greeting</a>
+    <a href="/greeting-sources">🧩 Greeting Sources</a>
+    <a href="/dingyi-chat">💬 对话模拟</a>
+  </div>
+</header>
+
+<main>
+  <section class="hero">
+    <h2>Potential Daily Greeting Sources</h2>
+    <p>这里展示某一天内被短期 memory 标记为可 follow-up 的内容。Daily Greeting 第二天会优先选择 personal event、unfinished thread、emotional moment，而不是只挑有趣知识点。</p>
+  </section>
+
+  <section class="toolbar">
+    <div class="field">
+      <label for="dateInput">Source Date</label>
+      <input id="dateInput" type="date">
+    </div>
+    <div class="field">
+      <label for="deviceSelect">Device</label>
+      <select id="deviceSelect"></select>
+    </div>
+    <button id="refreshBtn" type="button" onclick="loadAll()">刷新</button>
+  </section>
+
+  <section class="grid">
+    <article class="card">
+      <h3>Device Summary</h3>
+      <p>切换设备后，右侧会显示这台设备所选日期的候选 source。</p>
+      <div class="stats">
+        <div class="stat"><div class="label">Devices</div><div id="statDevices" class="value">-</div></div>
+        <div class="stat"><div class="label">Candidates</div><div id="statCandidates" class="value">-</div></div>
+        <div class="stat"><div class="label">Date</div><div id="statDate" class="value">-</div></div>
+      </div>
+
+      <h3>Selected Daily Greeting</h3>
+      <p>这是 runtime state 里最近一次真正被发送的 Daily Greeting source。它不一定属于当前选择日期。</p>
+      <div id="selectedBox" class="selected-box">
+        <div class="empty">请选择设备</div>
+      </div>
+    </article>
+
+    <article class="card">
+      <h3>Potential Sources</h3>
+      <p>这些是所选日期内可能被第二天 Daily Greeting 选中的 follow-up 候选。排序接近 runtime：greeting score、候选类型、memory 类型、重要性、时间。</p>
+      <div id="candidateList" class="candidate-list">
+        <div class="empty">加载中...</div>
+      </div>
+    </article>
+  </section>
+</main>
+
+<div id="toast"></div>
+
+<script>
+var devices = [];
+var toastTimer = null;
+
+function esc(value) {
+  return String(value == null ? "" : value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function showToast(message, isError) {
+  var t = document.getElementById("toast");
+  t.textContent = (isError ? "✗ " : "✓ ") + message;
+  t.className = "show" + (isError ? " error" : "");
+  if (toastTimer) clearTimeout(toastTimer);
+  toastTimer = setTimeout(function () { t.className = ""; }, 2500);
+}
+
+function yesterdayString() {
+  var d = new Date();
+  d.setDate(d.getDate() - 1);
+  return d.toISOString().slice(0, 10);
+}
+
+function formatTime(ms) {
+  var value = Number(ms || 0);
+  if (!value) return "-";
+  try {
+    return new Date(value).toLocaleString();
+  } catch (e) {
+    return String(ms);
+  }
+}
+
+function renderDevices() {
+  var select = document.getElementById("deviceSelect");
+  if (!devices.length) {
+    select.innerHTML = '<option value="">无设备</option>';
+    return;
+  }
+  var previous = select.value;
+  select.innerHTML = devices.map(function (item) {
+    var label = item.device_id + " · " + item.candidate_count + " candidates";
+    return '<option value="' + esc(item.device_id) + '">' + esc(label) + '</option>';
+  }).join("");
+  if (previous && devices.some(function (item) { return item.device_id === previous; })) {
+    select.value = previous;
+  }
+}
+
+function renderSelected(selected) {
+  var box = document.getElementById("selectedBox");
+  if (!selected || !selected.source_id) {
+    box.innerHTML = '<div class="empty">暂无已发送 Daily Greeting state</div>';
+    return;
+  }
+  box.innerHTML = '' +
+    '<div class="kv">' +
+      '<div class="key">delivered</div><div class="value">' + esc(selected.delivered) + '</div>' +
+      '<div class="key">date</div><div class="value">' + esc(selected.date || '-') + '</div>' +
+      '<div class="key">type</div><div class="value">' + esc(selected.greeting_type || '-') + '</div>' +
+      '<div class="key">source_id</div><div class="value">' + esc(selected.source_id || '-') + '</div>' +
+      '<div class="key">time</div><div class="value">' + esc(selected.timestamp || '-') + '</div>' +
+      '<div class="key">text</div><div class="value">' + esc(selected.generated_text || '-') + '</div>' +
+    '</div>';
+}
+
+function renderCandidates(data) {
+  var list = document.getElementById("candidateList");
+  var candidates = data.candidates || [];
+  document.getElementById("statCandidates").textContent = String(candidates.length);
+  renderSelected(data.selected || {});
+  if (!candidates.length) {
+    list.innerHTML = '<div class="empty">这个日期没有可作为 Daily Greeting follow-up 的候选内容。</div>';
+    return;
+  }
+  list.innerHTML = candidates.map(function (item) {
+    var selectedClass = item.selected_by_daily_greeting ? " selected" : "";
+    var selectedPill = item.selected_by_daily_greeting ? '<span class="pill selected">selected source</span>' : '';
+    return '' +
+      '<div class="candidate' + selectedClass + '">' +
+        '<div class="candidate-head">' +
+          '<div>' +
+            '<div class="candidate-title">' + esc(item.display_hint || item.topic || item.source_id) + '</div>' +
+            '<div style="margin-top:6px">' +
+              '<span class="pill">' + esc(item.memory_type || '-') + '</span> ' +
+              '<span class="pill priority">' + esc(item.greeting_candidate_type || '-') + '</span> ' +
+              '<span class="pill score">score ' + esc(formatScore(item.greeting_score)) + '</span> ' +
+              selectedPill +
+            '</div>' +
+          '</div>' +
+          '<span class="pill">' + esc(item.source_id || '-') + '</span>' +
+        '</div>' +
+        '<div class="hint-text">' + esc(item.potential_text || '-') + '</div>' +
+        '<div class="meta">' +
+          metaItem('topic', item.topic) +
+          metaItem('greeting type', item.greeting_candidate_type) +
+          metaItem('greeting score', formatScore(item.greeting_score)) +
+          metaItem('emotional weight', formatScore(item.emotional_weight)) +
+          metaItem('follow-up needed', item.follow_up_needed) +
+          metaItem('evidence', ((item.greeting_candidate || {}).evidence || []).join(', ')) +
+          metaItem('last active', formatTime(item.last_active_at_ms)) +
+          metaItem('summary', item.summary) +
+          metaItem('last user', item.last_user_text) +
+          metaItem('entities', (item.entities || []).join(', ')) +
+          metaItem('open questions', (item.open_questions || []).join(', ')) +
+        '</div>' +
+      '</div>';
+  }).join("");
+}
+
+function metaItem(label, value) {
+  var display = (value === undefined || value === null || value === "") ? "-" : value;
+  return '<div class="meta-item"><div class="label">' + esc(label) + '</div><div class="value">' + esc(display) + '</div></div>';
+}
+
+function formatScore(value) {
+  var numberValue = Number(value || 0);
+  if (!isFinite(numberValue)) return "0.000";
+  return numberValue.toFixed(3);
+}
+
+function loadDevices() {
+  var date = document.getElementById("dateInput").value || yesterdayString();
+  document.getElementById("statDate").textContent = date;
+  return fetch("/api/greeting-sources/devices?date=" + encodeURIComponent(date) + "&_ts=" + Date.now(), { cache: "no-store" })
+    .then(function (res) {
+      return res.json().then(function (body) {
+        if (!res.ok || body.error) throw new Error(body.error || ("HTTP " + res.status));
+        return body;
+      });
+    })
+    .then(function (body) {
+      devices = body.devices || [];
+      document.getElementById("statDevices").textContent = String(devices.length);
+      renderDevices();
+      return devices;
+    });
+}
+
+function loadDeviceDetail() {
+  var deviceId = document.getElementById("deviceSelect").value;
+  var date = document.getElementById("dateInput").value || yesterdayString();
+  if (!deviceId) {
+    document.getElementById("candidateList").innerHTML = '<div class="empty">无设备可查看</div>';
+    renderSelected({});
+    return Promise.resolve();
+  }
+  return fetch("/api/greeting-sources/device/" + encodeURIComponent(deviceId) + "?date=" + encodeURIComponent(date) + "&_ts=" + Date.now(), { cache: "no-store" })
+    .then(function (res) {
+      return res.json().then(function (body) {
+        if (!res.ok || body.error) throw new Error(body.error || ("HTTP " + res.status));
+        return body;
+      });
+    })
+    .then(renderCandidates);
+}
+
+function loadAll() {
+  var btn = document.getElementById("refreshBtn");
+  btn.disabled = true;
+  btn.textContent = "加载中...";
+  loadDevices()
+    .then(loadDeviceDetail)
+    .catch(function (err) {
+      showToast("加载失败: " + err.message, true);
+      document.getElementById("candidateList").innerHTML = '<div class="empty">加载失败</div>';
+    })
+    .finally(function () {
+      btn.disabled = false;
+      btn.textContent = "刷新";
+    });
+}
+
+document.getElementById("dateInput").value = yesterdayString();
+document.getElementById("dateInput").addEventListener("change", loadAll);
+document.getElementById("deviceSelect").addEventListener("change", loadDeviceDetail);
+loadAll();
+</script>
+<script src="/shared-nav.js"></script>
+</body>
+</html>

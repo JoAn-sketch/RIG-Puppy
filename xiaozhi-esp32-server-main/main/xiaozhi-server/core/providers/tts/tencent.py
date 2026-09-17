@@ -145,7 +145,7 @@ class TTSProvider(TTSProviderBase):
             "Codec": self.audio_file_type,  # 音频编码格式
             "Volume": self.volume,  # 音量
             "Speed": self.speed,  # 语速
-            "SampleRate": self.conn.sample_rate,  # 采样率部分支持24000
+            "SampleRate": self.conn.downlink_opus_sample_rate,  # 采样率部分支持24000
         }
 
         try:

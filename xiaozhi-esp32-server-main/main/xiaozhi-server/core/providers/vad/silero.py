@@ -108,7 +108,14 @@ class VADProvider(VADProviderBase):
                 # 如果之前有声音，但本次没有声音，且与上次有声音的时间差已经超过了静默阈值，则认为已经说完一句话
                 if conn.client_have_voice and not client_have_voice:
                     stop_duration = time.time() * 1000 - conn.vad_last_voice_time
-                    if stop_duration >= self.silence_threshold_ms:
+                    # The firmware's auto mode sends listen/stop after an
+                    # 800ms hangover.  A shorter server-side threshold cuts a
+                    # sentence before that explicit stop reaches us (often
+                    # leaving only a few hundred milliseconds for ASR).
+                    silence_threshold_ms = self.silence_threshold_ms
+                    if conn.client_listen_mode == "auto":
+                        silence_threshold_ms = max(silence_threshold_ms, 800)
+                    if stop_duration >= silence_threshold_ms:
                         conn.client_voice_stop = True
                 if client_have_voice:
                     conn.client_have_voice = True

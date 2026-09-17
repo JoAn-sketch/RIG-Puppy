@@ -371,7 +371,7 @@ ASR:
     # 以上是使用CPU推理，如果有GPU，详细参考：https://github.com/modelscope/FunASR/blob/main/runtime/docs/SDK_advanced_guide_online_zh.md
     type: fun_server
     host: 127.0.0.1
-    port: 10096
+    port: 10095
     is_ssl: true
     api_key: none
     output_dir: tmp/

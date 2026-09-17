@@ -78,7 +78,15 @@ class PromptManager:
             template_path = self.config.get("prompt_template", None)
             if not template_path:
                 template_path = "agent-base-prompt.txt"
-            cache_key = f"prompt_template:{template_path}"
+            # Include the template mtime in the cache key.  The admin page can
+            # edit the mounted prompt while the runtime process stays alive;
+            # new connections must then see the new template instead of the
+            # process-wide CONFIG cache entry from an earlier version.
+            try:
+                template_mtime = os.stat(template_path).st_mtime_ns
+                cache_key = f"prompt_template:{template_path}:{template_mtime}"
+            except OSError:
+                cache_key = f"prompt_template:{template_path}"
 
             # 先从缓存获取
             cached_template = self.cache_manager.get(self.CacheType.CONFIG, cache_key)

@@ -36,7 +36,7 @@ class TTSProvider(TTSProviderBase):
             "input": text,
             "voice_id": self.voice,
             "response_format": self.audio_file_type,
-            "sample_rate": self.conn.sample_rate,
+            "sample_rate": self.conn.downlink_opus_sample_rate,
             "speed": self.speed,
             "loudness_rate": self.loudness_rate,
         }

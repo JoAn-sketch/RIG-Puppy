@@ -209,8 +209,8 @@ class TTSProvider(TTSProviderBase):
     async def open_audio_channels(self, conn):
         try:
             await super().open_audio_channels(conn)
-            # 更新 audio_params 中的采样率为实际的 conn.sample_rate
-            self.audio_params["sample_rate"] = conn.sample_rate
+            # 更新 audio_params 中的采样率为实际的下行 Opus 采样率
+            self.audio_params["sample_rate"] = conn.downlink_opus_sample_rate
         except Exception as e:
             logger.bind(tag=TAG).error(f"Failed to open audio channels: {str(e)}")
             self.ws = None
@@ -725,7 +725,7 @@ class TTSProvider(TTSProviderBase):
         from core.utils.util import audio_to_data_stream
         return audio_to_data_stream(
             audio_file_path, is_opus=True, callback=callback,
-            sample_rate=self.conn.sample_rate, opus_encoder=None
+            sample_rate=self.conn.downlink_opus_sample_rate, opus_encoder=None
         )
 
     def wav_to_opus_data_audio_raw_stream(self, raw_data_var, is_end=False, callback: Callable[[Any], Any]=None):

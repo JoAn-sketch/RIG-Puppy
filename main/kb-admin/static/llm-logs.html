@@ -1,0 +1,186 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>LLM日志 · 噜噜</title>
+<style>
+* { box-sizing: border-box; }
+body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; margin: 0; background: #f5f6f8; color: #222; }
+header { background: #1f2937; color: #fff; padding: 14px 24px; display:flex; justify-content:space-between; align-items:center; }
+header h1 { margin: 0; font-size: 18px; font-weight: 500; }
+header a { color: #9ca3af; text-decoration: none; font-size: 13px; margin-left: 16px; }
+header a:hover { color: #fff; }
+main { max-width: 1100px; margin: 24px auto; padding: 0 16px; }
+.card { background: #fff; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,.08); padding: 20px; margin-bottom: 20px; }
+h2 { margin: 0 0 14px; font-size: 15px; color: #374151; border-left: 3px solid #3b82f6; padding-left: 10px; }
+button { background: #3b82f6; color: #fff; border: 0; padding: 7px 14px; border-radius: 5px; cursor: pointer; font-size: 13px; }
+button:hover { background: #2563eb; }
+button.sm { padding: 4px 10px; font-size: 12px; }
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th { text-align: left; padding: 8px 10px; background: #f9fafb; color: #6b7280; font-weight: 500; border-bottom: 1px solid #e5e7eb; }
+td { padding: 9px 10px; border-bottom: 1px solid #f3f4f6; vertical-align: top; }
+tr:last-child td { border-bottom: none; }
+tr:hover td { background: #fafafa; }
+.id-badge { display: inline-block; background: #e0e7ff; color: #3730a3; border-radius: 4px; padding: 1px 7px; font-size: 11px; font-weight: 600; }
+.tag { display: inline-block; border-radius: 4px; padding: 1px 7px; font-size: 11px; font-weight: 600; }
+.tag-yes { background: #fef3c7; color: #92400e; }
+.tag-no  { background: #f3f4f6; color: #9ca3af; }
+.preview-cell { color: #6b7280; max-width: 320px; word-break: break-all; font-size: 12px; }
+.time-cell { color: #9ca3af; font-size: 12px; white-space: nowrap; }
+.empty { text-align: center; color: #9ca3af; padding: 32px; }
+.toast { position: fixed; bottom: 24px; right: 24px; background: #1f2937; color: #fff; padding: 10px 18px; border-radius: 6px; font-size: 13px; opacity: 0; transition: opacity .3s; pointer-events: none; z-index: 999; }
+.toast.show { opacity: 1; }
+.overlay { display:none; position:fixed; inset:0; background:rgba(0,0,0,.5); z-index:100; align-items:center; justify-content:center; }
+.overlay.open { display:flex; }
+.modal { background:#fff; border-radius:10px; width:90%; max-width:900px; max-height:90vh; display:flex; flex-direction:column; overflow:hidden; }
+.modal-header { padding:16px 20px; border-bottom:1px solid #e5e7eb; display:flex; justify-content:space-between; align-items:center; }
+.modal-header h3 { margin:0; font-size:15px; }
+.modal-close { background:none; border:none; font-size:20px; cursor:pointer; color:#6b7280; padding:0; }
+.modal-body { padding:20px; overflow-y:auto; flex:1; }
+.section-label { font-size:12px; font-weight:600; color:#6b7280; text-transform:uppercase; letter-spacing:.05em; margin:16px 0 6px; }
+.section-label:first-child { margin-top:0; }
+pre { background:#1e293b; color:#e2e8f0; padding:14px; border-radius:6px; font-size:12px; overflow-x:auto; white-space:pre-wrap; word-break:break-all; margin:0; max-height:400px; overflow-y:auto; }
+.meta-row { display:flex; gap:24px; flex-wrap:wrap; margin-bottom:12px; }
+.meta-item { font-size:13px; }
+.meta-item span { color:#6b7280; }
+</style>
+</head>
+<body>
+<header>
+  <h1>🐾 噜噜管理后台</h1>
+  <div>
+    <a href="/">📚 后端</a>
+    <a href="/reminders">⏰ 提醒计划</a>
+    <a href="/monitor">📊 系统监控</a>
+    <a href="/portrait">🧑 画像</a>
+    <a href="/actions">🐕 动作</a>
+    <a href="/llm-logs" style="color:#60a5fa">🔍 LLM日志</a>
+    <a href="/debug">🔧 调试</a>
+    <a href="/settings">⚙️ 设置</a>
+    <a href="/dingyi-models" style="color:#34d399">🤖 模型切换</a>
+    <a href="/dingyi-chat" style="color:#f59e0b">💬 对话模拟</a>
+    <a href="http://122.51.155.114:8002" style="color:#fbbf24">🖥 主控台</a>
+  </div>
+</header>
+<main>
+
+  <div class="card">
+    <h2>LLM 调用日志 <span id="countBadge" style="font-size:12px;color:#9ca3af;font-weight:400;margin-left:6px;"></span>
+      <button class="sm" style="margin-left:12px;vertical-align:middle" onclick="loadLogs()">🔄 刷新</button>
+    </h2>
+    <div id="logTable"><div class="empty">加载中…</div></div>
+  </div>
+
+</main>
+
+<div class="overlay" id="overlay" onclick="closeModal(event)">
+  <div class="modal" id="modal">
+    <div class="modal-header">
+      <h3 id="modalTitle">LLM 调用详情</h3>
+      <button class="modal-close" onclick="closeModal()">✕</button>
+    </div>
+    <div class="modal-body" id="modalBody"></div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+function toast(msg, err) {
+  const el = document.getElementById("toast");
+  el.textContent = msg;
+  el.style.background = err ? "#ef4444" : "#1f2937";
+  el.classList.add("show");
+  setTimeout(() => el.classList.remove("show"), 2500);
+}
+
+function esc(s) {
+  return String(s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+async function loadLogs() {
+  try {
+    const r = await fetch("/api/llm-logs");
+    const data = await r.json();
+    if (data.error) { toast(data.error, true); return; }
+    renderTable(data);
+  } catch(e) { toast("加载失败: " + e, true); }
+}
+
+function renderTable(rows) {
+  document.getElementById("countBadge").textContent = rows.length ? ("最近 " + rows.length + " 条") : "";
+  const el = document.getElementById("logTable");
+  if (!rows.length) {
+    el.innerHTML = '<div class="empty">暂无日志，等待设备对话后刷新</div>';
+    return;
+  }
+  let html = '<table><thead><tr><th>编号</th><th>设备</th><th>模型</th><th>耗时</th><th>输出摘要</th><th>工具调用</th><th>时间</th><th>操作</th></tr></thead><tbody>';
+  for (const row of rows) {
+    const dur = row.duration_ms ? (row.duration_ms + " ms") : "-";
+    const tc = row.has_tool_calls
+      ? '<span class="tag tag-yes">有</span>'
+      : '<span class="tag tag-no">无</span>';
+    html += '<tr>'
+      + '<td><span class="id-badge">#' + row.id + '</span></td>'
+      + '<td style="font-size:12px;color:#374151">' + esc(row.device_mac || "-") + '</td>'
+      + '<td style="font-size:12px;color:#374151">' + esc(row.model_name || "-") + '</td>'
+      + '<td style="font-size:12px;color:#374151">' + dur + '</td>'
+      + '<td class="preview-cell">' + esc(row.response_preview || "") + '</td>'
+      + '<td>' + tc + '</td>'
+      + '<td class="time-cell">' + (row.created_at || "").replace("T", " ").slice(0, 16) + '</td>'
+      + '<td><button class="sm" onclick="viewDetail(' + row.id + ')">查看</button></td>'
+      + '</tr>';
+  }
+  html += "</tbody></table>";
+  el.innerHTML = html;
+}
+
+async function viewDetail(id) {
+  try {
+    const r = await fetch("/api/llm-logs/" + id);
+    const d = await r.json();
+    if (d.error) { toast(d.error, true); return; }
+
+    document.getElementById("modalTitle").textContent = "LLM 调用详情 #" + id;
+
+    let msgs = d.messages_json || "";
+    try { msgs = JSON.stringify(JSON.parse(msgs), null, 2); } catch(e) {}
+
+    let tc = d.tool_calls_json || "";
+    try { tc = JSON.stringify(JSON.parse(tc), null, 2); } catch(e) {}
+
+    const dur = d.duration_ms ? (d.duration_ms + " ms") : "-";
+
+    let html = '<div class="meta-row">'
+      + '<div class="meta-item"><span>设备：</span>' + esc(d.device_mac || "-") + '</div>'
+      + '<div class="meta-item"><span>模型：</span>' + esc(d.model_name || "-") + '</div>'
+      + '<div class="meta-item"><span>耗时：</span>' + dur + '</div>'
+      + '<div class="meta-item"><span>时间：</span>' + (d.created_at || "").replace("T", " ") + '</div>'
+      + '</div>'
+      + '<div class="section-label">输入 Messages（完整对话历史）</div>'
+      + '<pre>' + esc(msgs) + '</pre>'
+      + '<div class="section-label">LLM 输出</div>'
+      + '<pre>' + esc(d.response_text || "（空）") + '</pre>';
+
+    if (tc) {
+      html += '<div class="section-label">工具调用</div><pre>' + esc(tc) + '</pre>';
+    }
+
+    document.getElementById("modalBody").innerHTML = html;
+    document.getElementById("overlay").classList.add("open");
+  } catch(e) { toast("加载详情失败: " + e, true); }
+}
+
+function closeModal(e) {
+  if (!e || e.target === document.getElementById("overlay")) {
+    document.getElementById("overlay").classList.remove("open");
+  }
+}
+
+document.addEventListener("keydown", function(e) { if (e.key === "Escape") closeModal(); });
+
+loadLogs();
+</script>
+<script src="/shared-nav.js"></script>
+</body>
+</html>

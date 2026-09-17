@@ -45,9 +45,9 @@ class TTSPerformanceTester:
             module_type = config.get("type", tts_name)
             tts = create_tts_instance(module_type, config, delete_audio_file=True)
 
-            # 设置 mock conn 对象，避免 TTS 实现访问 self.conn.sample_rate 时为 None
+            # 设置 mock conn 对象，避免 TTS 实现访问 self.conn.downlink_opus_sample_rate 时为 None
             class MockConn:
-                sample_rate = 16000
+                downlink_opus_sample_rate = 24000
                 audio_format = "pcm"
                 stop_event = threading.Event()  # 需要是真正的 Event 对象
                 client_abort = False

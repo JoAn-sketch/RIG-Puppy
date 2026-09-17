@@ -31,6 +31,7 @@ from core.providers.tts.default import DefaultTTS
 from concurrent.futures import ThreadPoolExecutor
 from core.utils.dialogue import Message, Dialogue
 from core.conversation_session_state import ConversationSessionState
+from core.conversation_request import ConversationRequest
 from core.providers.asr.dto.dto import InterfaceType
 from core.handle.textHandle import handleTextMessage
 from core.providers.tools.unified_tool_handler import UnifiedToolHandler
@@ -93,6 +94,48 @@ DIRECT_ANSWER_TOOL = {
     },
 }
 
+ROBOT_PROFILE_VOICE_VALUES = {
+    "zf_xiaoxiao",
+    "zm_yunyang",
+    "zf_xiaoyi",
+    "zm_yunjian",
+    "zm_yunxi",
+    "zm_yunxia",
+    "zf_xiaobei",
+    "zf_xiaoni",
+    "mandarin_female",
+    "mandarin_male",
+    "cute_female",
+    "strong_male",
+    "young_male",
+    "boy_male",
+    "liaoning_female",
+    "shaanxi_female",
+    # legacy values for already-saved profiles
+    "zh-CN-XiaoxiaoNeural",
+    "zh-CN-YunyangNeural",
+    "zh-CN-XiaoyiNeural",
+    "zh-CN-YunjianNeural",
+    "zh-CN-YunxiNeural",
+    "zh-CN-YunxiaNeural",
+    "zh-CN-liaoning-XiaobeiNeural",
+    "zh-CN-shaanxi-XiaoniNeural",
+    "zh-HK-HiuGaaiNeural",
+    "zh-HK-HiuMaanNeural",
+    "zh-HK-WanLungNeural",
+    "TTS_EdgeTTS0001",
+    "TTS_EdgeTTS0002",
+    "TTS_EdgeTTS0003",
+    "TTS_EdgeTTS0004",
+    "TTS_EdgeTTS0005",
+    "TTS_EdgeTTS0006",
+    "TTS_EdgeTTS0007",
+    "TTS_EdgeTTS0008",
+    "TTS_EdgeTTS0009",
+    "TTS_EdgeTTS0010",
+    "TTS_EdgeTTS0011",
+}
+
 
 class ConnectionHandler:
     def __init__(
@@ -130,7 +173,7 @@ class ConnectionHandler:
         self.max_output_size = 0
         self.chat_history_conf = 0
         self.audio_format = "opus"
-        self.sample_rate = 24000  # 默认采样率，从客户端 hello 消息中动态更新
+        self.downlink_opus_sample_rate = 24000  # 默认下行Opus采样率，从客户端 hello 消息中动态更新
 
         # 客户端状态相关
         self.client_abort = False
@@ -150,8 +193,17 @@ class ConnectionHandler:
         self.report_tts_enable = self.read_config_from_api
 
         # 依赖的组件
-        self.vad = None
-        self.asr = None
+        # VAD and local ASR are ready on the WebSocketServer before a device
+        # connects.  Attach them immediately so the first audio turn is not
+        # discarded while the per-device LLM/TTS configuration is loading.
+        self.vad = _vad
+        self.asr = (
+            _asr
+            if _asr is not None
+            and getattr(_asr, "interface_type", None) == InterfaceType.LOCAL
+            else None
+        )
+        self._asr_channel_provider = None
         self.tts = None
         self._asr = _asr
         self._vad = _vad
@@ -417,12 +469,19 @@ class ConnectionHandler:
             # 启动超时检查任务
             self.timeout_task = asyncio.create_task(self._check_timeout())
 
+            # Start consuming audio before the slower private configuration
+            # request.  This closes the startup window in which listen/stop
+            # used to arrive while conn.asr was still None.
+            self._open_asr_audio_channels()
+
             self.welcome_msg = self.config["xiaozhi"]
             self.welcome_msg["session_id"] = self.session_id
 
             # 从配置中读取采样率
-            self.sample_rate = self.welcome_msg["audio_params"]["sample_rate"]
-            self.logger.bind(tag=TAG).info(f"配置输出音频采样率为: {self.sample_rate}")
+            self.downlink_opus_sample_rate = self.welcome_msg["audio_params"]["sample_rate"]
+            self.logger.bind(tag=TAG).info(
+                f"配置下行Opus音频采样率为: {self.downlink_opus_sample_rate}"
+            )
 
             # 在后台初始化配置和组件（完全不阻塞主循环）
             asyncio.create_task(self._background_initialize())
@@ -702,10 +761,8 @@ class ConnectionHandler:
 
             # 初始化声纹识别
             self._initialize_voiceprint()
-            # 打开语音识别通道
-            asyncio.run_coroutine_threadsafe(
-                self.asr.open_audio_channels(self), self.loop
-            )
+            # 打开语音识别通道（对共享本地 ASR 及连接级 ASR 都幂等）
+            self._open_asr_audio_channels()
 
             self._ensure_runtime_backends()
             """加载记忆"""
@@ -907,6 +964,15 @@ class ConnectionHandler:
 
         return asr
 
+    def _open_asr_audio_channels(self):
+        """Start this connection's ASR queue worker once."""
+        if self.asr is None or self._asr_channel_provider is self.asr:
+            return
+        asyncio.run_coroutine_threadsafe(
+            self.asr.open_audio_channels(self), self.loop
+        )
+        self._asr_channel_provider = self.asr
+
     def _ensure_runtime_backends(self):
         if self.llm is None:
             select_llm_module = self.config["selected_module"]["LLM"]
@@ -1017,6 +1083,30 @@ class ConnectionHandler:
 
         init_vad = check_vad_update(self.common_config, private_config)
         init_asr = check_asr_update(self.common_config, private_config)
+
+        # A local ASR model is initialized once by WebSocketServer and shared by
+        # connections.  Do not create another FunASR model while applying a
+        # per-device config; a second 900MB+ model can exhaust the host when a
+        # board reconnects repeatedly.
+        if (
+            init_asr
+            and self._asr is not None
+            and getattr(self._asr, "interface_type", None) == InterfaceType.LOCAL
+        ):
+            # Reuse the startup model only when the device still selects the
+            # same ASR provider.  A genuinely different per-device provider
+            # must be initialized instead of silently receiving FunASR audio.
+            common_asr_name = self.common_config.get("selected_module", {}).get("ASR")
+            private_asr_name = private_config.get("selected_module", {}).get("ASR")
+            common_asr_config = self.common_config.get("ASR", {}).get(common_asr_name, {})
+            private_asr_config = private_config.get("ASR", {}).get(private_asr_name, {})
+            common_asr_type = common_asr_config.get("type", common_asr_name)
+            private_asr_type = private_asr_config.get("type", private_asr_name)
+            if (
+                private_asr_name == common_asr_name
+                and private_asr_type == common_asr_type
+            ):
+                init_asr = False
 
         if init_vad:
             self.config["VAD"] = private_config["VAD"]
@@ -1248,6 +1338,36 @@ class ConnectionHandler:
         )
         self._refresh_runtime_prompt()
 
+    def _apply_robot_profile_voice(self, force_log=False):
+        if self.tts is None or not hasattr(self.tts, "voice"):
+            return
+        config_path = os.path.join(os.path.dirname(__file__), "..", "data", "robot_profile.json")
+        try:
+            with open(config_path, "r", encoding="utf-8") as f:
+                payload = json.load(f)
+        except Exception:
+            return
+        if not isinstance(payload, dict):
+            return
+        voice_config = payload.get("voice") or {}
+        if not isinstance(voice_config, dict):
+            return
+        voice = str(voice_config.get("voice") or voice_config.get("voice_id") or "").strip()
+        if voice not in ROBOT_PROFILE_VOICE_VALUES:
+            return
+        applied_voice = voice
+        if hasattr(self.tts, "_normalize_voice"):
+            applied_voice = self.tts._normalize_voice(voice)
+        previous_voice = getattr(self.tts, "voice", None)
+        if previous_voice != applied_voice:
+            self.tts.voice = applied_voice
+        if force_log or previous_voice != applied_voice:
+            self.logger.bind(tag=TAG).info(
+                "robot profile voice applied: "
+                f"{voice_config.get('label') or voice}, voice={voice}, "
+                f"applied_voice={applied_voice}, previous_voice={previous_voice}"
+            )
+
     def _build_robot_profile_prompt_patch(
             self, long_term_memory: RuntimeLongTermMemory | None = None
     ) -> str:
@@ -1444,6 +1564,34 @@ class ConnectionHandler:
         if self.base_prompt:
             self._refresh_runtime_prompt()
         self.last_activity_time = time.time() * 1000
+
+    def end_current_conversation_context(self, reason: str = ""):
+        """End only the current short-lived conversation/topic context."""
+        self.reset_audio_states()
+        self.client_abort = False
+        self.client_is_speaking = False
+        self.client_have_voice = False
+        self.client_voice_stop = False
+        self.sentence_id = None
+        self.last_scene_output = None
+        self.last_dialogue_state_result = None
+        self.dialogue_state_runtime = None
+        self.scene_prompt_patch = ""
+        self.short_term_memory_prompt_patch = ""
+        self.dialogue_state_prompt_patch = ""
+        self.response_plan_prompt_patch = ""
+        self.last_response_plan = None
+        self.last_response_rewrite = None
+        self.last_user_text = ""
+        self.dialogue = Dialogue()
+        if hasattr(self.session_state, "mark_idle"):
+            self.session_state.mark_idle(reason or "conversation_context_ended")
+        if self.base_prompt:
+            self._refresh_runtime_prompt()
+        self.last_activity_time = time.time() * 1000
+        self.logger.bind(tag=TAG).info(
+            f"当前 conversation context 已结束，等待下一次新 interaction: {reason or 'idle'}"
+        )
 
     def _refresh_response_plan(self):
         if self.last_scene_output is None or self.last_dialogue_state_result is None:
@@ -1678,6 +1826,17 @@ class ConnectionHandler:
             self.logger.bind(tag=TAG).warning(f"调度 runtime debug 失败: {e}")
 
     def chat(self, query, depth=0):
+        # The orchestration layer passes a ConversationRequest so that scene,
+        # memory and intent metadata survive into execution.  The execution
+        # code below operates on the user's text, so normalize the request at
+        # this boundary while retaining the metadata on the session state.
+        if isinstance(query, ConversationRequest):
+            conversation_request = query
+            query = conversation_request.user_input
+            self.session_state.last_conversation_request = conversation_request
+        else:
+            conversation_request = None
+
         # 保存当前任务的sentence_id到局部变量，避免被新任务覆盖
         current_sentence_id = None
 
@@ -1797,7 +1956,30 @@ class ConnectionHandler:
                     ),
                 )
         except Exception as e:
-            self.logger.bind(tag=TAG).error(f"LLM 处理出错 {query}: {e}")
+            self.logger.bind(tag=TAG).error(
+                f"LLM 处理出错 {query}: {e}", exc_info=True
+            )
+            # Never leave the device waiting after an LLM/configuration
+            # failure.  Emit the normal error prompt and close the sentence
+            # so the firmware can resume listening instead of appearing hung.
+            error_text = get_system_error_response(self.config)
+            if self.tts is not None:
+                self.tts.tts_text_queue.put(
+                    TTSMessageDTO(
+                        sentence_id=current_sentence_id,
+                        sentence_type=SentenceType.MIDDLE,
+                        content_type=ContentType.TEXT,
+                        content_detail=error_text,
+                    )
+                )
+                if depth == 0:
+                    self.tts.tts_text_queue.put(
+                        TTSMessageDTO(
+                            sentence_id=current_sentence_id,
+                            sentence_type=SentenceType.LAST,
+                            content_type=ContentType.ACTION,
+                        )
+                    )
             return None
 
         # 处理流式响应
@@ -1993,6 +2175,16 @@ class ConnectionHandler:
                 for future, tool_call_data, tool_input in futures_with_data:
                     try:
                         result = future.result(timeout=tool_call_timeout)
+                        # A plugin failure must be represented as an
+                        # ActionResponse.  Older/third-party executors can
+                        # accidentally return None; letting that through
+                        # causes _handle_function_result to dereference
+                        # result.response and abort the whole turn without TTS.
+                        if result is None:
+                            result = ActionResponse(
+                                action=Action.ERROR,
+                                response="工具暂时没有返回结果，请稍后再试。",
+                            )
                         tool_results.append((result, tool_call_data))
                         # 使用公共方法上报工具调用结果
                         enqueue_tool_report(self, tool_call_data['name'], tool_input, str(result.result) if result.result else None, report_tool_call=False)

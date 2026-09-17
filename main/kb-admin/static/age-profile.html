@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Age Profile - kb-admin</title>
+<style>
+* { box-sizing: border-box; }
+body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; margin: 0; background: #f5f6f8; color: #222; }
+header { background: #1f2937; color: #fff; padding: 14px 24px; display: flex; justify-content: space-between; align-items: center; }
+header h1 { margin: 0; font-size: 18px; font-weight: 500; }
+header a { color: #9ca3af; text-decoration: none; font-size: 13px; margin-left: 16px; }
+header a:hover { color: #fff; }
+main { max-width: 1200px; margin: 24px auto; padding: 0 16px 40px; }
+.hero { margin-bottom: 20px; }
+.hero p { margin: 8px 0 0; color: #6b7280; line-height: 1.6; font-size: 13px; }
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 16px; }
+.card { background: #fff; border-radius: 10px; box-shadow: 0 1px 3px rgba(0,0,0,.08); padding: 20px; }
+.card h2 { margin: 0 0 6px; font-size: 16px; color: #374151; }
+.card p { margin: 0 0 16px; font-size: 12px; color: #9ca3af; }
+.field { margin-bottom: 14px; }
+.field label { display: block; margin-bottom: 6px; font-size: 12px; color: #4b5563; font-weight: 600; }
+.field input,
+.field select { width: 100%; padding: 9px 10px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 13px; background: #fff; color: #111827; }
+.field input:focus,
+.field select:focus { outline: none; border-color: #3b82f6; box-shadow: 0 0 0 3px rgba(59,130,246,.12); }
+.actions { display: flex; align-items: center; gap: 12px; margin-top: 16px; }
+button { background: #3b82f6; color: #fff; border: 0; padding: 8px 14px; border-radius: 6px; cursor: pointer; font-size: 13px; }
+button:hover { background: #2563eb; }
+button:disabled { background: #93c5fd; cursor: not-allowed; }
+.hint { font-size: 12px; color: #9ca3af; }
+#toast { position: fixed; bottom: 28px; right: 28px; background: #10b981; color: #fff; padding: 10px 20px; border-radius: 8px; font-size: 13px; font-weight: 500; box-shadow: 0 4px 12px rgba(0,0,0,.15); opacity: 0; transform: translateY(10px); transition: opacity .25s, transform .25s; pointer-events: none; z-index: 9999; }
+#toast.show { opacity: 1; transform: translateY(0); }
+#toast.error { background: #ef4444; }
+@media (max-width: 640px) {
+  header { padding: 14px 16px; }
+  header h1 { font-size: 16px; }
+  main { margin-top: 18px; }
+}
+</style>
+</head>
+<body>
+<header>
+  <h1>🧒 Age Profile</h1>
+  <div>
+    <a href="/">📚 后端</a>
+    <a href="/settings">⚙️ 设置</a>
+    <a href="/scene-router">🧭 Scene Router</a>
+    <a href="/age-profile">🧒 Age Profile</a>
+  </div>
+</header>
+
+<main>
+  <section class="hero card">
+    <h2>年龄表达层</h2>
+    <p>这一步先做最小配置骨架。这里定义不同年龄段的表达方式，后续再接入 Raw Reply 生成链路。</p>
+  </section>
+
+  <section class="grid" id="profile-grid">
+    <div class="card">加载中...</div>
+  </section>
+</main>
+
+<div id="toast"></div>
+
+<script>
+var FIELD_META = [
+  {
+    key: "vocabulary_level",
+    label: "Vocabulary Level",
+    type: "select",
+    options: [
+      ["very_simple", "very_simple"],
+      ["simple", "simple"],
+      ["age_appropriate", "age_appropriate"]
+    ]
+  },
+  {
+    key: "max_new_concepts",
+    label: "Max New Concepts",
+    type: "number",
+    min: 1,
+    max: 12
+  },
+  {
+    key: "abstract_concept_level",
+    label: "Abstract Concept Level",
+    type: "select",
+    options: [
+      ["none", "none"],
+      ["limited", "limited"],
+      ["allowed", "allowed"]
+    ]
+  },
+  {
+    key: "question_style",
+    label: "Question Style",
+    type: "select",
+    options: [
+      ["observation", "observation"],
+      ["exploration", "exploration"],
+      ["discussion", "discussion"]
+    ]
+  },
+  {
+    key: "support_level",
+    label: "Support Level",
+    type: "select",
+    options: [
+      ["high", "high"],
+      ["medium_high", "medium_high"],
+      ["medium", "medium"]
+    ]
+  }
+];
+
+var profileMap = {};
+var toastTimer = null;
+
+function showToast(msg, isError) {
+  var t = document.getElementById("toast");
+  t.textContent = (isError ? "✗ " : "✓ ") + msg;
+  t.className = "show" + (isError ? " error" : "");
+  if (toastTimer) clearTimeout(toastTimer);
+  toastTimer = setTimeout(function () { t.className = ""; }, 2500);
+}
+
+function escapeHtml(str) {
+  return String(str == null ? "" : str)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/\"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function buildField(ageGroup, field, value) {
+  if (field.type === "number") {
+    return '' +
+      '<div class="field">' +
+        '<label for="' + ageGroup + '-' + field.key + '">' + field.label + '</label>' +
+        '<input id="' + ageGroup + '-' + field.key + '" type="number" min="' + field.min + '" max="' + field.max + '" value="' + escapeHtml(value) + '">' +
+      '</div>';
+  }
+
+  var options = field.options.map(function (item) {
+    var selected = item[0] === value ? ' selected' : '';
+    return '<option value="' + escapeHtml(item[0]) + '"' + selected + '>' + escapeHtml(item[1]) + '</option>';
+  }).join('');
+
+  return '' +
+    '<div class="field">' +
+      '<label for="' + ageGroup + '-' + field.key + '">' + field.label + '</label>' +
+      '<select id="' + ageGroup + '-' + field.key + '">' + options + '</select>' +
+    '</div>';
+}
+
+function renderProfiles() {
+  var grid = document.getElementById("profile-grid");
+  var ageGroups = ["3-5", "6-8", "9-11"];
+  grid.innerHTML = ageGroups.map(function (ageGroup) {
+    var profile = profileMap[ageGroup] || {};
+    var fields = FIELD_META.map(function (field) {
+      return buildField(ageGroup, field, profile[field.key]);
+    }).join("");
+    return '' +
+      '<article class="card">' +
+        '<h2>' + escapeHtml(profile.label || ageGroup) + '</h2>' +
+        '<p>配置这个年龄段的表达能力和互动方式。</p>' +
+        fields +
+        '<div class="actions">' +
+          '<button type="button" onclick="saveProfile(\'' + ageGroup + '\', this)">保存</button>' +
+          '<span class="hint">保存到 kb-admin 本地配置文件</span>' +
+        '</div>' +
+      '</article>';
+  }).join("");
+}
+
+function loadProfiles() {
+  fetch("/api/age-profiles")
+    .then(function (res) {
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      return res.json();
+    })
+    .then(function (rows) {
+      profileMap = {};
+      rows.forEach(function (row) {
+        profileMap[row.age_group] = row;
+      });
+      renderProfiles();
+    })
+    .catch(function (err) {
+      showToast("加载失败: " + err.message, true);
+    });
+}
+
+function collectPayload(ageGroup) {
+  var payload = {};
+  FIELD_META.forEach(function (field) {
+    var el = document.getElementById(ageGroup + "-" + field.key);
+    if (!el) return;
+    payload[field.key] = field.type === "number" ? Number(el.value) : el.value;
+  });
+  return payload;
+}
+
+function saveProfile(ageGroup, button) {
+  var payload = collectPayload(ageGroup);
+  button.disabled = true;
+  button.textContent = "保存中...";
+  fetch("/api/age-profiles/" + ageGroup, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload)
+  })
+    .then(function (res) {
+      if (!res.ok) {
+        return res.json().catch(function () { return {}; }).then(function (body) {
+          throw new Error(body.error || ("HTTP " + res.status));
+        });
+      }
+      return res.json();
+    })
+    .then(function (body) {
+      profileMap[ageGroup] = body.profile;
+      renderProfiles();
+      showToast("已保存 " + ageGroup);
+    })
+    .catch(function (err) {
+      showToast("保存失败: " + err.message, true);
+    })
+    .finally(function () {
+      button.disabled = false;
+      button.textContent = "保存";
+    });
+}
+
+loadProfiles();
+</script>
+<script src="/shared-nav.js"></script>
+</body>
+</html>

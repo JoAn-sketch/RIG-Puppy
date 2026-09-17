@@ -179,7 +179,7 @@ class TTSProvider(TTSProviderBase):
             "token": self.token,
             "text": text,
             "format": self.audio_file_type,
-            "sample_rate": self.conn.sample_rate,
+            "sample_rate": self.conn.downlink_opus_sample_rate,
             "voice": self.voice,
             "volume": self.volume,
             "speech_rate": self.speech_rate,
