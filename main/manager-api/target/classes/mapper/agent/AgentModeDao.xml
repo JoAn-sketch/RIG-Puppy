@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="xiaozhi.modules.agent.dao.AgentModeDao">
+
+    <select id="selectByAgentId" resultType="xiaozhi.modules.agent.entity.AgentModeEntity">
+        SELECT id, agent_id AS agentId, mode_name AS modeName, mode_code AS modeCode,
+               system_prompt AS systemPrompt, is_default AS isDefault, sort, create_date AS createDate
+        FROM ai_agent_mode
+        WHERE agent_id = #{agentId}
+        ORDER BY sort ASC
+    </select>
+
+    <select id="selectDefaultByAgentId" resultType="xiaozhi.modules.agent.entity.AgentModeEntity">
+        SELECT id, agent_id AS agentId, mode_name AS modeName, mode_code AS modeCode,
+               system_prompt AS systemPrompt, is_default AS isDefault, sort
+        FROM ai_agent_mode
+        WHERE agent_id = #{agentId} AND is_default = 1
+        LIMIT 1
+    </select>
+
+    <update id="clearDefaultByAgentId">
+        UPDATE ai_agent_mode SET is_default = 0 WHERE agent_id = #{agentId}
+    </update>
+
+    <delete id="deleteByAgentId">
+        DELETE FROM ai_agent_mode WHERE agent_id = #{agentId}
+    </delete>
+
+</mapper>
+
