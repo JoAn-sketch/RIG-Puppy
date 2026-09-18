@@ -1,5 +1,13 @@
 # 本地恢复演练结果
 
+## 实际保留/回退模块 Docker 集成验证：通过
+
+执行 `python3 deploy/rehearse_modules.py`，实例前缀 `puppy-modules-4c08df1164-`。本次直接调用 adoption.retain / adoption.rollback，验证旧容器 ID、名称、restart 策略、共享网络全部恢复；新版本保留为停止状态且 restart=no。六个测试容器最后全部停止、禁用重启并保留。
+
+日志保存在本地 `puppy-module-report-zikb798_` 临时目录；日志采用 0600 文件和 pending/complete 步骤。本测试仅通过名称前缀适配隔离测试实例，不使用生产目录、环境变量、挂载或端口。
+
+已完成实际模块的 Docker 生命周期验收，仍未完成真实业务配置和生产挂载的恢复验收。不能据此启用生产部署。
+
 ## 回退模块实现
 
 adoption.rollback 已实现按记录的原容器 ID 恢复：先核对全部旧 ID、失败版本 ID、名称占用、旧共享网络、重启策略；任何不符在修改前停止。失败版本禁用 restart、停止并改名保留；旧主服务先恢复名称/策略并启动，随后恢复语音服务。每条命令先写 pending 日志，完成后写 complete；中断后要求检查，禁止盲目重放。

@@ -24,6 +24,11 @@ def persist(path, value):
         stream.flush()
         os.fsync(stream.fileno())
     os.replace(temporary, path)
+    directory_fd = os.open(path.parent, os.O_RDONLY)
+    try:
+        os.fsync(directory_fd)
+    finally:
+        os.close(directory_fd)
 
 
 def retain(run, snapshot, suffix, journal):
@@ -89,6 +94,8 @@ def rollback(run, snapshot, replacements, current, suffix, journal):
     old_ids = {v['id'] for v in snapshot.values()}
     if len(old_ids) != 3 or old_ids.intersection(replacements.values()):
         raise RuntimeError('Conflicting container IDs')
+    if len(set(replacements.values())) != len(replacements):
+        raise RuntimeError('Duplicate failed container IDs')
     for name in ORDER:
         old = by_id.get(snapshot[name]['id'])
         if not old:
