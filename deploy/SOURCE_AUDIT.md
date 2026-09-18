@@ -2,6 +2,8 @@
 
 ## 最新进展（优先于下方历史记录）
 
+本地三容器快照恢复机制演练通过，详见 RECOVERY_REHEARSAL.md。实测可写层恢复和共享网络 ID 重绑定；全部测试容器已停止且产物保留。该演练不涉及生产配置/挂载或 Compose 首次纳管，因此生产恢复保护仍保留。
+
 ### 本地构建验证已通过
 
 使用临时 Buildx v0.28.0 / BuildKit 完成本地 linux/amd64 构建，未删除镜像或清理存储。之前 legacy builder 的 content digest 错误在 BuildKit 下没有复现。基础镜像固定为本次使用的 `sha256:6b62dba28638d845920d437f9f958c99bd8dd29c6714381257177b993d7ce43c`。
