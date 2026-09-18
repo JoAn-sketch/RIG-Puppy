@@ -2,6 +2,8 @@
 
 ## 最新进展（优先于下方历史记录）
 
+新增 migration_flow.py 九阶段编排：preflight→sync→build→recheck→backup→retain→create_main→create_voices→verify。逐阶段先落盘，失败停止、不自动回退，拒绝已有日志盲目重放。九阶段分别注入失败，总计28项测试通过。该模块要求调用方提供所有真实操作适配，尚未接入生产 CLI，不能用模拟测试代替完整迁移验收。
+
 首次纳管只读预检已接入 adoption.py：检查三容器运行/健康状态，精确核对全部 bind mount 的源、目标、RW 模式，网络别名和 restart 策略。基于生产 docker inspect 返回值实测通过。检查主服务、两语音服务及 Web 的 Env/Cmd/Entrypoint，未发现旧主服务 IP 引用（仅输出字段命中结果，不输出密钥）。此检查不覆盖配置文件及数据库记录。25 项单元测试通过，未执行任何生产变更。
 
 实际 retain/rollback 模块已通过本地 Docker 集成演练：原 ID、名称、restart 策略、共享网络恢复，失败版本保留且禁用重启，测试实例全部停止。新增日志目录 fsync 与重复失败 ID 防护；22 项单元测试通过。首次生产纳管的完整编排/真实配置验收仍未完成，强制保护仍生效。
