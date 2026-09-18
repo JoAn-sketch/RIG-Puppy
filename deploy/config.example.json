@@ -1,10 +1,16 @@
 {
   "enabled": false,
-  "project": "",
-  "compose_files": [],
+  "project": "xiaozhi-server",
+  "coordinated": true,
+  "recovery_rehearsed": false,
+  "compose_files": [
+    "/home/ubuntu/xiaozhi-esp32-server-main/main/xiaozhi-server/docker-compose.yml",
+    "/home/ubuntu/xiaozhi-esp32-server-main/deploy/compose.build.yml",
+    "/home/ubuntu/xiaozhi-esp32-server-main/deploy/compose.voice.yml"
+  ],
   "service": "xiaozhi-esp32-server",
   "containers": ["xiaozhi-esp32-server", "funasr-runtime", "kokoro-runtime"],
-  "health_command": [],
+  "health_command": ["docker", "exec", "xiaozhi-esp32-server", "python", "/opt/puppy-deploy/health.py"],
   "timeout_seconds": 120,
   "protected_paths": ["main/xiaozhi-server/data", "main/xiaozhi-server/models"],
   "source": "main/xiaozhi-server/app.py"

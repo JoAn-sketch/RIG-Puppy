@@ -9,6 +9,8 @@ import subprocess
 import sys
 import tempfile
 import time
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import coordinated
 
 ROOT = Path('/home/ubuntu/xiaozhi-esp32-server-main')
 ORIGINS = {'git@github.com:JoAn-sketch/RIG-Puppy.git',
@@ -99,7 +101,19 @@ def deploy(config, report):
     if len(names) != 3 or set(names) != {'xiaozhi-esp32-server', 'funasr-runtime', 'kokoro-runtime'}:
         raise RuntimeError('All three core containers must be checked')
     before = inspect(names)
-    check_network_dependencies(before)
+    coordinated_mode = config.get('coordinated', False)
+    if coordinated_mode:
+        coordinated.validate_adoption(before, config['project'])
+        for voice in coordinated.VOICES:
+            voice_spec = resolved['services'].get(voice, {})
+            if voice_spec.get('network_mode') != 'service:' + service:
+                raise RuntimeError('Voice service must share main service network: ' + voice)
+            if '@sha256:' not in voice_spec.get('image', ''):
+                raise RuntimeError('Voice image must be pinned: ' + voice)
+        if not config.get('recovery_rehearsed', False):
+            raise RuntimeError('Coordinated recovery rehearsal not confirmed')
+    else:
+        check_network_dependencies(before)
     report['before_containers'] = {c['Name']: {'id': c['Id'], 'image': c['Image']} for c in before}
     # All running containers, not just the main service, can mount source.
     ids = run(['docker', 'ps', '-q']).split()
@@ -131,7 +145,7 @@ def deploy(config, report):
         dockerfile = ROOT / dockerfile
     if ROOT not in dockerfile.resolve().parents or not dockerfile.is_file():
         raise RuntimeError('Dockerfile must exist within the production Git root')
-    critical = [str(dockerfile.relative_to(ROOT)), '.dockerignore', 'deploy/deploy.py']
+    critical = [str(dockerfile.relative_to(ROOT)), '.dockerignore', 'deploy']
     if '.dockerignore' not in target_paths:
         raise RuntimeError('Target missing Docker build exclusions')
     for filename in config['compose_files']:
@@ -161,7 +175,10 @@ def deploy(config, report):
         expected_image = run(['docker', 'image', 'inspect', 'puppy-server:' + target,
                               '--format', '{{.Id}}'])
         report['phase'] = 'update'
-        run(release + ['up', '-d', '--no-build', '--pull', 'never', '--no-deps', service])
+        if coordinated_mode:
+            coordinated.update(run, release, service)
+        else:
+            run(release + ['up', '-d', '--no-build', '--pull', 'never', '--no-deps', service])
         report['phase'] = 'health'
         deadline = time.monotonic() + min(int(config.get('timeout_seconds', 120)), 600)
         while True:
@@ -178,12 +195,21 @@ def deploy(config, report):
             raise RuntimeError('Main container does not use built image')
         if main['Config'].get('Labels', {}).get('org.opencontainers.image.revision') != target:
             raise RuntimeError('Main container revision mismatch')
-        listeners = run(['ss', '-H', '-lnt']).splitlines()
-        for port in (10095, 8880):
-            report[str(port)] = any(line.split()[3].endswith(':' + str(port)) for line in listeners)
-            if not report[str(port)]:
-                raise RuntimeError(f'Port {port} not listening')
-        run(config['health_command'], timeout=30)
+        if coordinated_mode:
+            coordinated.validate_network(after)
+        # Ports are private to the main container's namespace, not host listeners.
+        while True:
+            try:
+                checks = json.loads(run(config['health_command'], timeout=30))
+                if not all(checks.get(k) is True for k in ('server_http', 'kokoro_http', 'funasr_tcp')):
+                    raise RuntimeError('Application readiness failed')
+                report['10095'] = checks['funasr_tcp']
+                report['8880'] = checks['kokoro_http']
+                break
+            except (RuntimeError, ValueError):
+                if time.monotonic() >= deadline:
+                    raise
+                time.sleep(3)
         report['health'] = 'passed'
         run(release + ['ps'])
     report['result'] = 'passed'

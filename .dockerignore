@@ -11,3 +11,6 @@
 **/*.pyc
 **/*.log
 **/*.bak*
+main/manager-api
+main/manager-web
+main/manager-mobile

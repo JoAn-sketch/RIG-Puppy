@@ -2,6 +2,7 @@
 FROM ghcr.io/xinnan-tech/xiaozhi-esp32-server:server-base
 
 COPY main/xiaozhi-server .
+COPY deploy/health.py /opt/puppy-deploy/health.py
 
 # 启动应用
 CMD ["python", "app.py"]

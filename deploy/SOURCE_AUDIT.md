@@ -2,6 +2,8 @@
 
 ## 最新进展（优先于下方历史记录）
 
+新增验证：使用临时 Compose v2.40.3 工具对三个 Compose 文件执行 config --quiet，通过。协调模块现已接入正式部署入口，但 enabled=false、recovery_rehearsed=false，且未纳管的容器会被拒绝。健康检查已改为主容器命名空间内执行并有限重试。开始本地 linux/amd64 构建验证；镜像下载和最终构建结果另行记录。
+
 - 已恢复 config.yaml，仅将天气 API 凭据替换成 YOUR_WEATHER_API_KEY，其余文本保持原样。管理 API 的 server-base 读取成功，返回配置未提供该天气字段；设备级配置及天气端到端行为尚未验证。
 - 只读核实两个语音容器相对镜像没有环境变量覆盖，镜像摘要、命令、用户、目录、挂载及 restart 已写入 compose.voice.yml。
 - Kokoro 模型位于 /app/api/src/models/v1_0，音色位于 /app/api/src/voices/v1_0。目录存在不等于已经证明与镜像一致；可写层恢复验证仍未完成。
