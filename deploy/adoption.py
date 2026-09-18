@@ -10,7 +10,7 @@ import os
 from pathlib import Path
 import subprocess
 import re
-from migration_checks import verify_snapshot
+from migration_checks import verify_runtime
 
 ORDER = ['funasr-runtime', 'kokoro-runtime', 'xiaozhi-esp32-server']
 
@@ -61,7 +61,7 @@ never blindly replay. Caller must verify current names still match recorded IDs.
 
 
 def make_plan(containers):
-    snapshot = verify_snapshot(containers)
+    snapshot = verify_runtime(containers)
     return {'mode': 'read-only', 'execution_enabled': False,
             'directory': '/home/ubuntu/xiaozhi-esp32-server-main',
             'candidate_project': 'puppy-git-runtime',

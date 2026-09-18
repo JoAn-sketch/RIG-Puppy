@@ -7,6 +7,28 @@ import migration_checks as m
 
 
 class MigrationChecks(unittest.TestCase):
+    def runtime_fixture(self):
+        values = self.fixture()
+        for c in values:
+            c['State'] = {'Running': True}
+            c['Mounts'] = [{'Type': 'bind', 'RW': True, 'Destination': d, 'Source': s}
+                           for d, s in m.MOUNTS[c['Name'].lstrip('/')].items()]
+        return values
+
+    def test_runtime_mounts_match(self):
+        self.assertEqual(len(m.verify_runtime(self.runtime_fixture())), 3)
+
+    def test_wrong_mount_rejected(self):
+        values = self.runtime_fixture()
+        values[0]['Mounts'][0]['Source'] = '/wrong/models'
+        with self.assertRaisesRegex(RuntimeError, 'mounts changed'):
+            m.verify_runtime(values)
+
+    def test_unhealthy_rejected(self):
+        values = self.runtime_fixture()
+        values[0]['State']['Health'] = {'Status': 'unhealthy'}
+        with self.assertRaisesRegex(RuntimeError, 'health'):
+            m.verify_runtime(values)
     def fixture(self):
         return [{'Name': '/' + name, 'Id': name,
                  'NetworkSettings': {'Networks': {m.NETWORK: {'Aliases': [name]}} if name == 'xiaozhi-esp32-server' else {}},

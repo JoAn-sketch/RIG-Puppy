@@ -16,6 +16,8 @@ FunASR 镜像为 `registry.cn-hangzhou.aliyuncs.com/funasr_repo/funasr:funasr-ru
 
 新增 migration_checks.py 只读验证实际网络/别名/重启策略，任何漂移停止。它不是迁移执行器，不会停止或更新生产资源。
 
+adoption.py 现在还检查全部预期挂载及运行健康状态，已基于实际生产 inspect 数据验证通过。旧 IP 检查目前只覆盖容器环境和启动参数，不涵盖文件或数据库；执行入口保持只读，不能将局部检查通过作为迁移授权。
+
 追加实测：不同 Compose 项目身份能够规避旧容器标签匹配，并完整恢复旧 ID/共享网络。详见 RECOVERY_REHEARSAL.md。候选首次纳管应采用明确的新项目身份，同时显式复用已核实的生产网络；当前模板仍使用原项目，不能据此执行纳管。需要核实跨服务网络和备份 restart 策略后才能实现生产步骤。
 
 保持现有 localhost 通信语义，不修改业务配置。将语音服务纳入同一 Compose 项目，并配置 `network_mode: service:xiaozhi-esp32-server`。初次纳管必须在单独授权的维护窗口执行；当前脚本继续阻止共享网络下的单服务更新。

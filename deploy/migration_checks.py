@@ -1,6 +1,31 @@
 """Read-only checks for a future first-adoption operation."""
 NAMES = {'xiaozhi-esp32-server', 'funasr-runtime', 'kokoro-runtime'}
 NETWORK = 'xiaozhi-server_default'
+MOUNTS = {
+    'xiaozhi-esp32-server': {
+        '/opt/xiaozhi-esp32-server/data': '/home/ubuntu/xiaozhi-esp32-server-main/main/xiaozhi-server/data',
+        '/opt/xiaozhi-esp32-server/models/SenseVoiceSmall': '/home/ubuntu/xiaozhi-esp32-server-main/main/xiaozhi-server/models/SenseVoiceSmall'},
+    'funasr-runtime': {'/workspace/models': '/home/ubuntu/funasr-runtime-resources/models'},
+    'kokoro-runtime': {}}
+
+
+def verify_runtime(containers):
+    snapshot = verify_snapshot(containers)
+    for c in containers:
+        name = c['Name'].lstrip('/')
+        if name not in NAMES:
+            continue
+        if not c['State'].get('Running') or c['State'].get('Restarting'):
+            raise RuntimeError('Container is not stable: ' + name)
+        if c['State'].get('Health', {}).get('Status', 'healthy') != 'healthy':
+            raise RuntimeError('Container health is not ready: ' + name)
+        mounts = c.get('Mounts', [])
+        if any(m.get('Type') != 'bind' or not m.get('RW') for m in mounts):
+            raise RuntimeError('Unexpected mount type or mode: ' + name)
+        actual = {m['Destination']: m['Source'] for m in mounts}
+        if len(actual) != len(mounts) or actual != MOUNTS[name]:
+            raise RuntimeError('Production mounts changed: ' + name)
+    return snapshot
 
 
 def verify_snapshot(containers):
