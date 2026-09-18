@@ -36,7 +36,7 @@ class Guards(unittest.TestCase):
                 return ''
             containers = [{'Name': '/' + name, 'Id': name, 'Image': 'old', 'Mounts': []}
                           for name in config['containers']]
-            with patch.object(d, 'ROOT', root), patch.object(d, 'run', side_effect=fake), patch.object(d, 'inspect', return_value=containers):
+            with patch.object(d, 'RECOVERY_IMPLEMENTATION_VERIFIED', True), patch.object(d, 'ROOT', root), patch.object(d, 'run', side_effect=fake), patch.object(d, 'inspect', return_value=containers):
                 with self.assertRaisesRegex(RuntimeError, 'simulated'):
                     d.deploy(config, {})
         return calls
@@ -65,6 +65,12 @@ class Guards(unittest.TestCase):
         with patch.object(d, 'run') as run:
             with self.assertRaisesRegex(RuntimeError, 'disabled'):
                 d.deploy({'enabled': False}, {})
+            run.assert_not_called()
+
+    def test_configuration_cannot_bypass_unimplemented_recovery(self):
+        with patch.object(d, 'run') as run:
+            with self.assertRaisesRegex(RuntimeError, 'recovery is not implemented'):
+                d.deploy({'enabled': True, 'recovery_rehearsed': True}, {})
             run.assert_not_called()
 
     def test_protected_paths(self):

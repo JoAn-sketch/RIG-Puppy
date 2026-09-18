@@ -15,6 +15,10 @@ import coordinated
 ROOT = Path('/home/ubuntu/xiaozhi-esp32-server-main')
 ORIGINS = {'git@github.com:JoAn-sketch/RIG-Puppy.git',
            'https://github.com/JoAn-sketch/RIG-Puppy.git'}
+# Cannot be bypassed by setting enabled/recovery_rehearsed in a JSON file.
+# Remove only after preserving and restoring old environments is implemented
+# and exercised against isolated Docker containers.
+RECOVERY_IMPLEMENTATION_VERIFIED = False
 
 
 def run(args, cwd=ROOT, timeout=300):
@@ -77,6 +81,8 @@ def compose(config):
 def deploy(config, report):
     if not config.get('enabled'):
         raise RuntimeError('Deployment disabled: production configuration not verified')
+    if not RECOVERY_IMPLEMENTATION_VERIFIED:
+        raise RuntimeError('Deployment blocked: environment-preserving recovery is not implemented and verified')
     if not config.get('project') or not config.get('compose_files') or not config.get('health_command'):
         raise RuntimeError('Verified Compose project/files and health command required')
     if ROOT.is_symlink() or not ROOT.is_dir():
