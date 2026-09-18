@@ -2,6 +2,14 @@
 
 ## 最新进展（优先于下方历史记录）
 
+### 本地构建验证已通过
+
+使用临时 Buildx v0.28.0 / BuildKit 完成本地 linux/amd64 构建，未删除镜像或清理存储。之前 legacy builder 的 content digest 错误在 BuildKit 下没有复现。基础镜像固定为本次使用的 `sha256:6b62dba28638d845920d437f9f958c99bd8dd29c6714381257177b993d7ce43c`。
+
+在无网络一次性容器中执行 pip check，结果为 No broken requirements found；yaml、aiohttp、websockets、openai、portalocker、jinja2、psutil 导入成功。空测试 data/.config.yaml 下主程序 import app 成功。没有使用生产密钥或启动生产服务。
+
+存在 RequestsDependencyWarning（urllib3/chardet/charset_normalizer 组合）；不影响本次导入，但尚未完成实际 HTTP、语音对话验收。构建通过不等于可安全切换：恢复实现、首次纳管与回退演练仍未完成，强制部署保护保留。
+
 固定生产摘要 Kokoro 镜像已成功在本地拉取，使用无网络只读临时容器核实模型。镜像与生产模型 SHA-256 均为 `496dba118d1a58f5f3db2efc88dbdc216e0483fc89fe6e47ee1f2c53f18ad1e4`，两者音色文件数均为 67（仅数量核对，不声称音色内容逐个一致）。主模型确认镜像自带，无需从生产可写层迁移该文件。
 
 部署入口新增不可由 JSON 开关绕过的恢复实现保护；当前恢复实现未验证，任何 enabled=true 部署仍会停止。14 项测试通过。
