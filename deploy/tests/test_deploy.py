@@ -1,6 +1,8 @@
 import importlib.util
 from pathlib import Path
 import unittest
+import json
+import tempfile
 from unittest.mock import patch
 
 spec = importlib.util.spec_from_file_location('deployment', Path(__file__).parents[1] / 'deploy.py')
@@ -9,6 +11,45 @@ spec.loader.exec_module(d)
 
 
 class Guards(unittest.TestCase):
+    def simulate_failure(self, phase):
+        calls = []
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp).resolve()
+            (root / 'Dockerfile').touch()
+            config = {'enabled': True, 'project': 'test', 'compose_files': [],
+                      'health_command': ['true'], 'service': 'xiaozhi-esp32-server',
+                      'containers': ['xiaozhi-esp32-server', 'funasr-runtime', 'kokoro-runtime'],
+                      'source': 'app.py', 'protected_paths': []}
+            compose_file = root / 'compose.json'
+            compose_file.write_text('{}')
+            config['compose_files'] = [str(compose_file)]
+            def fake(args, **kwargs):
+                calls.append(args)
+                if phase in args:
+                    raise RuntimeError('simulated ' + phase + ' failure')
+                if '--show-toplevel' in args: return str(root)
+                if 'get-url' in args: return next(iter(d.ORIGINS))
+                if 'rev-parse' in args: return 'abc123'
+                if 'ls-tree' in args: return 'app.py\n.dockerignore\nDockerfile'
+                if '--format' in args and 'config' in args:
+                    return json.dumps({'services': {'xiaozhi-esp32-server': {'build': {'context': str(root)}}}})
+                return ''
+            containers = [{'Name': '/' + name, 'Id': name, 'Image': 'old', 'Mounts': []}
+                          for name in config['containers']]
+            with patch.object(d, 'ROOT', root), patch.object(d, 'run', side_effect=fake), patch.object(d, 'inspect', return_value=containers):
+                with self.assertRaisesRegex(RuntimeError, 'simulated'):
+                    d.deploy(config, {})
+        return calls
+
+    def test_fetch_failure_never_resets_or_updates(self):
+        calls = self.simulate_failure('fetch')
+        self.assertFalse(any('reset' in c or 'build' in c or 'up' in c for c in calls))
+
+    def test_build_failure_never_updates_containers(self):
+        calls = self.simulate_failure('build')
+        self.assertTrue(any('reset' in c for c in calls))
+        self.assertFalse(any('up' in c or 'stop' in c or 'rm' in c for c in calls))
+
     def test_shared_network_blocks_recreation(self):
         containers = [{'Name': '/xiaozhi-esp32-server', 'Id': 'abc123'},
                       {'Name': '/funasr-runtime', 'HostConfig': {'NetworkMode': 'container:abc123'}}]
