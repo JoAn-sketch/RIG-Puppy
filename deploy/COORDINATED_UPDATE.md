@@ -8,6 +8,8 @@ FunASR 镜像为 `registry.cn-hangzhou.aliyuncs.com/funasr_repo/funasr:funasr-ru
 
 ## 选定方向
 
+追加实测：不同 Compose 项目身份能够规避旧容器标签匹配，并完整恢复旧 ID/共享网络。详见 RECOVERY_REHEARSAL.md。候选首次纳管应采用明确的新项目身份，同时显式复用已核实的生产网络；当前模板仍使用原项目，不能据此执行纳管。需要核实跨服务网络和备份 restart 策略后才能实现生产步骤。
+
 保持现有 localhost 通信语义，不修改业务配置。将语音服务纳入同一 Compose 项目，并配置 `network_mode: service:xiaozhi-esp32-server`。初次纳管必须在单独授权的维护窗口执行；当前脚本继续阻止共享网络下的单服务更新。
 
 不要把 `depends_on` 当成自动迁移保证。每次主服务 ID 改变，两个语音容器必须明确重建并验证 NetworkMode 引用新的主服务 ID。
