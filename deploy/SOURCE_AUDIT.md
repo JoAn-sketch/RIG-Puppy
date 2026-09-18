@@ -2,6 +2,8 @@
 
 ## 最新进展（优先于下方历史记录）
 
+新增 first_deploy.py：显式 `--execute --target <40位SHA>` 才进入九阶段；默认只读。执行入口在 preflight、远端 SHA、完整构建、再次检查、私有记录、旧容器保留后，才创建主服务和语音服务，最后在共享网络内做健康检查。每阶段由 migration_flow 日志记录，失败不自动回退。当前未授权生产执行，入口仍受 `RECOVERY_IMPLEMENTATION_VERIFIED=False` 保护；本地默认运行被正确阻塞，29 项测试通过。
+
 统一 preflight.py 已实际通过 SSH 只读查询服务器：Git 工作区干净，HEAD=c06bfa4ff3982123b92d5b419204a5fa9f850b88，三核心容器预检通过；GitHub ls-remote 返回128，四份 Compose config 返回1。生产尚未获得新分支工具/配置，不能执行迁移。服务器 Git 访问和首次代码同步是当前明确阻塞；本次没有 fetch/reset 或上传任何代码。29项测试通过。
 
 新增 migration_flow.py 九阶段编排：preflight→sync→build→recheck→backup→retain→create_main→create_voices→verify。逐阶段先落盘，失败停止、不自动回退，拒绝已有日志盲目重放。九阶段分别注入失败，总计28项测试通过。该模块要求调用方提供所有真实操作适配，尚未接入生产 CLI，不能用模拟测试代替完整迁移验收。
