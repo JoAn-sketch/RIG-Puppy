@@ -33,7 +33,7 @@ def check(run):
     def remote():
         # Explicit public SSH URL: no accidental query to an unverified origin.
         output = run(['git', 'ls-remote', '--exit-code',
-                      'git@github.com:JoAn-sketch/RIG-Puppy.git', 'refs/heads/clean-server'])
+                      'https://github.com/JoAn-sketch/RIG-Puppy.git', 'refs/heads/clean-server'])
         fields = output.split()
         if len(fields) != 2 or fields[1] != 'refs/heads/clean-server':
             raise RuntimeError('remote branch not resolved')
