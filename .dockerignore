@@ -1,0 +1,13 @@
+.git
+**/.git
+**/.env
+**/.env.*
+**/data
+**/models
+**/mysql
+**/redis
+**/uploadfile
+**/__pycache__
+**/*.pyc
+**/*.log
+**/*.bak*

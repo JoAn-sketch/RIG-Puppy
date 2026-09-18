@@ -1,0 +1,11 @@
+{
+  "enabled": false,
+  "project": "",
+  "compose_files": [],
+  "service": "xiaozhi-esp32-server",
+  "containers": ["xiaozhi-esp32-server", "funasr-runtime", "kokoro-runtime"],
+  "health_command": [],
+  "timeout_seconds": 120,
+  "protected_paths": ["main/xiaozhi-server/data", "main/xiaozhi-server/models"],
+  "source": "main/xiaozhi-server/app.py"
+}
