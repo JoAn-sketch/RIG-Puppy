@@ -1,0 +1,39 @@
+# Candidate only. Initial adoption requires retaining/renaming existing containers.
+services:
+  funasr-runtime:
+    image: registry.cn-hangzhou.aliyuncs.com/funasr_repo/funasr@sha256:6a4eeaf361dd85e932f09fbf3f32da80ffb945ffe26ef4addbe8deea480318a6
+    container_name: funasr-runtime
+    restart: unless-stopped
+    network_mode: service:xiaozhi-esp32-server
+    depends_on:
+      - xiaozhi-esp32-server
+    working_dir: /workspace
+    volumes:
+      - /home/ubuntu/funasr-runtime-resources/models:/workspace/models
+    command:
+      - sh
+      - -lc
+      - >-
+        cd /workspace/FunASR/runtime/websocket/build/bin &&
+        exec ./funasr-wss-server-2pass
+        --download-model-dir /workspace/models
+        --model-dir iic/SenseVoiceSmall-onnx
+        --online-model-dir damo/speech_paraformer-large_asr_nat-zh-cn-16k-common-vocab8404-online-onnx
+        --vad-dir damo/speech_fsmn_vad_zh-cn-16k-common-onnx
+        --punc-dir damo/punc_ct-transformer_zh-cn-common-vad_realtime-vocab272727-onnx
+        --itn-dir thuduj12/fst_itn_zh
+        --lm-dir damo/speech_ngram_lm_zh-cn-ai-wesp-fst
+        --decoder-thread-num 2 --model-thread-num 1 --io-thread-num 1 --port 10095
+        --certfile /workspace/FunASR/runtime/ssl_key/server.crt
+        --keyfile /workspace/FunASR/runtime/ssl_key/server.key
+        --hotword /workspace/models/hotwords.txt
+  kokoro-runtime:
+    image: ghcr.io/remsky/kokoro-fastapi-cpu@sha256:f330d69e78857e50c48985900c2baa8894e7ece5a29fdb3c3d6b207b12f43d2a
+    container_name: kokoro-runtime
+    restart: unless-stopped
+    network_mode: service:xiaozhi-esp32-server
+    depends_on:
+      - xiaozhi-esp32-server
+    user: appuser
+    working_dir: /app
+    command: [./entrypoint.sh]
