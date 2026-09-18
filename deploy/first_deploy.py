@@ -11,6 +11,7 @@ import adoption
 import coordinated
 import migration_flow
 import preflight
+import deploy as deployment
 from deploy import ROOT, run, ready
 from migration_checks import NAMES, verify_runtime
 
@@ -128,6 +129,8 @@ class Release:
             time.sleep(3)
 
     def execute(self):
+        if not deployment.RECOVERY_IMPLEMENTATION_VERIFIED:
+            raise RuntimeError('First adoption blocked: complete entrypoint recovery validation is pending')
         phases = {p: getattr(self, p) for p in ('preflight','sync','build','recheck','backup','retain','verify')}
         phases.update(create_main=lambda:self.create([MAIN]), create_voices=lambda:self.create(coordinated.VOICES))
         return migration_flow.execute(phases, self.directory / 'flow.json')
