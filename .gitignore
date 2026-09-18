@@ -4,3 +4,5 @@ __pycache__/
 .env.*
 !.env.example
 !.env.sample
+/main/xiaozhi-server/data/
+/main/xiaozhi-server/models/
