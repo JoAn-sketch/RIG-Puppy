@@ -2,6 +2,8 @@
 
 ## 最新进展（优先于下方历史记录）
 
+新增 adoption.py：命令行只读输出首次迁移计划，保留函数逐操作记录 pending/complete，权限 0600，拒绝已有日志重放，使用不可变容器 ID，依赖服务先停。九个变更位置逐一注入失败验证，19 项测试通过。此函数尚未暴露执行入口，回退执行器和真实配置验证未完成，不能作为生产迁移完成的证据。
+
 生产网络只读核查已完成：主服务/Web/MySQL/Redis 同属 xiaozhi-server_default，主服务别名保持 xiaozhi-esp32-server。主服务 restart=always，语音服务=unless-stopped。新增 external 网络覆盖文件和只读迁移检查。四份 Compose 组合校验、17 项测试通过。尚未核实所有业务是否硬编码原 IP，尚未执行生产或真实配置恢复验收。
 
 Compose 项目身份隔离的首次纳管机制已在本地模拟通过，旧容器 ID 保留、失败版本保留、旧网络恢复。下一项实际配置检查是生产网络/DNS/跨服务依赖及备份 restart 策略；本次未改变生产项目名或生产配置。详见 RECOVERY_REHEARSAL.md。
