@@ -2,6 +2,8 @@
 
 ## 最新进展（优先于下方历史记录）
 
+第 1、2 项已完成：服务器 `preflight.py` 实测通过，服务器 HEAD 与 GitHub clean-server 均为 `60b7a869b48b177a8788f6bf010d898a5dac3146`，工作区干净，Compose、挂载、运行状态通过，三个核心容器仍在运行。`rehearse_modules.py` 实际 Docker 演练通过；首次入口九阶段逐阶段失败测试通过，总计 31 项测试；四份 Compose 组合校验通过。没有构建或重启生产容器。
+
 新增 first_deploy.py：显式 `--execute --target <40位SHA>` 才进入九阶段；默认只读。执行入口在 preflight、远端 SHA、完整构建、再次检查、私有记录、旧容器保留后，才创建主服务和语音服务，最后在共享网络内做健康检查。每阶段由 migration_flow 日志记录，失败不自动回退。当前未授权生产执行，入口仍受 `RECOVERY_IMPLEMENTATION_VERIFIED=False` 保护；本地默认运行被正确阻塞，29 项测试通过。
 
 统一 preflight.py 已实际通过 SSH 只读查询服务器：Git 工作区干净，HEAD=c06bfa4ff3982123b92d5b419204a5fa9f850b88，三核心容器预检通过；GitHub ls-remote 返回128，四份 Compose config 返回1。生产尚未获得新分支工具/配置，不能执行迁移。服务器 Git 访问和首次代码同步是当前明确阻塞；本次没有 fetch/reset 或上传任何代码。29项测试通过。
