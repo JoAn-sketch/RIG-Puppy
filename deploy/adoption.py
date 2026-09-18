@@ -71,6 +71,77 @@ def make_plan(containers):
                              'production-equivalent recovery validation']}
 
 
+def rollback(run, snapshot, replacements, current, suffix, journal):
+    """Restore retained IDs only. Caller holds lock and supplies fresh inspect-all.
+
+    replacements is the exact name->ID mapping recorded when the failed release
+    was created. Unknown occupants or missing originals abort before mutation.
+    This does not restore bind-mounted data or claim application health.
+    """
+    if Path(journal).exists() or Path(journal).with_suffix('.pending').exists():
+        raise RuntimeError('Existing rollback journal requires inspection')
+    if not re.fullmatch(r'[a-zA-Z0-9_-]{1,40}', suffix):
+        raise ValueError('Invalid rollback suffix')
+    if set(snapshot) != set(ORDER) or not set(replacements).issubset(ORDER):
+        raise RuntimeError('Unexpected container scope')
+    by_id = {c['Id']: c for c in current}
+    by_name = {c['Name'].lstrip('/'): c['Id'] for c in current}
+    old_ids = {v['id'] for v in snapshot.values()}
+    if len(old_ids) != 3 or old_ids.intersection(replacements.values()):
+        raise RuntimeError('Conflicting container IDs')
+    for name in ORDER:
+        old = by_id.get(snapshot[name]['id'])
+        if not old:
+            raise RuntimeError('Original container missing: ' + name)
+        if old['State'].get('Running') or old['State'].get('Restarting'):
+            raise RuntimeError('Original must be stopped before rollback: ' + name)
+        occupant = by_name.get(name)
+        if occupant and occupant not in {snapshot[name]['id'], replacements.get(name)}:
+            raise RuntimeError('Unknown name occupant: ' + name)
+        if name in replacements:
+            failed = by_id.get(replacements[name])
+            if not failed or failed['Name'].lstrip('/') != name:
+                raise RuntimeError('Failed release identity mismatch: ' + name)
+            if name + '-failed-' + suffix in by_name:
+                raise RuntimeError('Failed backup name occupied')
+        policy = snapshot[name]['restart']
+        if policy['Name'] not in {'always', 'unless-stopped', 'no', 'on-failure'}:
+            raise RuntimeError('Unknown restart policy')
+    main_id = snapshot['xiaozhi-esp32-server']['id']
+    for name in ORDER[:2]:
+        if by_id[snapshot[name]['id']]['HostConfig']['NetworkMode'] != 'container:' + main_id:
+            raise RuntimeError('Original network reference changed')
+    state = {'status': 'restoring', 'containers': snapshot,
+             'replacements': replacements, 'steps': []}
+    persist(journal, state)
+    def action(command):
+        step = {'command': command, 'status': 'pending'}
+        state['steps'].append(step)
+        persist(journal, state)
+        run(command)
+        step['status'] = 'complete'
+        persist(journal, state)
+    for name in ORDER:
+        if name in replacements:
+            cid = replacements[name]
+            action(['docker', 'update', '--restart=no', cid])
+            action(['docker', 'stop', '--time', '30', cid])
+            action(['docker', 'rename', cid, name + '-failed-' + suffix])
+    for name in reversed(ORDER):
+        cid = snapshot[name]['id']
+        if by_id[cid]['Name'].lstrip('/') != name:
+            action(['docker', 'rename', cid, name])
+        policy = snapshot[name]['restart']
+        restart = policy['Name']
+        if restart == 'on-failure' and policy.get('MaximumRetryCount', 0):
+            restart += ':' + str(int(policy['MaximumRetryCount']))
+        action(['docker', 'update', '--restart=' + restart, cid])
+        action(['docker', 'start', cid])
+    state['status'] = 'containers_restored_health_not_verified'
+    persist(journal, state)
+    return state
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--inspect-json', help='Private existing docker inspect JSON; otherwise read Docker')
