@@ -20,9 +20,26 @@
 4. 验证 origin 为指定 GitHub 仓库，显式 fetch clean-server，解析固定 target SHA。fetch 失败不得使用缓存引用。
 5. 再检查工作区；确认目标没有跟踪 `.env`、模型、数据库、运行数据，确认容器没有挂载待替换的源码。保存旧 HEAD、容器 ID 和镜像 ID。
 6. `git reset --hard "$target_commit"`，核实 HEAD。reset 只允许在上述条件通过后执行。即使忽略文件不会显示为脏，也必须检查目标路径是否会覆盖它们。
-7. 校验 Compose 配置，主服务必须包含明确的 build context 和 Dockerfile，确保构建目标 Git 源码。用 SHA 标记主服务镜像及 revision 标签，保留旧镜像 ID。不允许无构建任务的成功被算作构建成功。
-8. build 完全成功后才执行相同 Compose 配置的 `up -d --no-build --pull never`，范围限主服务且不启动依赖。build 失败保留运行容器，报告工作树已更新而线上未更新。
-9. 有限等待三个核心容器运行；存在 healthcheck 则必须 healthy。检查主服务镜像、revision 和 HEAD，检查 10095、8880 监听，再执行经核实的应用健康检查。404 不代表检查通过；没有健康检查则不能启用部署。
+7. 校验 Compose 配置，主服务必须包含明确的 build context 和 Dockerfile，确保构建目标 Git 源码。生产基础 Compose 只有 `image:`，**不能单独执行 `docker compose build`**；必须显式叠加仓库内的构建覆盖文件：
+   ```bash
+   cd /home/ubuntu/xiaozhi-esp32-server-main/main/xiaozhi-server
+   docker compose -p xiaozhi-server \
+     -f docker-compose.yml \
+     -f ../../deploy/compose.build.yml config
+   docker compose -p xiaozhi-server \
+     -f docker-compose.yml \
+     -f ../../deploy/compose.build.yml build xiaozhi-esp32-server
+   ```
+   构建输出必须实际包含 build 步骤；仅返回成功但没有 build target 的命令不算构建成功。用目标 SHA 标记或记录新镜像 ID，保存旧容器 ID 和旧镜像 ID。
+8. build 完全成功后，使用**同一份 Compose 文件列表**执行 `up`，并显式禁止再次拉取或跳过构建：
+   ```bash
+   docker compose -p xiaozhi-server \
+     -f docker-compose.yml \
+     -f ../../deploy/compose.build.yml \
+     up -d --no-build --pull never --force-recreate xiaozhi-esp32-server
+   ```
+   只更新主服务，不使用 `--remove-orphans`，不删除依赖容器。build 失败保留运行容器，报告工作树已更新而线上未更新。
+9. 有限等待三个核心容器运行；存在 healthcheck 则必须 healthy。必须比较更新前后的容器 ID、创建时间和实际镜像 ID，确认主服务确实已重建并使用本次 build 产物；仅显示 `Up` 不足以证明部署成功。再检查主服务镜像、revision 和 HEAD，检查 10095、8880 监听，再执行经核实的应用健康检查。404 不代表检查通过；没有健康检查则不能启用部署。
 10. 健康检查失败返回非零，报告失败阶段、线上影响及回退依据。未验证安全回退前，不自动回滚。
 
 禁止 `docker compose down`、`--remove-orphans`、任何 prune 或卷删除。更新过程不修改数据库、模型、环境文件及运行数据的存储方式。若线上直接挂载源码，必须先报告并单独设计迁移，不能直接 reset。
