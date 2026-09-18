@@ -1,5 +1,7 @@
 # 线上来源核查
 
+协调更新的选定方向、首次纳管和回退步骤见 `COORDINATED_UPDATE.md`。新增 `health.py` 必须在主服务网络命名空间中执行；它仅检查 HTTP 路由和 TCP，不代替语音端到端测试。
+
 本次为只读检查，未 reset 生产代码、构建生产镜像或更新容器。
 
 - 主容器镜像 ID：`sha256:e494fae1799d48c15e89d4c43cc5ec14e6183589a6e8688cdda4e45afcef3b31`。
