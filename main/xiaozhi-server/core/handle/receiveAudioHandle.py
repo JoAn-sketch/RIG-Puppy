@@ -1,0 +1,522 @@
+import time
+import json
+import asyncio
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from core.connection import ConnectionHandler
+from core.dialogue_state import (
+    ChildProfileSnapshot,
+    DialogueStateManagerInput,
+    RuntimeSignals,
+    build_dialogue_state_prompt_patch,
+)
+from core.daily_greeting import maybe_get_daily_greeting
+from core.daily_activity_aggregator import record_interaction_event
+from core.conversation_openness import evaluate_conversation_openness
+from core.conversation_request import (
+    ConversationRequest,
+    INTERACTION_NEW,
+    LIFECYCLE_IDLE,
+    MemoryContext,
+    enrich_response_plan,
+    should_query_memory,
+)
+from core.long_term_memory_resolver import resolve_long_term_memory_for_device
+from core.profile_resolver import resolve_child_profile_for_device
+from core.response_orchestrator import build_response_plan, build_response_plan_prompt_patch
+from core.utils.util import audio_to_data
+from core.handle.abortHandle import handleAbortMessage
+from core.handle.intentHandler import handle_user_intent
+from core.utils.output_counter import check_device_output_limit
+from core.handle.sendAudioHandle import send_stt_message, SentenceType
+from core.scene_router import ChildProfile, DialogState, SceneRouterInput, SignalState
+from core.scene_router.policy import build_scene_prompt_patch
+
+TAG = __name__
+
+
+def _topic_label(topic_context):
+    if topic_context is None:
+        return ""
+    if isinstance(topic_context, dict):
+        return str(
+            topic_context.get("topic")
+            or topic_context.get("label")
+            or topic_context.get("id")
+            or ""
+        ).strip()
+    return str(
+        getattr(topic_context, "topic", None)
+        or getattr(topic_context, "label", None)
+        or getattr(topic_context, "id", None)
+        or ""
+    ).strip()
+
+
+async def handleAudioMessage(conn: "ConnectionHandler", audio):
+    # 当前片段是否有人说话
+    have_voice = conn.vad.is_vad(conn, audio)
+    # 如果设备刚刚被唤醒，短暂忽略VAD检测
+    if hasattr(conn, "just_woken_up") and conn.just_woken_up:
+        have_voice = False
+        # 设置一个短暂延迟后恢复VAD检测
+        if not hasattr(conn, "vad_resume_task") or conn.vad_resume_task.done():
+            conn.vad_resume_task = asyncio.create_task(resume_vad_detection(conn))
+        return
+    # 设备长时间空闲检测，用于say goodbye
+    await no_voice_close_connect(conn, have_voice)
+    # 接收音频
+    await conn.asr.receive_audio(conn, audio, have_voice)
+
+
+async def resume_vad_detection(conn: "ConnectionHandler"):
+    # 等待2秒后恢复VAD检测
+    await asyncio.sleep(2)
+    conn.just_woken_up = False
+
+
+async def startToChat(conn: "ConnectionHandler", text):
+    if hasattr(conn, "mark_latency_stage"):
+        conn.mark_latency_stage("chat_prepare_start", text=text)
+
+    # 检查输入是否是JSON格式（包含说话人信息）
+    speaker_name = None
+    language_tag = None
+    actual_text = text
+
+    try:
+        # 尝试解析JSON格式的输入
+        if text.strip().startswith("{") and text.strip().endswith("}"):
+            data = json.loads(text)
+            if "speaker" in data and "content" in data:
+                speaker_name = data["speaker"]
+                language_tag = data.get("language")
+                actual_text = data["content"]
+                conn.logger.bind(tag=TAG).info(f"解析到说话人信息: {speaker_name}")
+    except (json.JSONDecodeError, KeyError):
+        # 如果解析失败，继续使用原始文本
+        pass
+
+    # 保存说话人信息到连接对象
+    if speaker_name:
+        conn.current_speaker = speaker_name
+    else:
+        conn.current_speaker = None
+
+    conn.current_language = language_tag
+    if hasattr(conn, "update_latency_trace"):
+        conn.update_latency_trace(user_text=actual_text)
+
+    if conn.need_bind:
+        await check_bind_device(conn)
+        return
+
+    # 如果当日的输出字数大于限定的字数
+    if conn.max_output_size > 0:
+        if check_device_output_limit(
+            conn.headers.get("device-id"), conn.max_output_size
+        ):
+            await max_out_size(conn)
+            return
+
+    # manual 模式下不打断正在播放的内容
+    if conn.client_is_speaking and conn.client_listen_mode != "manual":
+        await handleAbortMessage(conn)
+
+    conversation_request = None
+    conversation_context = conn.session_state.conversation_context
+    previous_lifecycle_state = conversation_context.lifecycle_state
+    interaction_mode = None
+    orchestrator_intent_type = (
+        "function_call"
+        if getattr(conn, "intent_type", "") == "function_call"
+        else "conversation"
+    )
+    try:
+        interaction_mode = conn.session_state.begin_interaction(
+            time.time(),
+            reason="user_input",
+        )
+        if interaction_mode == INTERACTION_NEW:
+            conn.logger.bind(tag=TAG).info("conversation lifecycle => IDLE -> LISTENING, new interaction")
+        else:
+            conn.logger.bind(tag=TAG).debug("conversation lifecycle => LISTENING continuation")
+
+        runtime_child_profile = await resolve_child_profile_for_device(conn.headers.get("device-id"))
+        runtime_long_term_memory = await resolve_long_term_memory_for_device(
+            conn.headers.get("device-id")
+        )
+        conn.update_long_term_memory(runtime_long_term_memory)
+        conn.refresh_short_term_memory_prompt(user_text=actual_text)
+        active_short_topic = conn.short_term_memory.get_active_topic(user_text=actual_text)
+        dialogue_context = conversation_context.dialogue_state
+        if dialogue_context is None and interaction_mode != INTERACTION_NEW:
+            dialogue_context = getattr(conn, "dialogue_state_runtime", None)
+        lifecycle_state = (dialogue_context or {}).get("topic_state") or {}
+        lifecycle_topic = _topic_label(conversation_context.current_topic) or str(
+            lifecycle_state.get("topic") or ""
+        ).strip()
+        openness = evaluate_conversation_openness(actual_text)
+        age_band = runtime_child_profile.age_band
+        prior_scene_output = (
+            None
+            if interaction_mode == INTERACTION_NEW
+            else getattr(conn, "last_scene_output", None)
+        )
+        router_input = SceneRouterInput(
+            text=actual_text,
+            child_profile=ChildProfile(
+                nickname=runtime_child_profile.nickname,
+                age=runtime_child_profile.age,
+                age_group=runtime_child_profile.age_group,
+                age_band=age_band,
+            ),
+            dialog_state=DialogState(
+                current_scene=getattr(prior_scene_output, "primary_scene", None),
+                current_subscene=getattr(prior_scene_output, "subscene", None),
+                turn_index=(
+                    0
+                    if interaction_mode == INTERACTION_NEW
+                    else len(getattr(conn.dialogue, "dialogue", []))
+                ),
+                last_policy=getattr(prior_scene_output, "policy_profile", None),
+                active_topic=lifecycle_topic or getattr(active_short_topic, "topic", None),
+                active_entities=list(getattr(active_short_topic, "entities", []) or []),
+            ),
+            signals=SignalState(
+                emotion_hint="neutral",
+                interruption=bool(conn.client_is_speaking),
+                silence_ms=0,
+                vlm_tags=[],
+                conversation_openness_level=openness.level,
+                conversation_openness_reason=openness.reason,
+            ),
+        )
+        conn.last_scene_output = conn.scene_router.route(router_input)
+        try:
+            record_interaction_event(
+                device_id=conn.headers.get("device-id"),
+                session_id=conn.session_id,
+                scene_name=getattr(conn.last_scene_output, "primary_scene", None),
+                subscene=getattr(conn.last_scene_output, "subscene", None),
+                protocol_mode=getattr(conn.last_scene_output, "protocol_mode", None),
+                emotion_state=getattr(conn.last_scene_output, "emotion_state", None),
+            )
+        except Exception as aggregate_error:
+            conn.logger.bind(tag=TAG).warning(
+                f"daily activity aggregation failed: {aggregate_error}"
+            )
+        conn.scene_prompt_patch = build_scene_prompt_patch(conn.last_scene_output)
+        manager_input = DialogueStateManagerInput(
+            text=actual_text,
+            timestamp_ms=int(time.time() * 1000),
+            scene_router_output=conn.last_scene_output,
+            dialogue_state=dialogue_context,
+            signals=RuntimeSignals(
+                emotion_hint="neutral",
+                interruption=bool(conn.client_is_speaking),
+                silence_ms=0,
+                user_move="unknown",
+                understanding_signal="unknown",
+                topic_switch_signal=False,
+                frustration_signal=0,
+                conversation_openness_level=openness.level,
+                conversation_openness_reason=openness.reason,
+            ),
+            child_profile=ChildProfileSnapshot(
+                nickname=runtime_child_profile.nickname,
+                age=runtime_child_profile.age,
+                age_group=runtime_child_profile.age_group,
+                age_band=age_band,
+                interests=list(getattr(runtime_long_term_memory, "interests", []) or []),
+            ),
+        )
+        conn.last_dialogue_state_result = conn.dialogue_state_manager.update(manager_input)
+        conn.dialogue_state_runtime = conn.last_dialogue_state_result.state
+        conn.dialogue_state_prompt_patch = build_dialogue_state_prompt_patch(
+            conn.last_dialogue_state_result
+        )
+        conn.last_response_plan = build_response_plan(
+            conn.last_scene_output,
+            conn.last_dialogue_state_result,
+        )
+        conn.response_plan_prompt_patch = build_response_plan_prompt_patch(
+            conn.last_response_plan
+        )
+        conn._refresh_runtime_prompt()
+        memory_context = MemoryContext(policy="NONE", query=actual_text, text=None)
+        if should_query_memory(
+            actual_text,
+            conn.last_scene_output,
+            conn.last_dialogue_state_result,
+            conn.short_term_memory,
+        ):
+            memory_context = MemoryContext(
+                policy="QUERY",
+                query=actual_text,
+                text=None,
+            )
+            if conn.memory is not None:
+                try:
+                    memory_text = await conn.memory.query_memory(actual_text)
+                    # Avoid mutating an immutable MemoryContext instance.
+                    memory_context = MemoryContext(
+                        policy="QUERY",
+                        query=actual_text,
+                        text=memory_text,
+                    )
+                except Exception as memory_error:
+                    conn.logger.bind(tag=TAG).warning(
+                        f"orchestrator memory query failed, continue without memory text: {memory_error}"
+                    )
+        conn.last_response_plan = enrich_response_plan(
+            conn.last_response_plan,
+            conn.last_scene_output,
+            conn.last_dialogue_state_result,
+            memory_context,
+            intent_type=orchestrator_intent_type,
+            lifecycle_state=getattr(conn.session_state, "conversation_lifecycle_state", LIFECYCLE_IDLE),
+            interaction_mode=interaction_mode,
+        )
+        if conn.last_response_plan is not None:
+            conn.response_plan_prompt_patch = build_response_plan_prompt_patch(
+                conn.last_response_plan
+            )
+            conn._refresh_runtime_prompt()
+        daily_greeting_start = time.perf_counter()
+        conn.pending_daily_greeting = maybe_get_daily_greeting(
+            device_id=conn.headers.get("device-id"),
+            user_text=actual_text,
+            wakeup_words=conn.config.get("wakeup_words") or [],
+            child_profile=runtime_child_profile,
+            long_term_memory=runtime_long_term_memory,
+            short_term_memory=conn.short_term_memory,
+            llm=getattr(conn, "llm", None),
+            scene_name=getattr(conn.last_scene_output, "primary_scene", None),
+            conversation_openness_level=openness.level,
+        )
+        daily_greeting_elapsed_ms = int((time.perf_counter() - daily_greeting_start) * 1000)
+        conn.logger.bind(tag=TAG).info(
+            f"scene_router => scene={conn.last_scene_output.primary_scene}, "
+            f"subscene={conn.last_scene_output.subscene}, "
+            f"policy={conn.last_scene_output.policy_profile}, "
+            f"risk={conn.last_scene_output.risk_level}, "
+            f"openness={openness.level}:{openness.reason}"
+        )
+        if conn.pending_daily_greeting is not None:
+            conn.logger.bind(tag=TAG).info(
+                f"daily_greeting => type={conn.pending_daily_greeting.greeting_type}, "
+                f"source_id={conn.pending_daily_greeting.source_id}, "
+                f"generated={getattr(conn.pending_daily_greeting, 'generated', False)}, "
+                f"elapsed_ms={daily_greeting_elapsed_ms}"
+            )
+        elif daily_greeting_elapsed_ms >= 50:
+            conn.logger.bind(tag=TAG).info(
+                f"daily_greeting => skipped, elapsed_ms={daily_greeting_elapsed_ms}"
+            )
+        conn.logger.bind(tag=TAG).info(
+            f"dialogue_state => phase={conn.last_dialogue_state_result.control.current_phase}, "
+            f"next_action={conn.last_dialogue_state_result.control.next_action}, "
+            f"rule={conn.last_dialogue_state_result.debug.matched_rule}, "
+            f"close={conn.last_dialogue_state_result.control.should_close_scene}, "
+            f"openness={conn.last_dialogue_state_result.control.conversation_openness_level}:{conn.last_dialogue_state_result.control.conversation_openness_reason}"
+        )
+        topic_state = (conn.last_dialogue_state_result.state or {}).get("topic_state") or {}
+        topic_decision = (conn.last_dialogue_state_result.state or {}).get("topic_decision") or {}
+        current_topic_context = topic_state or active_short_topic
+        conn.session_state.update_conversation_context(
+            current_topic=current_topic_context,
+            dialogue_state=conn.dialogue_state_runtime,
+            short_term_memory=conn.short_term_memory,
+            last_interaction_at=time.time(),
+            metadata={
+                "last_interaction_mode": interaction_mode,
+                "openness_level": openness.level,
+                "openness_reason": openness.reason,
+            },
+        )
+        conn.logger.bind(tag=TAG).info(
+            f"topic_lifecycle => topic={topic_state.get('topic')}, "
+            f"category={topic_state.get('category')}, "
+            f"turns={topic_state.get('turn_count')}, "
+            f"engagement={topic_state.get('engagement_score')}, "
+            f"saturation={topic_state.get('saturation_score')}, "
+            f"action={topic_decision.get('action')}, "
+            f"reason={topic_decision.get('reason')}"
+        )
+        if getattr(conn, "last_response_plan", None) is not None:
+            conn.logger.bind(tag=TAG).info(
+                f"response_plan => action={conn.last_response_plan.primary_action}, "
+                f"sentence_budget={conn.last_response_plan.sentence_budget}, "
+                f"ask_followup={conn.last_response_plan.ask_followup}, "
+                f"allow_summary={conn.last_response_plan.allow_summary}, "
+                f"openness={conn.last_response_plan.conversation_openness_level}:{conn.last_response_plan.conversation_openness_mode}"
+            )
+        if hasattr(conn, "_publish_runtime_debug"):
+            conn._publish_runtime_debug("turn_ready")
+        conversation_request = ConversationRequest(
+            user_input=actual_text,
+            speaker=speaker_name,
+            language=language_tag,
+            lifecycle_state=getattr(conn.session_state, "conversation_lifecycle_state", LIFECYCLE_IDLE),
+            interaction_mode=interaction_mode,
+            conversation_state={
+                "previous_lifecycle_state": previous_lifecycle_state,
+                "conversation_id": conversation_context.conversation_id,
+                "session_id": conn.session_id,
+                "device_id": conn.headers.get("device-id"),
+            },
+            scene=conn.last_scene_output,
+            dialogue_state=conn.last_dialogue_state_result,
+            memory_context=memory_context,
+            response_plan=conn.last_response_plan,
+            intent={"type": orchestrator_intent_type},
+            policy_context={
+                "openness_level": openness.level,
+                "openness_reason": openness.reason,
+                "child_profile": {
+                    "nickname": runtime_child_profile.nickname,
+                    "age": runtime_child_profile.age,
+                    "age_group": runtime_child_profile.age_group,
+                    "age_band": age_band,
+                },
+                "active_topic": lifecycle_topic or getattr(active_short_topic, "topic", None),
+            },
+        )
+        conn.session_state.last_conversation_request = conversation_request
+    except Exception as e:
+        conn.logger.bind(tag=TAG).warning(f"scene/dialogue_state 运行失败，已跳过: {e}")
+    finally:
+        if hasattr(conn, "mark_latency_stage"):
+            conn.mark_latency_stage(
+                "chat_prepare_done",
+                scene=getattr(getattr(conn, "last_scene_output", None), "primary_scene", None),
+            )
+
+    # 首先进行意图分析，使用实际文本内容
+    intent_started_at = time.perf_counter()
+    intent_handled = await handle_user_intent(conn, actual_text)
+    if hasattr(conn, "mark_latency_stage"):
+        conn.mark_latency_stage(
+            "intent_done",
+            handled=intent_handled,
+            intent_ms=int((time.perf_counter() - intent_started_at) * 1000),
+        )
+
+    if intent_handled:
+        if conversation_request is not None:
+            conversation_request.intent["type"] = "direct_response"
+            if conversation_request.response_plan is not None:
+                conversation_request.response_plan.tool_policy = "DIRECT"
+            conn.session_state.last_conversation_request = conversation_request
+        # 如果意图已被处理，不再进行聊天
+        return
+
+    # 意图未被处理，继续常规聊天流程，使用实际文本内容
+    await send_stt_message(conn, actual_text)
+
+    # 准备开始新会话
+    conn.client_abort = False
+
+    if conversation_request is None:
+        if interaction_mode is None:
+            interaction_mode = conn.session_state.begin_interaction(
+                time.time(),
+                "fallback_user_input",
+            )
+        conversation_request = ConversationRequest(
+            user_input=actual_text,
+            speaker=speaker_name,
+            language=language_tag,
+            lifecycle_state=getattr(conn.session_state, "conversation_lifecycle_state", LIFECYCLE_IDLE),
+            interaction_mode=interaction_mode,
+            conversation_state={
+                "previous_lifecycle_state": previous_lifecycle_state,
+                "conversation_id": conversation_context.conversation_id,
+                "session_id": conn.session_id,
+                "device_id": conn.headers.get("device-id"),
+                "fallback": True,
+            },
+            intent={"type": orchestrator_intent_type},
+        )
+        conn.session_state.last_conversation_request = conversation_request
+
+    if hasattr(conn, "mark_latency_stage"):
+        conn.mark_latency_stage("chat_submit")
+    chat_future = conn.executor.submit(conn.chat, conversation_request)
+
+    def _capture_conversation_result(future):
+        try:
+            result = future.result()
+            if result is not None:
+                conn.session_state.last_conversation_result = result
+        except Exception as e:
+            conn.logger.bind(tag=TAG).error(f"chat execution failed: {e}")
+
+    chat_future.add_done_callback(_capture_conversation_result)
+
+
+async def no_voice_close_connect(conn: "ConnectionHandler", have_voice):
+    if have_voice:
+        conn.last_activity_time = time.time() * 1000
+        return
+    # 只有在已经初始化过时间戳的情况下才进行超时检查
+    if conn.last_activity_time > 0.0:
+        no_voice_time = time.time() * 1000 - conn.last_activity_time
+        conversation_idle_timeout = int(
+            conn.config.get("conversation_idle_timeout", 600)
+        )
+        if conversation_idle_timeout <= 0:
+            return
+        if no_voice_time > 1000 * conversation_idle_timeout:
+            conn.end_current_conversation_context(reason="listening_idle_timeout")
+
+
+async def max_out_size(conn: "ConnectionHandler"):
+    # 播放超出最大输出字数的提示
+    conn.client_abort = False
+    text = "不好意思，我现在有点事情要忙，明天这个时候我们再聊，约好了哦！明天不见不散，拜拜！"
+    await send_stt_message(conn, text)
+    file_path = "config/assets/max_output_size.wav"
+    opus_packets = await audio_to_data(file_path)
+    conn.tts.tts_audio_queue.put((SentenceType.LAST, opus_packets, text))
+    conn.close_after_chat = True
+
+
+async def check_bind_device(conn: "ConnectionHandler"):
+    if conn.bind_code:
+        # 确保bind_code是6位数字
+        if len(conn.bind_code) != 6:
+            conn.logger.bind(tag=TAG).error(f"无效的绑定码格式: {conn.bind_code}")
+            text = "绑定码格式错误，请检查配置。"
+            await send_stt_message(conn, text)
+            return
+
+        text = f"请登录控制面板，输入{conn.bind_code}，绑定设备。"
+        await send_stt_message(conn, text)
+
+        # 播放提示音
+        music_path = "config/assets/bind_code.wav"
+        opus_packets = await audio_to_data(music_path)
+        conn.tts.tts_audio_queue.put((SentenceType.FIRST, opus_packets, text))
+
+        # 逐个播放数字
+        for i in range(6):  # 确保只播放6位数字
+            try:
+                digit = conn.bind_code[i]
+                num_path = f"config/assets/bind_code/{digit}.wav"
+                num_packets = await audio_to_data(num_path)
+                conn.tts.tts_audio_queue.put((SentenceType.MIDDLE, num_packets, None))
+            except Exception as e:
+                conn.logger.bind(tag=TAG).error(f"播放数字音频失败: {e}")
+                continue
+        conn.tts.tts_audio_queue.put((SentenceType.LAST, [], None))
+    else:
+        # 播放未绑定提示
+        conn.client_abort = False
+        text = f"没有找到该设备的版本信息，请正确配置 OTA地址，然后重新编译固件。"
+        await send_stt_message(conn, text)
+        music_path = "config/assets/bind_not_found.wav"
+        opus_packets = await audio_to_data(music_path)
+        conn.tts.tts_audio_queue.put((SentenceType.LAST, opus_packets, text))
