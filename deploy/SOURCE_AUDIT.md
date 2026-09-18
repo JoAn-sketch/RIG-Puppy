@@ -2,6 +2,8 @@
 
 ## 最新进展（优先于下方历史记录）
 
+统一 preflight.py 已实际通过 SSH 只读查询服务器：Git 工作区干净，HEAD=c06bfa4ff3982123b92d5b419204a5fa9f850b88，三核心容器预检通过；GitHub ls-remote 返回128，四份 Compose config 返回1。生产尚未获得新分支工具/配置，不能执行迁移。服务器 Git 访问和首次代码同步是当前明确阻塞；本次没有 fetch/reset 或上传任何代码。29项测试通过。
+
 新增 migration_flow.py 九阶段编排：preflight→sync→build→recheck→backup→retain→create_main→create_voices→verify。逐阶段先落盘，失败停止、不自动回退，拒绝已有日志盲目重放。九阶段分别注入失败，总计28项测试通过。该模块要求调用方提供所有真实操作适配，尚未接入生产 CLI，不能用模拟测试代替完整迁移验收。
 
 首次纳管只读预检已接入 adoption.py：检查三容器运行/健康状态，精确核对全部 bind mount 的源、目标、RW 模式，网络别名和 restart 策略。基于生产 docker inspect 返回值实测通过。检查主服务、两语音服务及 Web 的 Env/Cmd/Entrypoint，未发现旧主服务 IP 引用（仅输出字段命中结果，不输出密钥）。此检查不覆盖配置文件及数据库记录。25 项单元测试通过，未执行任何生产变更。

@@ -29,6 +29,8 @@
 
 ## 配置与使用
 
+统一只读预检：`python3 deploy/preflight.py`。检查 Git 工作区、GitHub clean-server 引用、三容器及四份 Compose 配置；不 fetch/reset/build/up，失败时聚合阻塞项并返回非零。可从本地通过只读 SSH 命令适配执行，不需要上传脚本。
+
 `deploy/deploy.py` 是服务器入口。只读配置模板见 `deploy/config.example.json`；模板默认禁止部署。核实实际环境后，在服务器仓库外保存配置，例如 `/home/ubuntu/puppy-deploy-config.json`，不要提交秘密。
 
 ```bash
