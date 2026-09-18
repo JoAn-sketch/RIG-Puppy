@@ -51,6 +51,17 @@ def ready(containers):
                for c in containers)
 
 
+def check_network_dependencies(containers):
+    main = next(c for c in containers if c['Name'] == '/xiaozhi-esp32-server')
+    for c in containers:
+        mode = c.get('HostConfig', {}).get('NetworkMode', '')
+        if mode.startswith('container:'):
+            owner = mode.split(':', 1)[1].lstrip('/')
+            if owner == 'xiaozhi-esp32-server' or main['Id'].startswith(owner):
+                raise RuntimeError('Cannot recreate main server: ' + c['Name'] +
+                                   ' shares its network namespace; coordinated migration required')
+
+
 def compose(config):
     command = ['docker', 'compose', '-p', config['project']]
     for filename in config['compose_files']:
@@ -88,6 +99,7 @@ def deploy(config, report):
     if len(names) != 3 or set(names) != {'xiaozhi-esp32-server', 'funasr-runtime', 'kokoro-runtime'}:
         raise RuntimeError('All three core containers must be checked')
     before = inspect(names)
+    check_network_dependencies(before)
     report['before_containers'] = {c['Name']: {'id': c['Id'], 'image': c['Image']} for c in before}
     # All running containers, not just the main service, can mount source.
     ids = run(['docker', 'ps', '-q']).split()

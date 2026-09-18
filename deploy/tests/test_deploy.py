@@ -9,6 +9,12 @@ spec.loader.exec_module(d)
 
 
 class Guards(unittest.TestCase):
+    def test_shared_network_blocks_recreation(self):
+        containers = [{'Name': '/xiaozhi-esp32-server', 'Id': 'abc123'},
+                      {'Name': '/funasr-runtime', 'HostConfig': {'NetworkMode': 'container:abc123'}}]
+        with self.assertRaisesRegex(RuntimeError, 'shares its network'):
+            d.check_network_dependencies(containers)
+
     def test_dirty_worktree_stops(self):
         with patch.object(d, 'run', return_value=' M app.py\n?? new.py'):
             with self.assertRaisesRegex(RuntimeError, 'Dirty worktree'):

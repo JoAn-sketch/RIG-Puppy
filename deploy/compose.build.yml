@@ -1,0 +1,6 @@
+# Candidate build override only. Do not activate until SOURCE_AUDIT blockers are resolved.
+services:
+  xiaozhi-esp32-server:
+    build:
+      context: /home/ubuntu/xiaozhi-esp32-server-main
+      dockerfile: Dockerfile-server

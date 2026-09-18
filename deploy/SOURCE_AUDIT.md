@@ -17,6 +17,15 @@
 
 ## 尚未满足的部署前提
 
+### 追加核实：共享网络阻止单独重建主容器
+
+- 服务器为 x86_64，本地 Docker 为 aarch64。
+- FunASR、Kokoro 的 NetworkMode 都是 `container:3610a83525fb889d90911197a5ddd1400d09583a411fa726661b05b4b103f244`，该 ID 正是当前主服务器。
+- 宿主机没有 10095/8880 监听；在主容器中访问 Kokoro `/health` 返回 200，FunASR 10095 TCP 连接成功。
+- 主服务器 `http://127.0.0.1:8003/mcp/vision/explain` 返回 200。此结果证明路由可用，不代表完整语音对话通过。
+- 直接重建主服务会使语音容器仍引用旧网络命名空间。新脚本在 reset/build/up 前明确阻止该操作。需要另行设计并验证三容器协调更新，不能靠 `--no-deps` 单独更新主服务。
+- `compose.build.yml` 仅为候选构建覆盖文件，尚未激活，也不改变数据挂载。
+
 1. 原始 Compose 只有 image，没有 build；原样保留用于核查，不能用于 Git 构建部署。
 2. config.yaml、config_from_api.yaml、mcp_server_settings.json 尚在仓库外审查目录，不提交未经审核的认证信息。缺少默认 config.yaml 的版本不可视为可运行版本。
 3. 需要审查默认配置的认证字段与现有 data/.config.yaml 覆盖关系，保证不改变线上配置行为。
