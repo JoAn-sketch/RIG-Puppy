@@ -1,0 +1,12 @@
+# Explicitly reuse the production network when changing Compose project identity.
+# Does not create/delete networks or alter database/web/redis services.
+services:
+  xiaozhi-esp32-server:
+    networks:
+      default:
+        aliases:
+          - xiaozhi-esp32-server
+networks:
+  default:
+    external: true
+    name: xiaozhi-server_default

@@ -8,6 +8,14 @@ FunASR 镜像为 `registry.cn-hangzhou.aliyuncs.com/funasr_repo/funasr:funasr-ru
 
 ## 选定方向
 
+### 已核实的生产网络及备份策略
+
+主服务、Web、MySQL、Redis 都在 `xiaozhi-server_default`。新增 `compose.network.yml` 显式复用该 external 网络，保留主服务 DNS 别名；候选新项目不管理 Web、数据库、Redis，也不创建/删除它们的网络。容器 IP 可能变化，尚需排除业务对旧 IP 的硬编码依赖。
+
+主服务 restart 为 always，两个语音服务为 unless-stopped。未来备份前应持久保存完整 inspect（权限 0600），禁用旧三容器 restart，再停止和改名；每一步记录原值和结果。失败或回退时恢复原策略。不可只改名后留下 always 策略，避免宿主机重启时旧容器抢占端口。
+
+新增 migration_checks.py 只读验证实际网络/别名/重启策略，任何漂移停止。它不是迁移执行器，不会停止或更新生产资源。
+
 追加实测：不同 Compose 项目身份能够规避旧容器标签匹配，并完整恢复旧 ID/共享网络。详见 RECOVERY_REHEARSAL.md。候选首次纳管应采用明确的新项目身份，同时显式复用已核实的生产网络；当前模板仍使用原项目，不能据此执行纳管。需要核实跨服务网络和备份 restart 策略后才能实现生产步骤。
 
 保持现有 localhost 通信语义，不修改业务配置。将语音服务纳入同一 Compose 项目，并配置 `network_mode: service:xiaozhi-esp32-server`。初次纳管必须在单独授权的维护窗口执行；当前脚本继续阻止共享网络下的单服务更新。
